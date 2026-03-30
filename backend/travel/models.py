@@ -155,6 +155,18 @@ class Trip(SoftDeleteModel):
         
         super().save(*args, **kwargs)
 
+    @property
+    def reporting_manager(self):
+        return self.user.reporting_manager if self.user else None
+
+    @property
+    def senior_manager(self):
+        return self.user.senior_manager if self.user else None
+
+    @property
+    def hod_director(self):
+        return self.user.hod_director if self.user else None
+
     def __str__(self):
         return f"{self.trip_id} - {self.destination}"
 
@@ -332,6 +344,22 @@ class TravelClaim(SoftDeleteModel):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def user(self):
+        return self.trip.user if self.trip else None
+
+    @property
+    def reporting_manager(self):
+        return self.user.reporting_manager if self.user else None
+
+    @property
+    def senior_manager(self):
+        return self.user.senior_manager if self.user else None
+
+    @property
+    def hod_director(self):
+        return self.user.hod_director if self.user else None
+
     def __str__(self):
         return f"Claim for {self.trip.trip_id} - {self.status}"
 
@@ -395,6 +423,22 @@ class TravelAdvance(SoftDeleteModel):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def user(self):
+        return self.trip.user if self.trip else None
+
+    @property
+    def reporting_manager(self):
+        return self.user.reporting_manager if self.user else None
+
+    @property
+    def senior_manager(self):
+        return self.user.senior_manager if self.user else None
+
+    @property
+    def hod_director(self):
+        return self.user.hod_director if self.user else None
 
     def __str__(self):
         return f"Advance for {self.trip.trip_id} - {self.status}"

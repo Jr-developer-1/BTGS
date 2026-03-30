@@ -171,19 +171,14 @@ def resolve_approver(user, members_data=None):
         return u.role.name.lower() in ['admin', 'it-admin', 'superuser', 'it admin', 'system administrator']
     
     reporting_manager = user.reporting_manager
-    senior_manager = user.senior_manager
-    hod_director = user.hod_director
     
-    current_approver = reporting_manager if not is_admin(reporting_manager) else None
+    # Strictly follow reporting managers flow
+    current_approver = reporting_manager
     h_level = 1
     
     if not current_approver:
-        current_approver = senior_manager if not is_admin(senior_manager) else None
-        h_level = 2
-    
-    if not current_approver:
-        current_approver = hod_director if not is_admin(hod_director) else None
-        h_level = 3
+        # If no direct manager, move to HR
+        current_approver = get_hr_head(user)
         
     if not current_approver:
         # Fallback to members' managers if applicable
@@ -207,7 +202,10 @@ def resolve_approver(user, members_data=None):
             current_approver = get_hr_head(user)
             h_level = 1
             
-    return current_approver, h_level, reporting_manager, senior_manager, hod_director
+    # Snapshots for resilience
+    sm = user.senior_manager
+    hod = user.hod_director
+    return current_approver, h_level, reporting_manager, sm, hod
 
 class TripListCreateView(generics.ListCreateAPIView):
     serializer_class = TripSerializer
@@ -586,14 +584,14 @@ class ApprovalCountView(APIView):
             if user.office_level == 1:
                 # Finance Head counts
                 trip_count = 0
-                advance_count = TravelAdvance.objects.filter(status='PENDING_HEAD').count()
-                claim_count = TravelClaim.objects.filter(status='PENDING_HEAD').count()
+                advance_count = TravelAdvance.objects.filter(status='PENDING_HEAD', current_approver=user).count()
+                claim_count = TravelClaim.objects.filter(status='PENDING_HEAD', current_approver=user).count()
             else:
                 # Finance Executive counts
                 trip_count = 0
                 pending_money_statuses = ['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'Approved', 'Under Process']
-                advance_count = TravelAdvance.objects.filter(status__in=pending_money_statuses).count()
-                claim_count = TravelClaim.objects.filter(status__in=pending_money_statuses).count()
+                advance_count = TravelAdvance.objects.filter(status__in=pending_money_statuses, current_approver=user).count()
+                claim_count = TravelClaim.objects.filter(status__in=pending_money_statuses, current_approver=user).count()
         else:
             # Manager counts
             trip_count = Trip.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved']).count()
@@ -691,18 +689,12 @@ class ApprovalsView(APIView):
                     claims = TravelClaim.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
                 elif is_finance:
                     if is_finance_head:
-                        advances = TravelAdvance.objects.filter(status='PENDING_HEAD')
-                        claims = TravelClaim.objects.filter(status='PENDING_HEAD')
+                        advances = TravelAdvance.objects.filter(status='PENDING_HEAD', current_approver=user)
+                        claims = TravelClaim.objects.filter(status='PENDING_HEAD', current_approver=user)
                     else:
                         pending_money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'Approved']
-                        advances = TravelAdvance.objects.filter(status__in=pending_money_statuses)
-                        claims = TravelClaim.objects.filter(status__in=pending_money_statuses)
-                    
-                    # Filter by project/dept if needed
-                    finance_dept = user.department
-                    if finance_dept and finance_dept.lower() not in ['finance', 'finance department', 'accounts', 'finance head dept', 'finance executive dept']:
-                        advances = advances.filter(trip__project_code__istartswith=finance_dept)
-                        claims = claims.filter(trip__project_code__istartswith=finance_dept)
+                        advances = TravelAdvance.objects.filter(status__in=pending_money_statuses, current_approver=user)
+                        claims = TravelClaim.objects.filter(status__in=pending_money_statuses, current_approver=user)
                 elif is_hr:
                     # HR verification stage
                     trips = Trip.objects.filter(status='Manager Approved')
@@ -997,8 +989,23 @@ class ApprovalsView(APIView):
                 object_id=str(obj.pk), object_repr=str(obj)
             )
             
+            # STAGE DETECTION: Decide which workflow logic to execute based on current state and roles
+            # We check both the triggering user and the CURRENTLY ASSIGNED approver
+            assigned_approver = obj.current_approver
+            
+            # Helper to check if a user is functional (HR/Finance)
+            is_functional_stage = False
+            assigned_is_hr = _is_hr(assigned_approver) if assigned_approver else False
+            assigned_is_fin = (_is_finance_executive(assigned_approver) or _is_finance_head(assigned_approver)) if assigned_approver else False
+            
+            # If the request is already at HR/Finance status or assigned to them, it's a functional stage
+            if assigned_is_hr or assigned_is_fin or obj.status in ['Manager Approved', 'PENDING_EXECUTIVE', 'PENDING_HEAD', 'HR Approved']:
+                is_functional_stage = True
+
             # --- STAGE 1: Management Hierarchy ---
-            if not is_hr and not is_finance:
+            # Run this ONLY if it's NOT a functional stage (HR/Finance)
+            # UNLESS the triggering user is clearly not HR/Finance and its a standard pending status
+            if not is_functional_stage and not is_hr and not is_finance:
                 trip = obj if isinstance(obj, Trip) else getattr(obj, 'trip', None)
                 if trip:
                     level = getattr(obj, 'hierarchy_level', 1)
@@ -1015,26 +1022,23 @@ class ApprovalsView(APIView):
                         
                         rejected_items = obj.trip.expenses.filter(status='Rejected')
                         rej_msg = f" with {rejected_items.count()} items rejected" if rejected_items.exists() else ""
-                        update_trip_lifecycle(trip, f"Level {level} Approval", f"Approved by {user.name}{rej_msg}. Net Approved: ₹{approved_sum}.")
+                        update_trip_lifecycle(trip, "Management Approval", f"Approved by {user.name}{rej_msg}. Net Approved: ₹{approved_sum}.")
                     else:
-                        update_trip_lifecycle(trip, f"Level {level} Approval", f"Approved by {user.name}.")
+                        update_trip_lifecycle(trip, "Management Approval", f"Approved by {user.name}.")
                 
                 next_approver = None
                 
-                # Try explicit levels first
-                if obj.hierarchy_level == 1:
-                    next_approver = getattr(obj, 'senior_manager', None) or getattr(obj, 'hod_director', None)
-                elif obj.hierarchy_level == 2:
-                    next_approver = getattr(obj, 'hod_director', None)
+                # PURE RECURSIVE HIERARCHY: Manager of the person who is ACTUALLY assigned to the request
+                assigned_approver = obj.current_approver
+                if not assigned_approver:
+                     # Fallback for old records or edge cases where only triggering user is available
+                     assigned_approver = user
                 
-                # DYNAMIC FALLBACK: If no explicit level but current user has a manager
-                if not next_approver:
-                    # Use dynamic property to find manager
-                    potential_manager = user.reporting_manager
-                    
-                    # Ensure we don't route back to requester or to a non-existent manager
-                    if potential_manager and potential_manager != user and potential_manager != requester:
-                        next_approver = potential_manager
+                potential_manager = assigned_approver.reporting_manager
+                
+                # Ensure we don't route back to requester or to a non-existent/identity manager
+                if potential_manager and potential_manager != requester and potential_manager.employee_id != assigned_approver.employee_id:
+                    next_approver = potential_manager
                 
                 if next_approver:
                     # Move to next manager in chain
@@ -1092,8 +1096,9 @@ class ApprovalsView(APIView):
                         )
                 return Response({"message": "Sent to HR for verification"})
 
-            # --- STAGE 2: HR Approval ---
-            elif is_hr:
+            # --- STAGE 2: HR Verification ---
+            # Triggered if current user is HR OR if current assigned approver is HR (for admin/api key override)
+            elif is_hr or assigned_is_hr or obj.status == 'Manager Approved':
                 trip = obj if isinstance(obj, Trip) else getattr(obj, 'trip', None)
                 if trip:
                     update_trip_lifecycle(trip, "Ticket Booking", f"HR ({user.name}) has verified travel logistics.")
@@ -1152,8 +1157,9 @@ class ApprovalsView(APIView):
                             type='info'
                         )
                 return Response({"message": "HR recommendation processed"})
-            # --- STAGE 3: Finance Approval ---
-            elif is_finance:
+            # --- STAGE 3: Finance Verification & Payout ---
+            # Triggered if current user is Finance OR if current assigned approver is Finance (for admin/api key override)
+            elif is_finance or assigned_is_fin or obj.status in ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved']:
                 trip = obj if isinstance(obj, Trip) else getattr(obj, 'trip', None)
                 
                 # Case A: Finance Executive Verification (Finance Executive 1)
@@ -1386,23 +1392,13 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("Unauthorized trip association")
         
         reporting_manager = user.reporting_manager
-        senior_manager = user.senior_manager
-        hod_director = user.hod_director
         
-        # Logic to find first available approver
+        # Strictly follow reporting managers flow
         current_approver = reporting_manager
         h_level = 1
         
         if not current_approver:
-            current_approver = senior_manager
-            h_level = 2
-        
-        if not current_approver:
-            current_approver = hod_director
-            h_level = 3
-            
-        if not current_approver:
-            # If no managers at all, go to HR
+            # If no direct manager, move to HR
             current_approver = get_hr_head(user)
 
         from django.db.models import Sum # type: ignore
@@ -1420,8 +1416,8 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
             user_designation=user.designation,
             user_department=user.department,
             reporting_manager_name=reporting_manager.name if reporting_manager else None,
-            senior_manager_name=senior_manager.name if senior_manager else None,
-            hod_director_name=hod_director.name if hod_director else None
+            senior_manager_name=user.senior_manager.name if user.senior_manager else None,
+            hod_director_name=user.hod_director.name if user.hod_director else None
         )
         
         if current_approver:
@@ -1484,23 +1480,13 @@ class TravelAdvanceViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("Unauthorized trip association")
 
         reporting_manager = user.reporting_manager
-        senior_manager = user.senior_manager
-        hod_director = user.hod_director
-
-        # Logic to find first available approver
+        
+        # Strictly follow reporting managers flow
         current_approver = reporting_manager
         h_level = 1
         
         if not current_approver:
-            current_approver = senior_manager
-            h_level = 2
-        
-        if not current_approver:
-            current_approver = hod_director
-            h_level = 3
-            
-        if not current_approver:
-            # If no managers at all, go to HR
+            # If no direct manager, move to HR
             current_approver = get_hr_head(user)
 
         advance = serializer.save(
@@ -1513,8 +1499,8 @@ class TravelAdvanceViewSet(viewsets.ModelViewSet):
             user_designation=user.designation,
             user_department=user.department,
             reporting_manager_name=reporting_manager.name if reporting_manager else None,
-            senior_manager_name=senior_manager.name if senior_manager else None,
-            hod_director_name=hod_director.name if hod_director else None
+            senior_manager_name=user.senior_manager.name if user.senior_manager else None,
+            hod_director_name=user.hod_director.name if user.hod_director else None
         )
         
         if current_approver:
@@ -1639,14 +1625,14 @@ class DashboardStatsView(APIView):
             pending_action += TravelAdvance.objects.filter(current_approver=user).count()
             pending_action += TravelClaim.objects.filter(current_approver=user).count()
             
-            # For Finance, count specific stages they act on
+            # For Finance, count specific stages exactly assigned to them
             if is_fin_head:
-                pending_action += TravelAdvance.objects.filter(status='PENDING_HEAD').count()
-                pending_action += TravelClaim.objects.filter(status='PENDING_HEAD').count()
+                pending_action += TravelAdvance.objects.filter(status='PENDING_HEAD', current_approver=user).count()
+                pending_action += TravelClaim.objects.filter(status='PENDING_HEAD', current_approver=user).count()
             elif is_fin_exec:
                 money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE']
-                pending_action += TravelAdvance.objects.filter(status__in=money_statuses).count()
-                pending_action += TravelClaim.objects.filter(status__in=money_statuses).count()
+                pending_action += TravelAdvance.objects.filter(status__in=money_statuses, current_approver=user).count()
+                pending_action += TravelClaim.objects.filter(status__in=money_statuses, current_approver=user).count()
             elif is_hr:
                 pending_action += Trip.objects.filter(status='Manager Approved').count()
             elif is_gh_manager:

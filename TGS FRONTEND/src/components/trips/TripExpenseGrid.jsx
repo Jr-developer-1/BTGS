@@ -653,8 +653,8 @@ const TripExpenseGrid = ({
                 if (!details.auditTrail) details.auditTrail = [];
 
                 // Categorization recovery: If it's "Others" (the fallback) but has incidental-specific fields, it's an Incidental.
-                const natureVal = (exp.category === 'Others' && (details.incidentalType || details.incidentalCategory)) 
-                    ? 'Incidental' 
+                const natureVal = (exp.category === 'Others' && (details.incidentalType || details.incidentalCategory))
+                    ? 'Incidental'
                     : (exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category));
                 // enforce fixed fields for non-TRP trip ids and local travel entries
                 if (isFixedLocal && natureVal === 'Local Travel') {
@@ -1282,8 +1282,8 @@ const TripExpenseGrid = ({
         try {
             // Include ALL rows for the current category so edits to existing rows are also saved.
             // (Unless it's Final Review, where we save all categories).
-            const rowsToSave = activeCategory === 'Final Review' 
-                ? rows 
+            const rowsToSave = activeCategory === 'Final Review'
+                ? rows
                 : rows.filter(r => r.nature === activeCategory);
 
             if (rowsToSave.length === 0) {
@@ -2102,10 +2102,15 @@ const TripExpenseGrid = ({
                     const itemizedSum = (newDetails.travelIncidentals || []).reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
                     updatedAmount = (ticketAmt + itemizedSum).toFixed(2);
                 } else if (row.nature === 'Local Travel') {
-                    const fuelAmt = parseFloat(newDetails.fuelAmount || 0);
-                    const tollAmt = parseFloat(newDetails.tollAmount || 0);
-                    const itemizedSum = (newDetails.localIncidentals || []).reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
-                    updatedAmount = (fuelAmt + tollAmt + itemizedSum).toFixed(2);
+                    // Only auto-calculate amount if it's an auto-calculated sub-type (Own vehicle, etc.)
+                    // Non-auto-calc modes (Auto, PT, Cab) use the manually entered row.amount
+                    const isAutoCalc = ['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental', 'Company Bike'].includes(newDetails.subType);
+                    if (isAutoCalc) {
+                        const fuelAmt = parseFloat(newDetails.fuelAmount || 0);
+                        const tollAmt = parseFloat(newDetails.tollAmount || 0);
+                        const itemizedSum = (newDetails.localIncidentals || []).reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+                        updatedAmount = (fuelAmt + tollAmt + itemizedSum).toFixed(2);
+                    }
                 }
 
                 return { ...row, date: updatedDate, details: newDetails, amount: updatedAmount, isSaved: false };

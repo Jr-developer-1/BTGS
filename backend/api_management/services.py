@@ -213,8 +213,10 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         pos_list = detail_data.get('positions_details') or []
                         pos_detail = (pos_list[0] if pos_list else {}) or {}
                         
-                        # Use top-level reporting_to if available
-                        raw_reporting_to = detail_data.get('reporting_to', [])
+                        # Use top-level reporting_to if available from the rich list payload first
+                        raw_reporting_to = item.get('position', {}).get('reporting_to', [])
+                        if not raw_reporting_to:
+                            raw_reporting_to = detail_data.get('reporting_to', [])
                         if not raw_reporting_to and pos_detail:
                              raw_reporting_to = pos_detail.get('reporting_to', [])
 
@@ -223,58 +225,52 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         resolved_reporting_to = []
                         
                         if isinstance(raw_reporting_to, list):
-                            for i, item in enumerate(raw_reporting_to):
-                                if isinstance(item, (int, str)) and not str(item).startswith('EMP-'):
-                                    # It's an ID, try to get name from reporting_to_names
-                                    name = reporting_to_names[i] if i < len(reporting_to_names) else f"Manager {item}"
-                                    # Try to resolve code for hierarchy functionality
-                                    code = resolve_hr_id_to_code(item, api_url, headers)
-                                    resolved_reporting_to.append({"id": item, "name": name, "employee_code": code})
+                            for i, mgr in enumerate(raw_reporting_to):
+                                if isinstance(mgr, int) or (isinstance(mgr, str) and str(mgr).isdigit()):
+                                    # It's a pure numeric ID, try to get name from reporting_to_names and resolve code
+                                    name = reporting_to_names[i] if i < len(reporting_to_names) else f"Manager {mgr}"
+                                    code = resolve_hr_id_to_code(mgr, api_url, headers)
+                                    resolved_reporting_to.append({"id": mgr, "name": name, "employee_code": code})
                                 else:
-                                    resolved_reporting_to.append(item)
-                        elif isinstance(raw_reporting_to, (int, str)):
+                                    # It's an object or a long-form string code (letters/numbers/symbols)
+                                    if isinstance(mgr, dict):
+                                        emp_id = mgr.get('employee_id')
+                                        if emp_id and not mgr.get('employee_code'):
+                                            # The manager object is missing the full login code, resolve it
+                                            mgr['employee_code'] = resolve_hr_id_to_code(emp_id, api_url, headers)
+                                    resolved_reporting_to.append(mgr)
+                        elif isinstance(raw_reporting_to, int) or (isinstance(raw_reporting_to, str) and str(raw_reporting_to).isdigit()):
                             name = detail_data.get('reporting_to_name', f"Manager {raw_reporting_to}")
                             code = resolve_hr_id_to_code(raw_reporting_to, api_url, headers)
                             resolved_reporting_to = [{"id": raw_reporting_to, "name": name, "employee_code": code}]
                         else:
-                            resolved_reporting_to = raw_reporting_to
+                            if isinstance(raw_reporting_to, dict):
+                                emp_id = raw_reporting_to.get('employee_id')
+                                if emp_id and not raw_reporting_to.get('employee_code'):
+                                    raw_reporting_to['employee_code'] = resolve_hr_id_to_code(emp_id, api_url, headers)
+                                resolved_reporting_to = [raw_reporting_to]
+                            else:
+                                resolved_reporting_to = [raw_reporting_to] if raw_reporting_to else []
 
                         # Update pos_detail with resolved hierarchy
                         if pos_detail:
                             pos_detail['reporting_to'] = resolved_reporting_to
 
-                        transformed_results.append({
-                            "employee": {
-                                "id": detail_data.get("id"),
-                                "name": detail_data.get("name"),
-                                "employee_code": detail_data.get("employee_code"),
-                                "photo": detail_data.get("photo"),
-                                "email": detail_data.get("email") or detail_data.get("personal_email") or "",
-                                "phone": detail_data.get("phone") or "",
-                                "bank_name": (detail_data.get("bank_details") or {}).get("bank_name") if detail_data.get("bank_details") else "",
-                                "account_no": (detail_data.get("bank_details") or {}).get("account_number") if detail_data.get("bank_details") else "",
-                                "ifsc_code": (detail_data.get("bank_details") or {}).get("ifsc_code") if detail_data.get("bank_details") else "",
-                            },
-                            "position": {
-                                "name": pos_detail.get("name"),
-                                "role_name": pos_detail.get("role_name"),
-                                "department": pos_detail.get("department_name"),
-                                "section": pos_detail.get("section_name"),
-                                "reporting_to": resolved_reporting_to,
-                                "level_rank": pos_detail.get("level_rank"),
-                                "level_name": pos_detail.get("level_name") or (f"Level {pos_detail.get('level_rank')}" if pos_detail.get("level_rank") else None)
-                            },
-                            "project": {
-                                "name": detail_data.get("project_name") or (detail_data.get("project") or {}).get("name") or "Main Project",
-                                "code": detail_data.get("project_code") or (detail_data.get("project") or {}).get("code") or (detail_data.get("project") or {}).get("project_code") or ""
-                            },
-                            "office": {
-                                "name": pos_detail.get("office_name") or "Head Office",
-                                "level": pos_detail.get("office_level"),
-                                "geo_location": detail_data.get("location_details", {})
-                            },
-                            "positions_details": pos_list # Keep for hierarchy properties
-                        })
+                        # Safely inject the resolved reporting hierarchy into the existing rich list item
+                        if 'position' not in item:
+                            item['position'] = {}
+                        if 'employee' not in item:
+                            item['employee'] = {}
+
+                        item['position']['reporting_to'] = resolved_reporting_to
+                        
+                        # Only enrich fields that might be missing from list view (like photo or bank details)
+                        if detail_data.get('photo') and not item['employee'].get('photo'):
+                            item['employee']['photo'] = detail_data.get('photo')
+                        if detail_data.get('bank_details'):
+                            item['bank_details'] = detail_data.get('bank_details')
+                            
+                        transformed_results.append(item)
                         continue 
                 except Exception as e:
                     print(f"Error fetching detail for transformed results: {e}")

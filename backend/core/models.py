@@ -57,13 +57,11 @@ class User(models.Model):
         if should_skip_external_api():
             return None
 
-        # 1. Guard for purely local users by ID and Role
+        # 1. Guard for literal static system accounts by ID
+        # Only skip the API for the specific local-only management identities
         lower_id = self.employee_id.lower()
-        role_name = (self.role.name if self.role else '').lower()
-        
-        # Check against common local ID and Role patterns
-        management_keywords = ['admin', 'hr', 'guesthousemanager', 'finance', 'cfo']
-        if lower_id in management_keywords or 'admin001' in lower_id or any(kw in role_name for kw in management_keywords) or 'superuser' in role_name:
+        static_system_ids = ['admin', 'admin001', 'hr', 'guesthousemanager', 'finance', 'cfo']
+        if lower_id in static_system_ids:
              return None
              
         from api_management.services import get_dynamic_employee_data
@@ -218,57 +216,41 @@ class User(models.Model):
         emp_info = data.get('employee', {})
         return emp_info.get('ifsc_code', '')
 
-    @property
-    def reporting_manager(self):
+    def _get_hierarchy_manager(self, index):
+        """Helper to resolve a manager from the API hierarchy at a specific depth."""
         data = self._get_api_data()
         if not data: return None
-        # Handle both top-level and nested reporting_to
-        pos_details = data.get('positions_details', [])
-        reporting_to = pos_details[0].get('reporting_to', []) if pos_details else []
-        if not reporting_to:
+        # Support both 'position' (current) and 'positions_details' (legacy)
+        pos = data.get('position') or (data.get('positions_details', [{}])[0])
+        reporting_to = pos.get('reporting_to', [])
+        if len(reporting_to) <= index:
              return None
-        
-        mgr_info = reporting_to[0]
+             
+        mgr_info = reporting_to[index]
+        if not mgr_info:
+            return None
+            
+        # Resolve identifier: prioritize 'employee_code' (Login ID) then 'employee_id' (Numeric API ID)
+        emp_code = None
         if isinstance(mgr_info, dict):
-            emp_code = mgr_info.get('employee_code') or mgr_info.get('employee', {}).get('employee_code')
-            if not emp_code and mgr_info.get('id'):
-                # Try to use ID if code is missing? 
-                # Actually, our _get_or_create_shell_user expects a code.
-                # If we only have an ID, we might need a separate resolution step.
-                # For now, we return None if no code is found to avoid corrupting User records.
-                return None
-            return self._get_or_create_shell_user(emp_code)
-        return self._get_or_create_shell_user(mgr_info)
+            # Prioritize employee_code/employee_identifier as it's typically the login ID
+            emp_code = mgr_info.get('employee_code') or mgr_info.get('employee_id') or mgr_info.get('employee', {}).get('employee_code')
+        else:
+            emp_code = mgr_info
+            
+        return self._get_or_create_shell_user(str(emp_code)) if emp_code else None
+
+    @property
+    def reporting_manager(self):
+        return self._get_hierarchy_manager(0)
 
     @property
     def senior_manager(self):
-        data = self._get_api_data()
-        if not data: return None
-        pos_details = data.get('positions_details', [])
-        reporting_to = pos_details[0].get('reporting_to', []) if pos_details else []
-        if len(reporting_to) < 2:
-             return None
-             
-        mgr_info = reporting_to[1]
-        if isinstance(mgr_info, dict):
-            emp_code = mgr_info.get('employee_code') or mgr_info.get('employee', {}).get('employee_code')
-            return self._get_or_create_shell_user(emp_code)
-        return self._get_or_create_shell_user(mgr_info)
+        return self._get_hierarchy_manager(1)
 
     @property
     def hod_director(self):
-        data = self._get_api_data()
-        if not data: return None
-        pos_details = data.get('positions_details', [])
-        reporting_to = pos_details[0].get('reporting_to', []) if pos_details else []
-        if len(reporting_to) < 3:
-             return None
-             
-        mgr_info = reporting_to[2]
-        if isinstance(mgr_info, dict):
-            emp_code = mgr_info.get('employee_code') or mgr_info.get('employee', {}).get('employee_code')
-            return self._get_or_create_shell_user(emp_code)
-        return self._get_or_create_shell_user(mgr_info)
+        return self._get_hierarchy_manager(2)
 
 class Session(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
