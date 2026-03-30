@@ -145,17 +145,6 @@ class SignupView(APIView):
             'is_active': True,
         }
 
-        # Try to link hierarchy (Linking via employee codes remains fine)
-        reporting_to = pos_info.get('reporting_to', [])
-        for i, manager_data in enumerate(reporting_to):
-            m_code = manager_data.get('employee_code')
-            if m_code:
-                manager_user = User.objects.filter(employee_id=m_code).first()
-                if manager_user:
-                    if i == 0: defaults['reporting_manager'] = manager_user
-                    elif i == 1: defaults['senior_manager'] = manager_user
-                    elif i == 2: defaults['hod_director'] = manager_user
-
         user, created = User.objects.update_or_create(
             employee_id=employee_code,
             defaults=defaults
