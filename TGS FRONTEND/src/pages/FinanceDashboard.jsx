@@ -29,10 +29,10 @@ const FinanceDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState('pending'); // 'pending', 'processing', 'completed'
     const [stats, setStats] = useState([
-        { title: 'Pending Audit', value: '0', icon: <Clock color="#f59e0b" />, trend: '0%', isUp: true },
-        { title: 'Settled Today', value: '₹0', icon: <CheckCircle color="#22c55e" />, trend: '0%', isUp: true },
-        { title: 'Flagged/Disputed', value: '0', icon: <AlertCircle color="#ef4444" />, trend: '0%', isUp: false },
-        { title: 'Avg. Audit Time', value: '0h', icon: <TrendingUp color="#3b82f6" />, trend: '0%', isUp: false },
+        { title: 'To Review', value: '0', icon: <Clock color="#f59e0b" />, trend: '0%', isUp: true },
+        { title: 'Paid Today', value: '₹0', icon: <CheckCircle color="#22c55e" />, trend: '0%', isUp: true },
+        { title: 'Issues / Disputes', value: '0', icon: <AlertCircle color="#ef4444" />, trend: '0%', isUp: false },
+        { title: 'Avg. Review Time', value: '0h', icon: <TrendingUp color="#3b82f6" />, trend: '0%', isUp: false },
     ]);
     const { showToast } = useToast();
 
@@ -164,8 +164,8 @@ const FinanceDashboard = () => {
         <div className="finance-dashboard">
             <div className="page-header">
                 <div>
-                    <h1>FIMS - Financial Information Management System</h1>
-                    <p>Real-time oversight of trip logistics, expense records, and audit throughput.</p>
+                    <h1>Finance Dashboard</h1>
+                    {/* <p>Manage employee trips, expenses, and payments.</p> */}
                 </div>
                 <div className="header-actions">
                     <button className="btn-secondary" onClick={() => fetchFinanceData()}>
@@ -199,7 +199,7 @@ const FinanceDashboard = () => {
                 <div className="section-header">
                     <div className="title-area">
                         <BarChart3 size={20} />
-                        <h3>Master Financial Audit Log</h3>
+                        <h3>Recent Finance Requests</h3>
                     </div>
                     <div className="filter-group">
                         <div className="search-fims-wrapper">
@@ -222,28 +222,28 @@ const FinanceDashboard = () => {
                         onClick={() => setActiveTab('pending')}
                     >
                         <Clock size={16} />
-                        Action Required
+                        Needs Action
                     </button>
                     <button
                         className={`fims-tab ${activeTab === 'processing' ? 'active' : ''}`}
                         onClick={() => setActiveTab('processing')}
                     >
                         <Zap size={16} />
-                        Under Process
+                        In Progress
                     </button>
                     <button
                         className={`fims-tab ${activeTab === 'completed' ? 'active' : ''}`}
                         onClick={() => setActiveTab('completed')}
                     >
                         <CheckCircle size={16} />
-                        Transfer Completed
+                        Paid
                     </button>
                     <button
                         className={`fims-tab ${activeTab === 'rejected' ? 'active' : ''}`}
                         onClick={() => setActiveTab('rejected')}
                     >
                         <AlertCircle size={16} />
-                        Flagged / Rejected
+                        Rejected
                     </button>
                 </div>
 
@@ -315,10 +315,10 @@ const FinanceDashboard = () => {
                                         <div className="empty-state-fims">
                                             <AlertCircle size={32} opacity={0.3} style={{ marginBottom: '10px' }} />
                                             <p>
-                                                {activeTab === 'pending' ? 'No pending financial actions found in queue.' :
-                                                    activeTab === 'processing' ? 'No transactions are currently under audit process.' :
-                                                        activeTab === 'completed' ? 'No completed fund transfers found.' :
-                                                            'No flagged or rejected requests found at this time.'}
+                                                {activeTab === 'pending' ? 'No pending requests found.' :
+                                                    activeTab === 'processing' ? 'No transactions are currently in progress.' :
+                                                        activeTab === 'completed' ? 'No completed payments found.' :
+                                                            'No rejected requests found.'}
                                             </p>
                                         </div>
                                     </td>

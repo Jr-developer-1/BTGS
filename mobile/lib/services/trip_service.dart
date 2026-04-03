@@ -15,8 +15,12 @@ class TripService {
 
     String queryString = params.isNotEmpty ? '?${params.join('&')}' : '';
 
-    final tripsResponse = await _apiService.get('${ApiConstants.trips}$queryString');
-    final travelsResponse = await _apiService.get('${ApiConstants.travels}$queryString');
+    final tripsResponse = await _apiService.get(
+      '${ApiConstants.trips}$queryString',
+    );
+    final travelsResponse = await _apiService.get(
+      '${ApiConstants.travels}$queryString',
+    );
 
     List<Trip> trips = [];
     if (tripsResponse is List) {
@@ -38,7 +42,9 @@ class TripService {
 
   String _resolveTripId(String id) {
     // id may be raw or base64-url encoded. Decode encoded IDs for routing decisions.
-    if (id.startsWith('ITS-') || id.startsWith('TRP-') || id.startsWith('TRV-')) {
+    if (id.startsWith('ITS-') ||
+        id.startsWith('TRP-') ||
+        id.startsWith('TRV-')) {
       return id;
     }
 
@@ -63,7 +69,9 @@ class TripService {
 
   Future<Trip> fetchTripDetails(String id) async {
     final resolvedId = _resolveTripId(id);
-    final endpoint = resolvedId.startsWith('ITS-') ? ApiConstants.travelDetails : ApiConstants.tripDetails;
+    final endpoint = resolvedId.startsWith('ITS-')
+        ? ApiConstants.travelDetails
+        : ApiConstants.tripDetails;
     final url = endpoint.replaceFirst('{id}', id);
     final response = await _apiService.get(url);
     return Trip.fromJson(response);
@@ -71,7 +79,9 @@ class TripService {
 
   Future<void> patchTrip(String tripId, Map<String, dynamic> data) async {
     final resolvedId = _resolveTripId(tripId);
-    final endpoint = resolvedId.startsWith('ITS-') ? ApiConstants.travelDetails : ApiConstants.tripDetails;
+    final endpoint = resolvedId.startsWith('ITS-')
+        ? ApiConstants.travelDetails
+        : ApiConstants.tripDetails;
     final url = endpoint.replaceFirst('{id}', tripId);
     await _apiService.patch(url, body: data, includeAuth: true);
   }
@@ -79,12 +89,8 @@ class TripService {
   Future<Trip> createTrip(Map<String, dynamic> data) async {
     final isLocal = data['consider_as_local'] == true;
     final url = isLocal ? ApiConstants.travels : ApiConstants.trips;
-    
-    final response = await _apiService.post(
-      url,
-      body: data,
-      includeAuth: true,
-    );
+
+    final response = await _apiService.post(url, body: data, includeAuth: true);
     return Trip.fromJson(response);
   }
 
@@ -133,7 +139,8 @@ class TripService {
     String viewType = 'special',
     String? search,
   }) async {
-    String url = '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType';
+    String url =
+        '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType';
     if (search != null && search.isNotEmpty) {
       url += '&search=$search';
     }
@@ -252,7 +259,9 @@ class TripService {
 
   Future<double?> fetchFuelRate(String vehicleType) async {
     try {
-      final response = await _apiService.get('${ApiConstants.fuelRates}?vehicle_type=$vehicleType');
+      final response = await _apiService.get(
+        '${ApiConstants.fuelRates}?vehicle_type=$vehicleType',
+      );
       if (response != null && response['rate_per_km'] != null) {
         return double.tryParse(response['rate_per_km'].toString());
       }
@@ -582,7 +591,9 @@ class TripService {
   }
 
   Future<List<Map<String, dynamic>>> fetchBulkActivities() async {
-    final response = await _apiService.get('${ApiConstants.baseUrl}/api/bulk-activities/');
+    final response = await _apiService.get(
+      '${ApiConstants.baseUrl}/api/bulk-activities/',
+    );
     if (response is List) return List<Map<String, dynamic>>.from(response);
     if (response is Map && response['results'] != null) {
       return List<Map<String, dynamic>>.from(response['results']);
@@ -590,13 +601,51 @@ class TripService {
     return [];
   }
 
-  Future<void> handleBulkBatchAction(String batchId, String action, {Map<String, dynamic> extraData = const {}}) async {
+  Future<List<Map<String, dynamic>>> fetchBulkHistory(String tripId) async {
+    try {
+      final response = await _apiService.get(
+        '${ApiConstants.bulkHistory}?trip_id=$tripId',
+      );
+      if (response is List) return List<Map<String, dynamic>>.from(response);
+      return [];
+    } catch (e) {
+      debugPrint('ERROR FETCHING BULK HISTORY for $tripId: $e');
+      return [];
+    }
+  }
+
+  Future<void> uploadBulkJson({
+    required String tripId,
+    required List<dynamic> jsonData,
+    String? parentBatchId,
+  }) async {
+    final Map<String, dynamic> body = {
+      'trip_id': tripId,
+      'data_json': jsonData,
+    };
+    if (parentBatchId != null) {
+      body['parent_batch_id'] = parentBatchId;
+    }
+
+    await _apiService.post(
+      '${ApiConstants.baseUrl}/api/bulk-activities/upload/',
+      body: body,
+      includeAuth: true,
+    );
+  }
+
+  Future<void> handleBulkBatchAction(
+    String batchId,
+    String action, {
+    Map<String, dynamic> extraData = const {},
+  }) async {
     await _apiService.post(
       '${ApiConstants.baseUrl}/api/bulk-activities/$batchId/$action/',
       body: extraData,
       includeAuth: true,
     );
   }
+
   Future<List<Map<String, dynamic>>> fetchTeamLiveTracking() async {
     try {
       final response = await _apiService.get('/api/team/live-tracking/');
@@ -608,5 +657,3 @@ class TripService {
     }
   }
 }
-
-

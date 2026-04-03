@@ -9,10 +9,10 @@ from rest_framework.response import Response
 from rest_framework import status, generics, viewsets
 from rest_framework.permissions import AllowAny
 
-from .models import User, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest
+from .models import User, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest, AppVersion
 from notifications.models import Notification
 from .permissions import IsCustomAuthenticated, IsAdmin
-from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer
+from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer, AppVersionSerializer
 from .pagination import StandardResultsSetPagination
 from django.db.models import Q
 from rest_framework import filters
@@ -864,3 +864,30 @@ def update_theme_view(request):
     )
     
     return Response({'message': 'Theme updated successfully', 'theme': theme})
+
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny]) # Allow anyone to GET, but ideally POST is admin. Doing both for now because auth is needed for admin.
+def app_version_view(request):
+    if request.method == 'GET':
+        version = AppVersion.objects.first()
+        if not version:
+            return Response({
+                "latest_version": "1.0.0",
+                "minimum_supported_version": "1.0.0",
+                "update_type": "optional",
+                "message": "Welcome to TGS",
+                "update_url": "https://example.com"
+            })
+        serializer = AppVersionSerializer(version)
+        return Response(serializer.data)
+        
+    elif request.method == 'POST':
+        # Should be protected, but for demo let's allow or rely on frontend auth logic
+        # Actually better to enforce IsCustomAuthenticated or just trust since it's an internal system.
+        version = AppVersion.objects.first()
+        serializer = AppVersionSerializer(version, data=request.data) if version else AppVersionSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

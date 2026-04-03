@@ -158,6 +158,74 @@ def update_trip_lifecycle(trip, title, description):
         trip.lifecycle_events = events
         trip.save(update_fields=['lifecycle_events'])
 
+def _generate_expenses_from_batches(trip):
+    """
+    Helper to convert rows from BulkActivityBatch into individual Expense records
+    at any stage of approval.
+    """
+    batches = trip.activity_batches.all()
+    
+    for batch in batches:
+        data = batch.data_json
+        if not isinstance(data, list):
+            continue
+            
+        created_ids = []
+        for row in data:
+            # ONLY process rows marked as 'Validated', 'OK', or 'Approved'
+            # Skip 'Rejected' rows as they are handled in the corrections UI
+            row_status = row.get('_status')
+            if row_status not in ['Validated', 'OK', 'Approved'] or 'instruc' in str(row.get('date', '')).lower():
+                continue
+                
+            try:
+                # Map Excel row fields to Expense fields
+                # Date format in Excel is usually string or date object
+                date_str = row.get('date')
+                if not date_str: continue
+                
+                # Default amount for mileage if not provided? 
+                # (Ideally use a rate from settings, but for now we follow the web's lead)
+                amount = row.get('amount') or 0
+                
+                desc_dict = {
+                    'origin': row.get('origin_route') or row.get('origin') or '',
+                    'destination': row.get('destination_route') or row.get('destination') or '',
+                    'startTime': row.get('start_time') or '',
+                    'endTime': row.get('reach_time') or row.get('end_time') or '',
+                    'mode': row.get('mode') or 'Bike',
+                    'subType': row.get('vehicle') or 'Own Bike',
+                    'purpose': row.get('visit_intent') or row.get('purpose') or '',
+                    'jobReport': row.get('visit_intent') or row.get('purpose') or '',
+                    'is_bulk': True,
+                    'batch_id': batch.id,
+                    'row_index': data.index(row)
+                }
+
+                # Avoid creating duplicate expenses for the same row
+                pattern = f'"batch_id": {batch.id}, "row_index": {data.index(row)}'
+                if Expense.objects.filter(trip=trip, description__icontains=pattern).exists():
+                    continue
+
+                # Create the expense record
+                exp = Expense.objects.create(
+                    trip=trip,
+                    date=date_str,
+                    category='Fuel' if desc_dict['mode'] == 'Bike' else 'Local Travel',
+                    amount=amount,
+                    description=json.dumps(desc_dict),
+                    status='Approved',
+                    remarks=row.get('_remark') or desc_dict['purpose']
+                )
+                created_ids.append(exp.id)
+            except Exception as e:
+                print(f"Error creating expense from batch row: {e}")
+                
+        # Update batch to mark it as processed
+        if created_ids:
+            batch.created_expenses = created_ids
+            batch.save(update_fields=['created_expenses'])
+
 
 
 
@@ -220,7 +288,7 @@ class TripListCreateView(generics.ListCreateAPIView):
         user_role = user.role.name.lower() if user.role else ''
         
         if all_trips:
-            if user_role in ['admin', 'guesthousemanager', 'finance', 'cfo']:
+            if user_roTraveln ['admin', 'guesthousemanager', 'finance', 'cfo']:
                 return Trip.objects.all().order_by('-created_at')
             
             return Trip.objects.filter(
@@ -762,7 +830,16 @@ class ApprovalsView(APIView):
                             "start_image": decrypt_key(t.odometer_details.start_odo_image) if hasattr(t, 'odometer_details') and t.odometer_details.start_odo_image else None,
                             "end_reading": str(t.odometer_details.end_odo_reading) if hasattr(t, 'odometer_details') and t.odometer_details.end_odo_reading else None,
                             "end_image": decrypt_key(t.odometer_details.end_odo_image) if hasattr(t, 'odometer_details') and t.odometer_details.end_odo_image else None,
-                        } if hasattr(t, 'odometer_details') else None
+                        } if hasattr(t, 'odometer_details') else None,
+                        "activity_batches": [
+                            {
+                                "id": b.id,
+                                "file_name": b.file_name,
+                                "status": b.status,
+                                "data_json": b.data_json,
+                                "created_at": b.created_at.strftime("%b %d, %Y")
+                            } for b in t.activity_batches.all()
+                        ]
                     }
                 })
             
@@ -842,7 +919,16 @@ class ApprovalsView(APIView):
                             "start_image": decrypt_key(c.trip.odometer_details.start_odo_image) if hasattr(c.trip, 'odometer_details') and c.trip.odometer_details.start_odo_image else None,
                             "end_reading": str(c.trip.odometer_details.end_odo_reading) if hasattr(c.trip, 'odometer_details') and c.trip.odometer_details.end_odo_reading else None,
                             "end_image": decrypt_key(c.trip.odometer_details.end_odo_image) if hasattr(c.trip, 'odometer_details') and c.trip.odometer_details.end_odo_image else None,
-                        } if hasattr(c.trip, 'odometer_details') else None
+                        } if hasattr(c.trip, 'odometer_details') else None,
+                        "activity_batches": [
+                            {
+                                "id": b.id,
+                                "file_name": b.file_name,
+                                "status": b.status,
+                                "data_json": b.data_json,
+                                "created_at": b.created_at.strftime("%b %d, %Y")
+                            } for b in c.trip.activity_batches.all()
+                        ]
                     }
                 })
 
@@ -864,6 +950,65 @@ class ApprovalsView(APIView):
         if not task_id or not action:
             return Response({"error": "ID and Action required"}, status=400)
             
+        if action == 'UpdateBatchRow':
+            row_index = request.data.get('row_index')
+            row_status = request.data.get('row_status')
+            remarks = request.data.get('remarks', '')
+            
+            print(f"DEBUG: UpdateBatchRow — id={task_id}, index={row_index}, status={row_status}")
+            
+            try:
+                from .models import BulkActivityBatch
+                batches = BulkActivityBatch.objects.none()
+
+                if task_id.startswith('TRIP-') or any(task_id.startswith(p) for p in ['ITS-', 'TRP-', 'TRV-']):
+                    # ID refers to a Trip — find all activity batches for that trip
+                    raw_trip_id = task_id.replace('TRIP-', '') if task_id.startswith('TRIP-') else task_id
+                    trip = Trip.objects.filter(trip_id=raw_trip_id).first()
+                    if trip:
+                        batches = trip.activity_batches.all()
+                    else:
+                        return Response({"error": f"Trip not found: {raw_trip_id}"}, status=404)
+                elif task_id.startswith('BATCH-'):
+                    # Explicit batch ID
+                    batch_id = task_id.replace('BATCH-', '')
+                    batches = BulkActivityBatch.objects.filter(id=batch_id)
+                else:
+                    # Assume raw numeric batch ID (from Monthly Tour Plan list view)
+                    batches = BulkActivityBatch.objects.filter(id=task_id)
+
+                if not batches.exists():
+                    return Response({"error": f"No activity batches found for ID: {task_id}"}, status=404)
+
+                updated_count = 0
+                for batch in batches:
+                    data = batch.data_json
+                    if isinstance(data, list) and 0 <= int(row_index) < len(data):
+                        row = data[int(row_index)]
+                        row['_status'] = row_status
+                        # Stamp who took this action (name + designation) into the remark
+                        designation = getattr(user, 'designation', '')
+                        if not designation or str(designation).lower() in ['n/a', 'na', 'employee', '']:
+                            designation = getattr(user, 'department', '')
+                        
+                        role_str = designation if designation and str(designation).lower() not in ['n/a', 'na', ''] else (user.role.name if user.role else 'Manager')
+                        user_info = f"{user.name} ({role_str})"
+                        if row_status == 'Rejected':
+                            row['_remarks'] = f"Rejected by {user_info}: {remarks}" if remarks else f"Rejected by {user_info}"
+                        else:
+                            row['_remarks'] = remarks or ''
+                        
+                        batch.data_json = data
+                        batch.save()
+                        updated_count += 1
+                
+                print(f"DEBUG: UpdateBatchRow updated {updated_count} row(s)")
+                return Response({"message": f"Row {row_index} updated in {updated_count} batch(es)"})
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return Response({"error": str(e)}, status=400)
+
         if action == 'UpdateItem':
             item_id = request.data.get('item_id')
             item_status = request.data.get('item_status')
@@ -895,8 +1040,10 @@ class ApprovalsView(APIView):
                 obj = TravelClaim.objects.get(id=task_id.replace('CLAIM-', ''))
             elif task_id.startswith('DISPUTE-'):
                 obj = Dispute.objects.get(id=task_id.replace('DISPUTE-', ''))
+            elif any(task_id.startswith(p) for p in ['ITS-', 'TRP-', 'TRV-']):
+                obj = Trip.objects.get(trip_id=task_id)
             else:
-                return Response({"error": "Invalid task ID"}, status=400)
+                return Response({"error": f"Invalid task ID prefix: {task_id[:10]}..."}, status=400)
             
             self._handle_workflow(obj, action, user, request.data)
             return Response({"message": f"Task processed successfully: {action}"})
@@ -924,14 +1071,17 @@ class ApprovalsView(APIView):
             # 1. Primary approver check
             if obj.current_approver == user:
                 authorized = True
-            # 2. Functional role check (allow acting on specific statuses even if not the explicit current_approver)
+            # 2. Functional role check
             elif is_hr and obj.status == 'Manager Approved':
                 authorized = True
             elif is_finance_exec and obj.status in ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'Approved', 'Under Process']:
                 authorized = True
             elif is_finance_head and obj.status in ['PENDING_HEAD', 'PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'Approved', 'Under Process']:
                 authorized = True
-            # 3. Finance-specific actions check
+            # 3. Trip owner check for submission
+            elif action == 'Submit' and hasattr(obj, 'user') and obj.user == user:
+                authorized = True
+            # 4. Finance-specific actions check
             elif is_finance and action in ['Transfer', 'Pay', 'UnderProcess', 'RejectByFinance']:
                 authorized = True
 
@@ -1046,6 +1196,14 @@ class ApprovalsView(APIView):
                     obj.hierarchy_level += 1
                     obj.save()
                     
+                    if isinstance(obj, Trip):
+                        for batch in obj.activity_batches.exclude(status='Rejected'):
+                            batch.current_approver = next_approver
+                            batch.hierarchy_level = obj.hierarchy_level
+                            batch.save()
+                        # NEW: Generate expenses for rows VALIDATED by this manager
+                        _generate_expenses_from_batches(obj)
+                    
                     Notification.objects.create(
                         user=next_approver,
                         title=f"Pending Approval: {request_type}",
@@ -1065,6 +1223,12 @@ class ApprovalsView(APIView):
                     obj.status = 'Manager Approved'
                     obj.current_approver = hr_head
                     obj.save()
+                    
+                    if isinstance(obj, Trip):
+                        for batch in obj.activity_batches.exclude(status='Rejected'):
+                            batch.status = 'Manager Approved'
+                            batch.current_approver = hr_head
+                            batch.save()
                     
                     if trip:
                         update_trip_lifecycle(trip, f"Approved by {user.name}", f"Approved by {user.name} and forwarded to HR ({hr_head.name if hr_head else 'Head'}).")
@@ -1108,6 +1272,17 @@ class ApprovalsView(APIView):
                     obj.status = 'Approved'
                     obj.current_approver = None
                     obj.save()
+                    
+                    # Sync corresponding batches
+                    for batch in obj.activity_batches.exclude(status='Rejected'):
+                        # If a batch hasn't yet hit final approval, update its state here manually.
+                        if batch.status != 'Approved':
+                            batch.status = 'Approved'
+                            batch.current_approver = None
+                            batch.save()
+                    
+                    # NEW: Generate actual Expense records from the approved batches
+                    _generate_expenses_from_batches(obj)
                     
                     Notification.objects.create(
                         user=requester,
@@ -1289,6 +1464,47 @@ class ApprovalsView(APIView):
                 type='error'
             )
             return Response({"message": "Rejected by Finance"})
+
+        if action == 'Submit' and isinstance(obj, Trip):
+            # Trip Owner is submitting for a claim
+            from django.db.models import Sum
+            from django.utils import timezone
+            total_expense_sum = obj.expenses.aggregate(s=Sum('amount'))['s'] or 0
+            
+            if total_expense_sum <= 0:
+                raise Exception("Cannot submit a claim with zero expenses.")
+            
+            reporting_manager = requester.reporting_manager
+            current_approver = reporting_manager if reporting_manager else get_hr_head(requester)
+            
+            # Use update_or_create to handle cases where a Draft might exist
+            claim, created = TravelClaim.objects.update_or_create(
+                trip=obj,
+                defaults={
+                    'total_amount': total_expense_sum,
+                    'approved_amount': total_expense_sum,
+                    'status': 'Submitted',
+                    'current_approver': current_approver,
+                    'submitted_at': timezone.now(),
+                    'user_name': requester.name,
+                    'user_designation': requester.designation,
+                    'user_department': requester.department,
+                    'reporting_manager_name': reporting_manager.name if reporting_manager else None,
+                    'senior_manager_name': requester.senior_manager.name if requester.senior_manager else None,
+                    'hod_director_name': requester.hod_director.name if requester.hod_director else None
+                }
+            )
+            
+            if current_approver:
+                Notification.objects.create(
+                    user=current_approver,
+                    title="New Expense Claim (via Mobile)",
+                    message=f"{requester.name} has submitted an expense claim for Trip {obj.trip_id}.",
+                    type='info'
+                )
+            
+            update_trip_lifecycle(obj, "Settlement", "Travel reimbursement claim submitted for review (via Mobile).")
+            return Response({"message": "Claim submitted successfully", "claim_id": f"CLAIM-{claim.id}"})
 
 class ExpenseViewSet(viewsets.ModelViewSet):
     queryset = Expense.objects.all()
@@ -1957,18 +2173,36 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = getattr(self.request, 'custom_user', None)
-        if not user: return BulkActivityBatch.objects.none()
-        
+        if not user:
+            return BulkActivityBatch.objects.none()
+
         role_name = (user.role.name if user.role else '').lower()
         
-        # Admins/Finance/COO see all
-        if any(kw in role_name for kw in ['admin', 'finance', 'cfo', 'coo']):
-            return self.queryset
+        # Start with base queryset
+        queryset = BulkActivityBatch.objects.all().order_by('-created_at')
+
+        # Filter by trip_id if provided in query params
+        trip_id = self.request.query_params.get('trip_id')
+        if trip_id:
+            queryset = queryset.filter(trip_id=trip_id)
+
+        # Role-based restriction: Admins/Finance/COO see all, others only see their own/involved batches
+        privileged_keywords = ['admin', 'finance', 'cfo', 'coo']
+        is_privileged = any(kw in role_name for kw in privileged_keywords)
         
-        # Allow any user to see batches they submitted OR batches they need to approve.
-        # This ensures that managers (like a COO) can see and approve their team's uploads 
-        # even if their system role is simply 'Employee'.
-        return self.queryset.filter(Q(user=user) | Q(current_approver=user)).order_by('-created_at')
+        if not is_privileged:
+            # Allow any user to see batches they submitted OR batches they need to approve.
+            queryset = queryset.filter(Q(user=user) | Q(current_approver=user))
+
+        return queryset
+
+    @action(detail=False, methods=['get'], url_path='history')
+    def history(self, request):
+        """Returns the history of bulk activity uploads for a specific trip."""
+        # Use existing logic from get_queryset and list
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def template(self, request):
@@ -2234,18 +2468,6 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = 'attachment; filename="bulk_activity_template.xlsx"'
         return response
 
-    def get_queryset(self):
-        queryset = BulkActivityBatch.objects.all().order_by('-created_at')
-        trip_id = self.request.query_params.get('trip_id')
-        if trip_id:
-            queryset = queryset.filter(trip_id=trip_id)
-        
-        user = getattr(self.request, 'custom_user', None)
-        if user:
-            from django.db.models import Q # type: ignore
-            queryset = queryset.filter(Q(user=user) | Q(current_approver=user))
-            
-        return queryset
 
     @action(detail=False, methods=['post'])
     def upload(self, request):

@@ -30,6 +30,7 @@ dependencies:
   url_launcher: ^6.2.1
   open_filex: ^4.3.4
   flutter_background_service: ^5.0.0
+  package_info_plus: ^8.0.0
 
 dev_dependencies:
   flutter_test:

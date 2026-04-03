@@ -201,6 +201,7 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
                                   _buildOverviewCard(),
                                   const SizedBox(height: 24),
                                   _buildTimeline(),
+                                  _buildActivitiesSection(),
                                   if (_trip!.odometer != null) ...[
                                     const SizedBox(height: 24),
                                     _buildTelemetryCard(),
@@ -797,6 +798,171 @@ class _TripDetailsScreenState extends State<TripDetailsScreen> {
               fontSize: 13,
               height: 1.5,
               fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivitiesSection() {
+    if (_trip?.activityBatches == null || _trip!.activityBatches!.isEmpty)
+      return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 24),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFBB0633).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.receipt_long_rounded,
+                  color: Color(0xFFBB0633),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Text(
+                'Tour Plan Activities',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F1E2A),
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        ...(_trip!.activityBatches!.map((batch) {
+          final rows = (batch['data_json'] as List?) ?? [];
+          final filteredRows = rows.where((r) {
+            final dateStr = r['date']?.toString() ?? '';
+            return !dateStr.toLowerCase().contains('instruc');
+          }).toList();
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(32),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF0F172A).withOpacity(0.04),
+                  blurRadius: 24,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        batch['file_name'] ?? 'Monthly Activity List',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF0F172A),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${filteredRows.length} ENTRIES',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF64748B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                ...filteredRows.take(8).map((r) => _buildMiniActivityRow(r)),
+                if (filteredRows.length > 8) ...[
+                  const SizedBox(height: 12),
+                  Center(
+                    child: Text(
+                      '+ ${filteredRows.length - 8} more activities',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF94A3B8),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        })),
+      ],
+    );
+  }
+
+  Widget _buildMiniActivityRow(dynamic r) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 4),
+            width: 6,
+            height: 6,
+            decoration: const BoxDecoration(
+              color: Color(0xFFBB0633),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r['date']?.toString() ?? '',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF94A3B8),
+                  ),
+                ),
+                Text(
+                  "${r['origin_route']} → ${r['destination_route']}",
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF475569),
+                  ),
+                ),
+              ],
             ),
           ),
         ],

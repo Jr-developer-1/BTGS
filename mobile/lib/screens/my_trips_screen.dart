@@ -364,7 +364,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const LocalTravelScreen(),
+                          builder: (_) => LocalTravelScreen(onUploadComplete: _fetchTrips),
                         ),
                       );
                     },

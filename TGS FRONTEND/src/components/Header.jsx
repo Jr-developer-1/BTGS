@@ -116,6 +116,7 @@ const Header = () => {
         { title: 'Help & Support', icon: <HelpCircle size={18} />, path: '/help', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'] },
         { title: 'Login History', icon: <Settings size={18} />, path: '/login-history', roles: ['admin'] },
         { title: 'Audit Logs', icon: <ShieldCheck size={18} />, path: '/audit-logs', roles: ['admin'] },
+        { title: 'App Version Config', icon: <Settings size={18} />, path: '/app-version', roles: ['admin'] },
     ];
 
     const filteredMain = mainNav.filter(item => !item.roles || item.roles.includes(userRole));

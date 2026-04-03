@@ -70,9 +70,9 @@ WSGI_APPLICATION = "tgs_backend.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": os.environ.get("DB_NAME", "tgs_v"),
+        "NAME": os.environ.get("DB_NAME", "tgs_v15"),
         "USER": os.environ.get("DB_USER", "root"),
-        "PASSWORD": os.environ.get("DB_PASSWORD", "root"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "1819"),
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "3306"),
     }

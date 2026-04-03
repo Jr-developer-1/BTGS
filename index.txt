@@ -1,0 +1,516 @@
+{
+    "count": 62,
+    "next": "http://103.174.161.68:8001/api/employees/?page=2",
+    "previous": null,
+    "results": [
+        {
+            "employee": {
+                "id": 1951,
+                "name": "Demo HR Manager",
+                "employee_code": "HR-EMP-00002",
+                "photo": null,
+                "status": "Active"
+            },
+            "position": {
+                "id": 123,
+                "name": "Demo HR Manager Position",
+                "code": "FEW5",
+                "role_name": "HR Manager",
+                "level_name": "Level-5",
+                "level_rank": 5,
+                "department": "MMU ONE ZORO FOUR",
+                "section": "MMU ONE ZORO FOUR",
+                "reporting_to": [
+                    {
+                        "id": 1,
+                        "position_name": "COO",
+                        "role_name": "COO",
+                        "level_name": "Level-1",
+                        "level_rank": 1,
+                        "employee_name": "Botta Rama Krishna",
+                        "employee_id": 1929,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 1,
+                "name": "BAVYA HELTH SERVICE 104",
+                "level": "HEAD OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "NTR",
+                    "mandal": "VIJAYAWADA",
+                    "cluster": "VIJAYAWADA",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1934,
+                "name": "PS Prasada Raju",
+                "employee_code": "104-001949",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 2,
+                "name": "SPH",
+                "code": "SPH-01",
+                "role_name": "SPH",
+                "level_name": "Level-2",
+                "level_rank": 2,
+                "department": "SPH",
+                "section": "RPH",
+                "reporting_to": [
+                    {
+                        "id": 1,
+                        "position_name": "COO",
+                        "role_name": "COO",
+                        "level_name": "Level-1",
+                        "level_rank": 1,
+                        "employee_name": "Botta Rama Krishna",
+                        "employee_id": 1929,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 1,
+                "name": "BAVYA HELTH SERVICE 104",
+                "level": "HEAD OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "NTR",
+                    "mandal": "VIJAYAWADA",
+                    "cluster": "VIJAYAWADA",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1929,
+                "name": "Botta Rama Krishna",
+                "employee_code": "104-001944",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 1,
+                "name": "COO",
+                "code": "01",
+                "role_name": "COO",
+                "level_name": "Level-1",
+                "level_rank": 1,
+                "department": "BAVYA GROUP",
+                "section": "BAVYA GROUP",
+                "reporting_to": []
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 2,
+                "name": "BAVYA GROUP",
+                "level": "GROUP",
+                "geo_location": {
+                    "country": "India",
+                    "state": "",
+                    "district": "",
+                    "mandal": "",
+                    "cluster": null,
+                    "cluster_type": null,
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1912,
+                "name": "G Himaja",
+                "employee_code": "104-001926",
+                "photo": null,
+                "status": "Active"
+            },
+            "position": {
+                "id": 22,
+                "name": "CM",
+                "code": "CM-104-ZONE2-001",
+                "role_name": "CM",
+                "level_name": "Level-2",
+                "level_rank": 2,
+                "department": "CIRCLE OFFICE",
+                "section": "CM",
+                "reporting_to": [
+                    {
+                        "id": 2,
+                        "position_name": "SPH",
+                        "role_name": "SPH",
+                        "level_name": "Level-2",
+                        "level_rank": 2,
+                        "employee_name": "PS Prasada Raju",
+                        "employee_id": 1934,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 85,
+                "name": "CIRCLE OFFICE ZONE -2",
+                "level": "CIRCLE OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "NTR",
+                    "mandal": "VIJAYAWADA",
+                    "cluster": "VIJAYAWADA",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1910,
+                "name": "Md Kaleem",
+                "employee_code": "104-001924",
+                "photo": null,
+                "status": "Active"
+            },
+            "position": {
+                "id": 3,
+                "name": "CM",
+                "code": "ZONE-3-CM-002",
+                "role_name": "CM",
+                "level_name": "Level-2",
+                "level_rank": 2,
+                "department": "CIRCLEMANAGER",
+                "section": "CIRCLE MANAGER",
+                "reporting_to": [
+                    {
+                        "id": 2,
+                        "position_name": "SPH",
+                        "role_name": "SPH",
+                        "level_name": "Level-2",
+                        "level_rank": 2,
+                        "employee_name": "PS Prasada Raju",
+                        "employee_id": 1934,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 53,
+                "name": "104-CIRCLE OFFICE-ZONE3",
+                "level": "CIRCLE OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "GUNTUR",
+                    "mandal": "GUNTUR",
+                    "cluster": "GUNTUR",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1905,
+                "name": "Allam Laxmana Rao",
+                "employee_code": "104-001918",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 3,
+                "name": "CM",
+                "code": "ZONE-3-CM-002",
+                "role_name": "CM",
+                "level_name": "Level-2",
+                "level_rank": 2,
+                "department": "CIRCLEMANAGER",
+                "section": "CIRCLE MANAGER",
+                "reporting_to": [
+                    {
+                        "id": 2,
+                        "position_name": "SPH",
+                        "role_name": "SPH",
+                        "level_name": "Level-2",
+                        "level_rank": 2,
+                        "employee_name": "PS Prasada Raju",
+                        "employee_id": 1934,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 53,
+                "name": "104-CIRCLE OFFICE-ZONE3",
+                "level": "CIRCLE OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "GUNTUR",
+                    "mandal": "GUNTUR",
+                    "cluster": "GUNTUR",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1890,
+                "name": "Mv. Raghava Kumar",
+                "employee_code": "104-001902",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 12,
+                "name": "DM",
+                "code": "DM-104-002",
+                "role_name": "DMGNT",
+                "level_name": "Level-3",
+                "level_rank": 3,
+                "department": "DIVISIONAL MANAGER",
+                "section": "DIVISIONAL MANAGER",
+                "reporting_to": [
+                    {
+                        "id": 3,
+                        "position_name": "CM",
+                        "role_name": "CM",
+                        "level_name": "Level-2",
+                        "level_rank": 2,
+                        "employee_name": "Allam Laxmana Rao",
+                        "employee_id": 1905,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 11,
+                "name": "104-MMU-GNT",
+                "level": "DIVISIONAL OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "GUNTUR",
+                    "mandal": "GUNTUR",
+                    "cluster": "GUNTUR",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1884,
+                "name": "Kishore Naidu",
+                "employee_code": "104-001895",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 4,
+                "name": "DM",
+                "code": "DM-0001",
+                "role_name": "DM",
+                "level_name": "Level-3",
+                "level_rank": 3,
+                "department": "DM",
+                "section": "DM",
+                "reporting_to": [
+                    {
+                        "id": 3,
+                        "position_name": "CM",
+                        "role_name": "CM",
+                        "level_name": "Level-2",
+                        "level_rank": 2,
+                        "employee_name": "Allam Laxmana Rao",
+                        "employee_id": 1905,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 3,
+                "name": "104-MMU-NTR",
+                "level": "DIVISIONAL OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "NTR",
+                    "mandal": "VIJAYAWADA",
+                    "cluster": "VIJAYAWADA",
+                    "cluster_type": "City",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1824,
+                "name": "D Sandeep Kumar",
+                "employee_code": "104-001833",
+                "photo": null,
+                "status": "Active"
+            },
+            "position": {
+                "id": 75,
+                "name": "DEO",
+                "code": "DEO-0034",
+                "role_name": "DEO",
+                "level_name": "Level-5",
+                "level_rank": 5,
+                "department": "Operations",
+                "section": "MMU DEO",
+                "reporting_to": [
+                    {
+                        "id": 40,
+                        "position_name": "OE",
+                        "role_name": "OE",
+                        "level_name": "Level-4",
+                        "level_rank": 4,
+                        "employee_name": null,
+                        "employee_id": null,
+                        "employee_status": null
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 71,
+                "name": "AP104-MMU-NTR-MYL-0509",
+                "level": "FACILITATE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "NTR",
+                    "mandal": "MYLAVARAM",
+                    "cluster": "MYLAVARAM",
+                    "cluster_type": "Village",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        },
+        {
+            "employee": {
+                "id": 1822,
+                "name": "Ch. Poornachandra Rao",
+                "employee_code": "104-001831",
+                "photo": null,
+                "status": "ACTIVE"
+            },
+            "position": {
+                "id": 8,
+                "name": "OE",
+                "code": "OE-001",
+                "role_name": "OE",
+                "level_name": "Level-4",
+                "level_rank": 4,
+                "department": "MMU GNT CBR OE",
+                "section": "MMU OE",
+                "reporting_to": [
+                    {
+                        "id": 4,
+                        "position_name": "DM",
+                        "role_name": "DM",
+                        "level_name": "Level-3",
+                        "level_rank": 3,
+                        "employee_name": "Kishore Naidu",
+                        "employee_id": 1884,
+                        "employee_status": "ACTIVE"
+                    }
+                ]
+            },
+            "project": {
+                "id": 4,
+                "name": "104-MMS",
+                "code": "104-M"
+            },
+            "office": {
+                "id": 6,
+                "name": "104-MMU-GNT-CBR",
+                "level": "BRANCH OFFICE",
+                "geo_location": {
+                    "country": "INDIA",
+                    "state": "ANDHRA PRADESH",
+                    "district": "GUNTUR",
+                    "mandal": "CHEBROLU",
+                    "cluster": "CHEBROLU",
+                    "cluster_type": "Village",
+                    "specific_location": "",
+                    "address": ""
+                }
+            },
+            "bank_details": null
+        }
+    ]
+}

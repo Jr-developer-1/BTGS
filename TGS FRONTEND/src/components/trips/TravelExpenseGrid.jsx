@@ -54,7 +54,7 @@ const FALLBACK_ROOM_TYPES = ['Standard', 'Deluxe', 'Executive', 'Suite', 'Guest 
 const FALLBACK_FLIGHT_CLASSES = ['Economy', 'Premium Economy', 'Business', 'First'];
 const FALLBACK_TRAIN_CLASSES = ['Sleeper', '3AC', '2AC', '1AC', 'Chair Car', 'General'];
 const FALLBACK_BUS_SEAT_TYPES = ['Sleeper', 'Semi Sleeper', 'AC', 'Non-AC', 'Volvo', 'Seater'];
-const FALLBACK_INCIDENTAL_TYPES = ['Parking Charges', 'Toll Charges', 'Fuel (Own Vehicle)', 'Luggage Charges', 'Porter Charges', 'Internet / WiFi', 'Others'];
+const FALLBACK_INCIDENTAL_TYPES = ['Parking Charges', 'Toll Charges', 'Luggage Charges', 'Porter Charges', 'Internet / WiFi', 'Others'];
 
 const TRAVEL_STATUSES = ['Completed', 'Cancelled', 'Rescheduled'];
 const LOCAL_TRAVEL_STATUSES = ['Completed', 'Cancelled', 'No-Show'];
@@ -452,6 +452,13 @@ const TravelExpenseGrid = ({
             const row = rows[i];
             const rowNum = i + 1;
 
+            // --- TAB-AWARE VALIDATION ---
+            // If we are not in the 'Review' tab, only validate rows that belong to the active category.
+            // This prevents hidden, incomplete rows in other tabs from blocking the save of the current tab.
+            if (activeCategory !== 'Review' && row.nature !== activeCategory) {
+                continue;
+            }
+
             // DATE RANGE VALIDATION (using robust Date comparison)
             if (minDate && maxDate) {
                 const rowDateObj = parseSafeDate(row.date);
@@ -488,7 +495,8 @@ const TravelExpenseGrid = ({
             }
             // require bill if any charge present (Exempt Odometer-based Local Travel as they use Odo photos)
             const isOdoLocal = row.nature === 'Local Travel' && (row.details.subType === 'Own Car' || row.details.subType === 'Own Bike');
-            if (parseFloat(row.amount) > 0 && !isOdoLocal && (!row.bills || row.bills.length === 0)) {
+            const isIncidental = row.nature === 'Incidental';
+            if (parseFloat(row.amount) > 0 && !isOdoLocal && !isIncidental && (!row.bills || row.bills.length === 0)) {
                 showToast(`Item #${rowNum}: Please upload a bill as amount is entered.`, "error");
                 return false;
             }
@@ -838,10 +846,11 @@ const TravelExpenseGrid = ({
                     showToast(`Item #${rowNum}: Amount must be greater than 0.`, "error");
                     return false;
                 }
-                if (!row.bills || row.bills.length === 0) {
-                    showToast(`Item #${rowNum}: Bill upload is mandatory for incidental expenses.`, "error");
-                    return false;
-                }
+                // Incidental bill upload is no longer mandatory
+                // if (!row.bills || row.bills.length === 0) {
+                //     showToast(`Item #${rowNum}: Bill upload is mandatory for incidental expenses.`, "error");
+                //     return false;
+                // }
                 if (row.details.incidentalType === 'Others') {
                     if (!row.details.otherReason) {
                         showToast(`Item #${rowNum}: Reason is required for 'Others' expense type.`, "error");
@@ -1794,7 +1803,7 @@ const TravelExpenseGrid = ({
                                                                     {/* Calc bar */}
                                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 14px', borderBottom: jobReportOpen[row.id] || row.details.jobReport ? '1px solid #e2e8f0' : 'none' }}>
                                                                         <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
-                                                                            Calc. Odo Expense:&nbsp;
+                                                                            Calc. Odo claim :&nbsp;
                                                                             <span style={{ color: '#4f46e5', fontWeight: 800, fontSize: '0.9rem' }}>₹{formatIndianCurrency(parseFloat(row.amount || 0).toFixed(2))}</span>
                                                                         </div>
                                                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -1812,7 +1821,11 @@ const TravelExpenseGrid = ({
                                                                                     onClick={() => {
                                                                                         setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }));
                                                                                         if (!jobReportOpen[row.id]) {
-                                                                                            setJobReportDraft(prev => ({ ...prev, [row.id]: row.details.jobReport || '' }));
+                                                                                            setJobReportDraft(prev => ({
+                                                                                                ...prev,
+                                                                                                [row.id]: row.details.jobReport || '',
+                                                                                                [`${row.id}_files`]: row.details.jobReportFiles || []
+                                                                                            }));
                                                                                         }
                                                                                     }}
                                                                                 >
@@ -1912,10 +1925,10 @@ const TravelExpenseGrid = ({
                                                                                             updateDetails(row.id, 'jobReport', text);
                                                                                             updateDetails(row.id, 'jobReportFiles', files);
                                                                                             setJobReportOpen(prev => ({ ...prev, [row.id]: false }));
-                                                                                            showToast('Job report saved to this entry.', 'success');
+                                                                                            showToast('Job report applied to entry. Click "Commit Registry" to save permanently.', 'success');
                                                                                         }}
                                                                                     >
-                                                                                        Save
+                                                                                        Apply to Entry
                                                                                         <ChevronDown size={15} />
                                                                                     </button>
 
@@ -1928,17 +1941,25 @@ const TravelExpenseGrid = ({
                                                                                         </button>
                                                                                         <input type="file" id={`jr-file-${row.id}`} hidden multiple accept="image/*,.pdf,.doc,.docx"
                                                                                             onChange={e => {
-                                                                                                const newFiles = Array.from(e.target.files).map(file => {
+                                                                                                const validFiles = Array.from(e.target.files).filter(file => {
+                                                                                                    if (file.size > 10 * 1024 * 1024) {
+                                                                                                        showToast(`File "${file.name}" is too large (max 10MB). Converting huge PDFs to base64 can crash the page.`, 'error');
+                                                                                                        return false;
+                                                                                                    }
+                                                                                                    return true;
+                                                                                                });
+                                                                                                
+                                                                                                const newFilesPromises = validFiles.map(file => {
                                                                                                     return new Promise(resolve => {
                                                                                                         const reader = new FileReader();
                                                                                                         reader.onload = ev => resolve({ name: file.name, data: ev.target.result });
                                                                                                         reader.readAsDataURL(file);
                                                                                                     });
                                                                                                 });
-                                                                                                Promise.all(newFiles).then(resolved => {
+                                                                                                Promise.all(newFilesPromises).then(resolved => {
                                                                                                     setJobReportDraft(prev => ({ ...prev, [`${row.id}_files`]: [...(prev[`${row.id}_files`] || []), ...resolved] }));
                                                                                                 });
-                                                                                                e.target.value = '';
+                                                                                                if (e.target) e.target.value = '';
                                                                                             }}
                                                                                         />
                                                                                         {/* Discard */}

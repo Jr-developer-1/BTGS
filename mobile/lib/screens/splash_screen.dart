@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/expense_reminder_service.dart';
+import '../services/app_version_service.dart';
 import 'login_screen.dart';
 import 'role_based_dashboard.dart';
 
@@ -37,9 +38,16 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     }
 
     // 2. Allow logo to be visible for at least 2.5 seconds
-    _timer = Timer(const Duration(milliseconds: 2500), () {
-      if (mounted) _navigateAfterSplash();
-    });
+    await Future.delayed(const Duration(milliseconds: 2500));
+
+    if (!mounted) return;
+
+    // 3. App Version Check
+    bool canProceed = await AppVersionService.checkVersionAndPrompt(context);
+    
+    if (canProceed && mounted) {
+      _navigateAfterSplash();
+    }
   }
 
   void _navigateAfterSplash() {

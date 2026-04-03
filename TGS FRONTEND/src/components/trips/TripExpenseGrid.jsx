@@ -746,7 +746,7 @@ const TripExpenseGrid = ({
                 return false;
             }
             // require bill if any charge present
-            if (parseFloat(row.amount) > 0 && (!row.bills || row.bills.length === 0)) {
+            if (parseFloat(row.amount) > 0 && row.nature !== 'Incidental' && (!row.bills || row.bills.length === 0)) {
                 showToast(`Item #${rowNum}: Please upload a bill as amount is entered.`, "error");
                 return false;
             }
@@ -2922,14 +2922,14 @@ const TripExpenseGrid = ({
                                     )}
                                     {['Flight', 'Train'].includes(mode) && (
                                         <div className="input-with-label-mini mt-2" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
-                                            <input
-                                                type="checkbox"
-                                                id={`meal-inc-${row.id}`}
-                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                                                checked={row.details.mealIncluded === 'Yes'}
-                                                onChange={e => updateDetails(row.id, 'mealIncluded', e.target.checked ? 'Yes' : 'No')}
-                                                disabled={isLocked}
-                                            />
+                                                <input
+                                                    type="checkbox"
+                                                    id={`meal-inc-${row.id}`}
+                                                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                    checked={row.details.mealIncluded === 'Yes'}
+                                                    onChange={e => updateDetails(row.id, 'mealIncluded', e.target.checked ? 'Yes' : 'No')}
+                                                    disabled={isLocked}
+                                                />
                                             <label htmlFor={`meal-inc-${row.id}`} style={{ cursor: 'pointer', fontWeight: '600', color: '#475569', fontSize: '0.75rem' }}>Meal Included in Ticket</label>
                                         </div>
                                     )}
@@ -4266,7 +4266,11 @@ const TripExpenseGrid = ({
                                                                                     onClick={() => {
                                                                                         setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }));
                                                                                         if (!jobReportOpen[row.id]) {
-                                                                                            setJobReportDraft(prev => ({ ...prev, [row.id]: row.details.jobReport || '' }));
+                                                                                            setJobReportDraft(prev => ({
+                                                                                                ...prev,
+                                                                                                [row.id]: row.details.jobReport || '',
+                                                                                                [`${row.id}_files`]: row.details.jobReportFiles || []
+                                                                                            }));
                                                                                         }
                                                                                     }}
                                                                                 >
@@ -4382,17 +4386,25 @@ const TripExpenseGrid = ({
                                                                                         </button>
                                                                                         <input type="file" id={`jr-file-${row.id}`} hidden multiple accept="image/*,.pdf,.doc,.docx"
                                                                                             onChange={e => {
-                                                                                                const newFiles = Array.from(e.target.files).map(file => {
+                                                                                                const validFiles = Array.from(e.target.files).filter(file => {
+                                                                                                    if (file.size > 10 * 1024 * 1024) {
+                                                                                                        showToast(`File "${file.name}" is too large (max 10MB). Converting huge PDFs to base64 can crash the page.`, 'error');
+                                                                                                        return false;
+                                                                                                    }
+                                                                                                    return true;
+                                                                                                });
+                                                                                                
+                                                                                                const newFilesPromises = validFiles.map(file => {
                                                                                                     return new Promise(resolve => {
                                                                                                         const reader = new FileReader();
                                                                                                         reader.onload = ev => resolve({ name: file.name, data: ev.target.result });
                                                                                                         reader.readAsDataURL(file);
                                                                                                     });
                                                                                                 });
-                                                                                                Promise.all(newFiles).then(resolved => {
+                                                                                                Promise.all(newFilesPromises).then(resolved => {
                                                                                                     setJobReportDraft(prev => ({ ...prev, [`${row.id}_files`]: [...(prev[`${row.id}_files`] || []), ...resolved] }));
                                                                                                 });
-                                                                                                e.target.value = '';
+                                                                                                if (e.target) e.target.value = '';
                                                                                             }}
                                                                                         />
                                                                                         {/* Discard */}

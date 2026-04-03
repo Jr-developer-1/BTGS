@@ -4,7 +4,6 @@ import 'services/api_service.dart';
 import 'services/expense_reminder_service.dart';
 import 'screens/splash_screen.dart';
 import 'services/location_tracking_service.dart';
-
 import 'package:flutter/foundation.dart';
 import 'services/logger_service.dart';
 

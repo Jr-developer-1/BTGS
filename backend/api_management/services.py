@@ -31,8 +31,10 @@ def resolve_hr_id_to_code(hr_id, api_url, headers):
         resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code == 200:
             data = resp.json() or {}
-            # The employee_code is at the top level for the detail endpoint
-            code = data.get('employee_code')
+            # Try nested employee object first, then top level fallback
+            emp_obj = data.get('employee', {})
+            code = emp_obj.get('employee_code') or data.get('employee_code')
+            
             if code:
                 HR_ID_TO_CODE_CACHE[hr_id] = code
                 return code

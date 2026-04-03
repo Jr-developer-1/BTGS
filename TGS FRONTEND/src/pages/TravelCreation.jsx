@@ -28,6 +28,13 @@ const TravelCreation = () => {
     const { showToast } = useToast();
     const navigate = useNavigate();
 
+    useEffect(() => {
+        if (user && user.role !== 'oe' && user.designation !== 'OE') {
+            showToast("Access Denied: Only OE users can create Tour Plans.", "error");
+            navigate('/trips');
+        }
+    }, [user, navigate, showToast]);
+
     const [file, setFile] = useState(null);
     const [policyAccepted, setPolicyAccepted] = useState(false);
     const [reportingInfo, setReportingInfo] = useState({ name: 'Loading...', id: null });

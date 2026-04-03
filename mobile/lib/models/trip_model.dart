@@ -44,6 +44,7 @@ class Trip {
   final bool considerAsLocal;
   final String? userBaseLocation;
   final String? currentApproverName;
+  final List<dynamic>? activityBatches;
 
   Trip({
     required this.id,
@@ -89,6 +90,7 @@ class Trip {
     this.considerAsLocal = false,
     this.userBaseLocation,
     this.currentApproverName,
+    this.activityBatches,
   });
 
   factory Trip.fromJson(Map<String, dynamic> json) {
@@ -171,6 +173,7 @@ class Trip {
       considerAsLocal: json['consider_as_local'] ?? false,
       userBaseLocation: json['user_base_location'],
       currentApproverName: json['current_approver_name']?.toString() ?? json['current_approver']?.toString(),
+      activityBatches: parseJsonField(json['activity_batches']),
     );
   }
 

@@ -4,8 +4,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:io';
+import '../constants/api_constants.dart';
 import '../services/trip_service.dart';
+import '../services/master_service.dart';
 import '../components/forensic_camera.dart';
+import '../components/searchable_dropdown.dart';
 import 'job_report_composer_screen.dart';
 
 class TripExpenseFormDetailedScreen extends StatefulWidget {
@@ -30,6 +33,17 @@ class _TripExpenseFormDetailedScreenState
   bool _isProcessing = false;
   final picker = ImagePicker();
   final TripService _tripService = TripService();
+  final MasterService _masterService = MasterService();
+
+  // Master Data Lists
+  List<String> _masterTravelModes = [];
+  List<String> _masterBookingTypes = [];
+  List<String> _masterLocalTravelModes = [];
+  List<String> _masterStayTypes = [];
+  List<String> _masterRoomTypes = [];
+  List<String> _masterMealCategories = [];
+  List<String> _masterMealTypes = [];
+  List<String> _masterClasses = [];
   bool get isStartFieldsComplete =>
       _originController.text.isNotEmpty &&
       _odoStartController.text.isNotEmpty &&
@@ -76,6 +90,7 @@ class _TripExpenseFormDetailedScreenState
   String? _travelMode;
   String? _travelSubType;
   String? _bookedBy;
+  String? _bookingType;
   String? _travelStatus = 'Completed';
   String? _travelClass;
   bool _nightTravel = false;
@@ -104,9 +119,16 @@ class _TripExpenseFormDetailedScreenState
   List<String> _jobReportAttachments = [];
   List<String> _selfieImages = [];
 
+  // Scheduled Timings for Outstation Travel (to match web)
+  DateTime _scheduledStartDate = DateTime.now();
+  DateTime _scheduledEndDate = DateTime.now();
+  TimeOfDay _scheduledStartTime = TimeOfDay.now();
+  TimeOfDay _scheduledEndTime = TimeOfDay.now();
+
   @override
   void initState() {
     super.initState();
+    _loadMasters();
     if (widget.expenseData != null) {
       _loadExpenseData();
     } else {
@@ -127,6 +149,49 @@ class _TripExpenseFormDetailedScreenState
     if (rate != null) {
       setState(() {
         _odoRateController.text = rate.toStringAsFixed(2);
+      });
+    }
+  }
+
+  Future<void> _loadMasters() async {
+    try {
+      final results = await Future.wait([
+        _masterService.getTravelModes(),
+        _masterService.getBookingTypes(),
+        _masterService.getLocalTravelModes(),
+        _masterService.fetchMasterList(ApiConstants.masterStayTypes, 'results', 'stay_type'),
+        _masterService.fetchMasterList(ApiConstants.masterRoomTypes, 'results', 'room_type'),
+        _masterService.fetchMasterList(ApiConstants.masterMealCategories, 'results', 'category_name'),
+        _masterService.fetchMasterList(ApiConstants.masterMealTypes, 'results', 'meal_type'),
+      ]);
+
+      if (mounted) {
+        setState(() {
+          _masterTravelModes = results[0];
+          _masterBookingTypes = results[1];
+          _masterLocalTravelModes = results[2];
+          _masterStayTypes = results[3];
+          _masterRoomTypes = results[4];
+          _masterMealCategories = results[5];
+          _masterMealTypes = results[6];
+        });
+        
+        // Load classes if mode is already set
+        if (_travelMode != null) {
+          _loadClasses();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading master data: $e');
+    }
+  }
+
+  Future<void> _loadClasses() async {
+    if (_travelMode == null) return;
+    final classes = await _masterService.getTravelClasses(_travelMode!);
+    if (mounted) {
+      setState(() {
+        _masterClasses = classes;
       });
     }
   }
@@ -229,6 +294,16 @@ class _TripExpenseFormDetailedScreenState
 
     if (details['depTime'] != null) _startTime = _parseTime(details['depTime']);
     if (details['arrTime'] != null) _endTime = _parseTime(details['arrTime']);
+
+    // Load Scheduled Timings
+    if (details['scheduledDepDate'] != null)
+      _scheduledStartDate = DateTime.tryParse(details['scheduledDepDate']) ?? _scheduledStartDate;
+    if (details['scheduledArrDate'] != null)
+      _scheduledEndDate = DateTime.tryParse(details['scheduledArrDate']) ?? _scheduledEndDate;
+    if (details['scheduledDepTime'] != null)
+      _scheduledStartTime = _parseTime(details['scheduledDepTime']);
+    if (details['scheduledArrTime'] != null)
+      _scheduledEndTime = _parseTime(details['scheduledArrTime']);
     if (details['mealTime'] != null)
       _startTime = _parseTime(details['mealTime']);
 
@@ -325,6 +400,37 @@ class _TripExpenseFormDetailedScreenState
         'description': jsonEncode(_buildDescription()),
         'receipt_image': jsonEncode(_jobReportAttachments),
       };
+
+      // NEW: Handle correction of rejected bulk rows
+      if (widget.expenseData != null && widget.expenseData['is_bulk_correction'] == true) {
+        final batchId = widget.expenseData['batch_id'].toString();
+        final rowIndex = widget.expenseData['row_index'];
+        
+        // Prepare row update data
+        final rowUpdate = {
+          ..._buildDescription(),
+          'amount': amount,
+          'date': DateFormat('yyyy-MM-dd').format(_startDate),
+          'remarks': _jobReportController.text,
+          '_status': 'Validated', // Reset status as it's now corrected
+          '_remark': 'Corrected on mobile: ${_jobReportController.text}'
+        };
+
+        await _tripService.handleBulkBatchAction(
+          batchId, 
+          'UpdateItem',
+          extraData: {
+            'row_index': rowIndex,
+            'new_data': rowUpdate
+          }
+        );
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bulk row corrected and resubmitted'), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true);
+        return;
+      }
 
       String? mainExpenseId;
       if (widget.expenseData != null) {
@@ -435,6 +541,12 @@ class _TripExpenseFormDetailedScreenState
         'isTatkal': _isTatkal,
         'bookingDate': DateFormat('yyyy-MM-dd').format(_bookingDate),
         'bookingTime': _bookingTime.format(context),
+
+        // Scheduled Timings (Parity with Web)
+        'scheduledDepDate': DateFormat('yyyy-MM-dd').format(_scheduledStartDate),
+        'scheduledArrDate': DateFormat('yyyy-MM-dd').format(_scheduledEndDate),
+        'scheduledDepTime': _scheduledStartTime.format(context),
+        'scheduledArrTime': _scheduledEndTime.format(context),
       });
     } else if (widget.category == 'Local Travel') {
       desc.addAll({
@@ -558,21 +670,28 @@ class _TripExpenseFormDetailedScreenState
         Row(
           children: [
             Expanded(
-              child: _buildDropdownMini('TRAVEL MODE', _travelMode, [
-                'Flight',
-                'Train',
-                'Intercity Bus',
-                'Intercity Cab',
-                'Others',
-              ], (v) => setState(() => _travelMode = v)),
+              child: SearchableDropdown(
+                label: 'TRAVEL MODE',
+                value: _travelMode,
+                icon: Icons.flight_takeoff_rounded,
+                initialOptions: _masterTravelModes.isNotEmpty ? _masterTravelModes : ['Flight', 'Train', 'Intercity Bus', 'Intercity Cab', 'Others'],
+                onChanged: (v) => setState(() {
+                  _travelMode = v;
+                  _masterClasses = [];
+                  _travelClass = null;
+                  _loadClasses();
+                }),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildDropdownMini('STATUS', _travelStatus, [
-                'Completed',
-                'Pending',
-                'Cancelled',
-              ], (v) => setState(() => _travelStatus = v)),
+              child: SearchableDropdown(
+                label: 'STATUS',
+                value: _travelStatus,
+                icon: Icons.info_outline_rounded,
+                initialOptions: ['Completed', 'Pending', 'Cancelled'],
+                onChanged: (v) => setState(() => _travelStatus = v),
+              ),
             ),
           ],
         ),
@@ -610,18 +729,22 @@ class _TripExpenseFormDetailedScreenState
         Row(
           children: [
             Expanded(
-              child: _buildTextFieldMini(
-                'FROM',
-                _originController,
+              child: SearchableDropdown(
+                label: 'FROM',
+                value: _originController.text,
                 icon: Icons.location_on_outlined,
+                isLocation: true,
+                onChanged: (v) => setState(() => _originController.text = v),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildTextFieldMini(
-                'TO',
-                _destController,
-                icon: Icons.location_on,
+              child: SearchableDropdown(
+                label: 'TO',
+                value: _destController.text,
+                icon: Icons.location_on_outlined,
+                isLocation: true,
+                onChanged: (v) => setState(() => _destController.text = v),
               ),
             ),
           ],
@@ -650,12 +773,13 @@ class _TripExpenseFormDetailedScreenState
             ],
           ),
           const SizedBox(height: 20),
-          _buildDropdownMini('TRAVEL CLASS', _travelClass, [
-            'Economy',
-            'Premium Economy',
-            'Business',
-            'First Class',
-          ], (v) => setState(() => _travelClass = v)),
+          SearchableDropdown(
+            label: 'TRAVEL CLASS',
+            value: _travelClass,
+            icon: Icons.airline_seat_recline_extra_rounded,
+            initialOptions: ['Economy', 'Premium Economy', 'Business', 'First Class'],
+            onChanged: (v) => setState(() => _travelClass = v),
+          ),
         ] else if (_travelMode == 'Intercity Cab') ...[
           Row(
             children: [
@@ -734,16 +858,11 @@ class _TripExpenseFormDetailedScreenState
                 child: _buildDropdownMini(
                   _travelMode == 'Intercity Bus' ? 'BUS TYPE' : 'CLASS',
                   _travelClass,
-                  _travelMode == 'Train'
+                  _masterClasses.isNotEmpty 
+                    ? _masterClasses 
+                    : (_travelMode == 'Train'
                       ? ['Sleeper', '3AC', '2AC', '1AC', 'Chair Car', 'General']
-                      : [
-                          'Sleeper',
-                          'Semi Sleeper',
-                          'AC',
-                          'Non-AC',
-                          'Volvo',
-                          'Seater',
-                        ],
+                      : ['Sleeper', 'Semi Sleeper', 'AC', 'Non-AC', 'Volvo', 'Seater']),
                   (v) => setState(() => _travelClass = v),
                 ),
               ),
@@ -796,7 +915,7 @@ class _TripExpenseFormDetailedScreenState
           children: [
             Expanded(
               child: _buildDatePickerMini(
-                'DEP DATE',
+                'ACTUAL DEP DATE',
                 _startDate,
                 (d) => setState(() => _startDate = d),
               ),
@@ -804,7 +923,7 @@ class _TripExpenseFormDetailedScreenState
             const SizedBox(width: 12),
             Expanded(
               child: _buildTimePickerMini(
-                'DEP TIME',
+                'ACTUAL DEP TIME',
                 _startTime,
                 (t) => setState(() => _startTime = t),
               ),
@@ -816,7 +935,7 @@ class _TripExpenseFormDetailedScreenState
           children: [
             Expanded(
               child: _buildDatePickerMini(
-                'ARR DATE',
+                'ACTUAL ARR DATE',
                 _endDate,
                 (d) => setState(() => _endDate = d),
               ),
@@ -824,9 +943,59 @@ class _TripExpenseFormDetailedScreenState
             const SizedBox(width: 12),
             Expanded(
               child: _buildTimePickerMini(
-                'ARR TIME',
+                'ACTUAL ARR TIME',
                 _endTime,
                 (t) => setState(() => _endTime = t),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        const Divider(),
+        Text(
+          'SCHEDULED TIMINGS (PER TICKET)',
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            color: Colors.grey,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildDatePickerMini(
+                'SCHED DEP DATE',
+                _scheduledStartDate,
+                (d) => setState(() => _scheduledStartDate = d),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTimePickerMini(
+                'SCHED DEP TIME',
+                _scheduledStartTime,
+                (t) => setState(() => _scheduledStartTime = t),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(
+              child: _buildDatePickerMini(
+                'SCHED ARR DATE',
+                _scheduledEndDate,
+                (d) => setState(() => _scheduledEndDate = d),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTimePickerMini(
+                'SCHED ARR TIME',
+                _scheduledEndTime,
+                (t) => setState(() => _scheduledEndTime = t),
               ),
             ),
           ],
@@ -875,10 +1044,13 @@ class _TripExpenseFormDetailedScreenState
         const SizedBox(height: 32),
         const Divider(),
         const SizedBox(height: 12),
-        _buildDropdownMini('BOOKED BY', _bookedBy, [
-          'Self Booked',
-          'Company Booked',
-        ], (v) => setState(() => _bookedBy = v)),
+        SearchableDropdown(
+          label: 'BOOKED BY',
+          value: _bookedBy,
+          icon: Icons.person_outline_rounded,
+          initialOptions: ['Self Booked', 'Company Booked'],
+          onChanged: (v) => setState(() => _bookedBy = v),
+        ),
         const SizedBox(height: 20),
         _buildTextFieldMini(
           'AMOUNT',
@@ -896,6 +1068,8 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
+
+
 
   Widget _buildLocalTravelForm() {
     if (_isTravelo) return _buildTraveloLocalForm();
@@ -1015,11 +1189,12 @@ class _TripExpenseFormDetailedScreenState
             Row(
               children: [
                 Expanded(
-                  child: _buildDropdownMini(
-                    'MODE',
-                    _travelMode,
-                    ['Bike', 'Car / Cab', 'Public Transport', 'Walk'],
-                    (v) => setState(() {
+                  child: SearchableDropdown(
+                    label: 'MODE',
+                    value: _travelMode,
+                    icon: Icons.directions_car_filled_rounded,
+                    initialOptions: _masterLocalTravelModes.isNotEmpty ? _masterLocalTravelModes : ['Bike', 'Car / Cab', 'Public Transport', 'Walk'],
+                    onChanged: (v) => setState(() {
                       _travelMode = v;
                       _travelSubType = null;
                       _fetchRates();
@@ -1047,11 +1222,12 @@ class _TripExpenseFormDetailedScreenState
               ],
             ),
             const SizedBox(height: 20),
-            _buildDropdownMini(
-              'BOOKED BY',
-              _bookedBy,
-              ['Self Booked', 'Company Booked'],
-              (v) => setState(() => _bookedBy = v),
+            SearchableDropdown(
+              label: 'BOOKING TYPE',
+              value: _bookingType,
+              icon: Icons.confirmation_number_rounded,
+              initialOptions: _masterBookingTypes.isNotEmpty ? _masterBookingTypes : ['Online', 'Agent', 'Direct'],
+              onChanged: (v) => setState(() => _bookingType = v),
             ),
           ],
         ),
@@ -2081,20 +2257,23 @@ class _TripExpenseFormDetailedScreenState
         Row(
           children: [
             Expanded(
-              child: _buildDropdownMini('CATEGORY', _mealCategory, [
-                'Self Meal',
-                'Working Meal',
-                'Client Hosted',
-              ], (v) => setState(() => _mealCategory = v)),
+              child: SearchableDropdown(
+                label: 'CATEGORY',
+                value: _mealCategory,
+                icon: Icons.category_rounded,
+                initialOptions: _masterMealCategories.isNotEmpty ? _masterMealCategories : ['Self Meal', 'Working Meal', 'Client Hosted'],
+                onChanged: (v) => setState(() => _mealCategory = v),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildDropdownMini('MEAL TYPE', _mealType, [
-                'Breakfast',
-                'Lunch',
-                'Dinner',
-                'Snacks',
-              ], (v) => setState(() => _mealType = v)),
+              child: SearchableDropdown(
+                label: 'MEAL TYPE',
+                value: _mealType,
+                icon: Icons.restaurant_menu_rounded,
+                initialOptions: _masterMealTypes.isNotEmpty ? _masterMealTypes : ['Breakfast', 'Lunch', 'Dinner', 'Snacks'],
+                onChanged: (v) => setState(() => _mealType = v),
+              ),
             ),
           ],
         ),
@@ -2147,23 +2326,23 @@ class _TripExpenseFormDetailedScreenState
         Row(
           children: [
             Expanded(
-              child: _buildDropdownMini('STAY TYPE', _accomType, [
-                'Hotel Stay',
-                'Bavya Guest House',
-                'Self Stay',
-                'Client Provided',
-                'No Stay',
-              ], (v) => setState(() => _accomType = v)),
+              child: SearchableDropdown(
+                label: 'STAY TYPE',
+                value: _accomType,
+                icon: Icons.hotel_rounded,
+                initialOptions: _masterStayTypes.isNotEmpty ? _masterStayTypes : ['Hotel Stay', 'Bavya Guest House', 'Self Stay', 'Client Provided', 'No Stay'],
+                onChanged: (v) => setState(() => _accomType = v),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildDropdownMini('ROOM TYPE', _roomType, [
-                'Standard',
-                'Deluxe',
-                'Executive',
-                'Suite',
-                'Guest House',
-              ], (v) => setState(() => _roomType = v)),
+              child: SearchableDropdown(
+                label: 'ROOM TYPE',
+                value: _roomType,
+                icon: Icons.meeting_room_rounded,
+                initialOptions: _masterRoomTypes.isNotEmpty ? _masterRoomTypes : ['Standard', 'Deluxe', 'Executive', 'Suite', 'Guest House'],
+                onChanged: (v) => setState(() => _roomType = v),
+              ),
             ),
           ],
         ),
@@ -2174,10 +2353,12 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.business_rounded,
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'CITY',
-          _cityController,
+        SearchableDropdown(
+          label: 'CITY',
+          value: _cityController.text,
           icon: Icons.location_city_rounded,
+          isLocation: true,
+          onChanged: (v) => setState(() => _cityController.text = v),
         ),
         const SizedBox(height: 20),
         Row(

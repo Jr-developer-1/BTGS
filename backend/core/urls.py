@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import login_view, logout_view, me_view, LoginHistoryViewSet, AuditLogViewSet, profile_view, AuditLogView, LoginHistoryView, enroll_face_view, verify_face_view, get_face_registration_requests_view, handle_face_registration_request_view, get_pending_frs_approvals_view, handle_frs_approval_view, clear_frs_notifications_view, request_photo_update_view, get_photo_update_requests_view, handle_photo_update_request_view, health_check, heartbeat_view, update_theme_view
+from .views import login_view, logout_view, me_view, LoginHistoryViewSet, AuditLogViewSet, profile_view, AuditLogView, LoginHistoryView, enroll_face_view, verify_face_view, get_face_registration_requests_view, handle_face_registration_request_view, get_pending_frs_approvals_view, handle_frs_approval_view, clear_frs_notifications_view, request_photo_update_view, get_photo_update_requests_view, handle_photo_update_request_view, health_check, heartbeat_view, update_theme_view, app_version_view
 
 app_name = 'core'
 
@@ -22,6 +22,7 @@ urlpatterns = [
     path('audit-history', AuditLogView.as_view(), name='audit-history'),
     path('session-history', LoginHistoryView.as_view(), name='session-history'),
     
+    path('app-version', app_version_view, name='app-version'),
 
     # FRS Endpoints
     path('frs/enroll', enroll_face_view, name='frs-enroll'),

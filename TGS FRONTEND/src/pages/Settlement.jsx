@@ -94,11 +94,11 @@ const Settlement = () => {
                     <div>
                         <button className="back-btn-minimal" onClick={() => navigate('/finance')}>
                             <ArrowLeft size={16} />
-                            <span>Back to FIMS Dashboard</span>
+                            <span>Back to Finance Dashboard</span>
                         </button>
-                        <h1>Full Settlement Runs</h1>
+                        <h1>Settlements</h1>
                     </div>
-                    <p>Select a trip to finalize accounts and process reimbursements.</p>
+                    <p>Select a trip to review and process final payments.</p>
                 </div>
 
                 <div className="settlement-selection premium-card">
@@ -153,7 +153,7 @@ const Settlement = () => {
                                                     className="btn-minimal-action"
                                                     onClick={() => navigate(`/settlement?trip_id=${t.trip_id}`)}
                                                 >
-                                                    Process Settlement Run
+                                                    Process Payment
                                                 </button>
                                             </td>
                                         </tr>
@@ -170,7 +170,7 @@ const Settlement = () => {
     }
 
     if (loading && !data) {
-        return <div className="loading-container-fims"><div className="spinner"></div><p>Gathering ledger data...</p></div>;
+        return <div className="loading-container-fims"><div className="spinner"></div><p>Loading records...</p></div>;
     }
 
     if (!data) return <div className="error-container-fims">Data not found</div>;
@@ -183,9 +183,9 @@ const Settlement = () => {
                 <div>
                     <button className="back-btn-minimal" onClick={() => navigate('/settlement')}>
                         <ArrowLeft size={16} />
-                        <span>Back to Settlement Runs</span>
+                        <span>Back to Settlements</span>
                     </button>
-                    <h1>Settlement Ledger: {trip.id}</h1>
+                    <h1>Settlement Details: {trip.id}</h1>
                 </div>
                 <div style={{ textAlign: 'right' }}>
                     <p style={{ fontWeight: 700, color: 'var(--burgundy)' }}>{trip.employee}</p>
@@ -197,21 +197,21 @@ const Settlement = () => {
                 <div className="settlement-main premium-card">
                     <div className="summary-banner">
                         <div className="banner-item">
-                            <span>Total Advances Paid</span>
+                            <span>Advances Paid</span>
                             <h3>₹{summary.advance.toLocaleString()}</h3>
                         </div>
                         <div className="banner-divider">
                             <TrendingUp size={24} className={summary.balance < 0 ? 'recoverable' : 'payable'} />
                         </div>
                         <div className="banner-item">
-                            <span>Total Claim Amount</span>
+                            <span>Total Claimed</span>
                             <h3>₹{summary.claimTotal.toLocaleString()}</h3>
                         </div>
                     </div>
 
                     <div className="settlement-result">
                         <div className="result-info">
-                            <p>Final Settlement Balance</p>
+                            <p>Final Balance</p>
                             <h2 className={summary.balance < 0 ? 'recoverable' : 'payable'}>
                                 {summary.balance < 0 ? '-' : ''}₹{Math.abs(summary.balance).toLocaleString()}
                             </h2>
@@ -232,8 +232,8 @@ const Settlement = () => {
                             <div className="settled-status-premium">
                                 <ShieldCheck size={28} color="#22c55e" />
                                 <div className="status-txt">
-                                    <span className="label">ACCOUNTING STATUS</span>
-                                    <span className="value">SETTLED & CLOSED</span>
+                                    <span className="label">STATUS</span>
+                                    <span className="value">PAID & CLOSED</span>
                                 </div>
                             </div>
                         )}
@@ -242,7 +242,7 @@ const Settlement = () => {
 
                 <div className="breakdown-area premium-card">
                     <div className="section-header-br">
-                        <h3>Transaction Audit Logs</h3>
+                        <h3>Recent Transactions</h3>
                         <Clock size={18} />
                     </div>
                     

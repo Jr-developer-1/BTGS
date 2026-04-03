@@ -332,6 +332,21 @@ class JobReportSerializer(serializers.ModelSerializer):
         model = JobReport
         fields = '__all__'
 
+class BulkActivityBatchSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    reporting_manager_name = serializers.SerializerMethodField()
+    trip_id_display = serializers.CharField(source='trip.trip_id', read_only=True)
+
+    class Meta:
+        model = BulkActivityBatch
+        fields = '__all__'
+
+    def get_user_name(self, obj):
+        return obj.user.name if obj.user else 'Unknown'
+
+    def get_reporting_manager_name(self, obj):
+        return obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else 'N/A'
+
 class TripSerializer(serializers.ModelSerializer):
     advances = TravelAdvanceSerializer(many=True, read_only=True)
     expenses = ExpenseSerializer(many=True, read_only=True)
@@ -352,6 +367,7 @@ class TripSerializer(serializers.ModelSerializer):
     has_gh_booking = serializers.SerializerMethodField()
     has_vehicle_booking = serializers.SerializerMethodField()
     job_reports = JobReportSerializer(many=True, read_only=True)
+    activity_batches = BulkActivityBatchSerializer(many=True, read_only=True)
     current_approver_name = serializers.ReadOnlyField(source='current_approver.name')
 
     class Meta:
@@ -364,7 +380,7 @@ class TripSerializer(serializers.ModelSerializer):
             'vehicle_type', 'members', 'lifecycle_events', 'created_at', 'updated_at',
             'advances', 'expenses', 'odometer', 'claim', 'reporting_manager_name', 'senior_manager_name', 'hod_director_name',
             'current_approver', 'current_approver_name', 'total_approved_advance', 'total_expenses', 'wallet_balance', 'has_gh_booking', 'has_vehicle_booking',
-            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports'
+            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches'
         ]
         read_only_fields = ('trip_id', 'user', 'user_name', 'user_emp_id', 'status', 'cost_estimate', 'created_at', 'updated_at', 'lifecycle_events')
 
@@ -426,18 +442,9 @@ class AuditLogSerializer(serializers.ModelSerializer):
         model = AuditLog
         fields = ['id', 'user', 'user_name', 'action', 'model_name', 'object_id', 'object_repr', 'timestamp', 'details', 'ip_address']
 
-class BulkActivityBatchSerializer(serializers.ModelSerializer):
-    user_name = serializers.SerializerMethodField()
-    reporting_manager_name = serializers.SerializerMethodField()
-    trip_id_display = serializers.CharField(source='trip.trip_id', read_only=True)
 
     class Meta:
-        model = BulkActivityBatch
-        fields = '__all__'
+        model = AuditLog
+        fields = ['id', 'user', 'user_name', 'action', 'model_name', 'object_id', 'object_repr', 'timestamp', 'details', 'ip_address']
 
-    def get_user_name(self, obj):
-        return obj.user.name if obj.user else 'Unknown'
-
-    def get_reporting_manager_name(self, obj):
-        return obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else 'N/A'
 

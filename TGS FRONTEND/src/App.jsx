@@ -45,6 +45,8 @@ import AdminMasters from './pages/AdminMasters';
 import NotificationsPage from './pages/NotificationsPage';
 import Settings from './pages/Settings';
 import SupportBot from './components/SupportBot';
+import AppVersionManagement from './pages/AppVersionManagement';
+
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
 
@@ -346,6 +348,7 @@ function App() {
             <Route path="/AdminMasters" element={<ProtectedRoute><AdminMasters /></ProtectedRoute>} />
             <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/app-version" element={<AdminRoute><AppVersionManagement /></AdminRoute>} />
           </Routes>
         </Router>
       </ThemeProvider>

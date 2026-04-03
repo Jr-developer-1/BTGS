@@ -8,7 +8,7 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  static const String baseUrl = 'http://192.168.30.205:4567';
+  static const String baseUrl = 'http://10.2.1.120:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -29,6 +29,28 @@ class ApiConstants {
   static const String findPaths = '$baseUrl/api/masters/routes/find_paths/';
   static const String fuelRates = '$baseUrl/api/masters/fuel-rate-masters/my_rate/';
 
+  // Master Data Endpoints (Parity with Web)
+  static const String masterTravelModes = '$baseUrl/api/travel-mode-masters/';
+  static const String masterBookingTypes = '$baseUrl/api/booking-type-masters/';
+  static const String masterTravelClasses = '$baseUrl/api/travel-class-masters/';
+  static const String masterVehicles = '$baseUrl/api/vehicle-masters/';
+  static const String masterOperators = '$baseUrl/api/operator-masters/';
+  static const String masterProviders = '$baseUrl/api/provider-masters/';
+  static const String masterLocalTravelModes = '$baseUrl/api/local-travel-mode-masters/';
+  static const String masterLocalSubTypes = '$baseUrl/api/local-sub-type-masters/';
+  static const String masterLocalProviders = '$baseUrl/api/local-provider-masters/';
+  static const String masterStayTypes = '$baseUrl/api/stay-type-masters/';
+  static const String masterRoomTypes = '$baseUrl/api/room-type-masters/';
+  static const String masterMealCategories = '$baseUrl/api/meal-category-masters/';
+  static const String masterMealTypes = '$baseUrl/api/meal-type-masters/';
+  static const String masterIncidentalTypes = '$baseUrl/api/incidental-type-masters/';
+  static const String masterTicketStatus = '$baseUrl/api/ticket-status-masters/';
+  static const String masterQuotaTypes = '$baseUrl/api/quota-type-masters/';
+  static const String masterStayBookingTypes = '$baseUrl/api/stay-booking-type-masters/';
+  static const String masterStayBookingSources = '$baseUrl/api/stay-booking-source-masters/';
+  static const String masterMealSources = '$baseUrl/api/meal-source-masters/';
+  static const String masterMealProviders = '$baseUrl/api/meal-provider-masters/';
+
   // Expense Endpoints
   static const String expenses = '$baseUrl/api/expenses/';
   static const String claims = '$baseUrl/api/claims/';
@@ -42,6 +64,7 @@ class ApiConstants {
   // Bulk Activity Endpoints
   static const String bulkTemplate = '$baseUrl/api/bulk-activities/template/';
   static const String bulkUpload = '$baseUrl/api/bulk-activities/upload/';
+  static const String bulkHistory = '$baseUrl/api/bulk-activities/history/';
 
   // Guest House Endpoints
   static const String guestHouse = '$baseUrl/api/guesthouse/';

@@ -238,6 +238,22 @@ class User(models.Model):
         else:
             emp_code = mgr_info
             
+        # If the emp_code is still purely numeric (a raw HR database ID), attempt an active resolution
+        if emp_code and str(emp_code).isdigit():
+            from api_management.services import resolve_hr_id_to_code
+            from api_management.models import SystemConfig
+            from api_management.utils import decrypt_key
+            try:
+                if SystemConfig.objects.filter(key='external_api_url').exists() and SystemConfig.objects.filter(key='external_api_key').exists():
+                    v_url = SystemConfig.objects.get(key='external_api_url').value
+                    v_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
+                    v_headers = {"X-Api-Key": v_key, "Accept": "application/json"}
+                    resolved = resolve_hr_id_to_code(emp_code, v_url, v_headers)
+                    if resolved:
+                        emp_code = resolved
+            except Exception as e:
+                print(f"HR fallback resolution failed for {emp_code}: {e}")
+            
         return self._get_or_create_shell_user(str(emp_code)) if emp_code else None
 
     @property
@@ -350,5 +366,44 @@ class PhotoUpdateRequest(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+    updated_at = models.DateTimeField(auto_now=True)
+    remarks = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Face Registration Request from {self.user.name}"
+
+    class Meta:
+        ordering = ['-created_at']
+
+class PhotoUpdateRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='photo_update_requests')
+    reason = models.TextField()
+    status = models.CharField(max_length=20, default='Pending') # Pending, Approved, Rejected
+    created_at = models.DateTimeField(auto_now_add=True)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='decided_photo_updates')
+    remarks = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"Photo Update Request from {self.user.name}"
+
+    class Meta:
+        ordering = ['-created_at']
+
+class AppVersion(models.Model):
+    latest_version = models.CharField(max_length=50)
+    minimum_supported_version = models.CharField(max_length=50)
+    update_type = models.CharField(max_length=20, choices=[('optional', 'Optional'), ('force', 'Force')])
+    message = models.TextField()
+    update_url = models.URLField(max_length=500)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Version {self.latest_version} ({self.update_type})"
+
+    class Meta:
+        ordering = ['-updated_at']
+
 
 

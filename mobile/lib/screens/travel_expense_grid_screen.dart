@@ -3,14 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../services/trip_service.dart';
-import '../services/api_service.dart';
-import '../models/trip_model.dart';
 import 'trip_expense_form_detailed.dart';
-import 'job_report_composer_screen.dart';
 
 class TravelExpenseGridScreen extends StatefulWidget {
-  final String travelId;
-  const TravelExpenseGridScreen({super.key, required this.travelId});
+  final String tripId;
+  const TravelExpenseGridScreen({super.key, required this.tripId});
 
   @override
   _TravelExpenseGridScreenState createState() => _TravelExpenseGridScreenState();
@@ -18,12 +15,9 @@ class TravelExpenseGridScreen extends StatefulWidget {
 
 class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
   final TripService _tripService = TripService();
-  final ApiService _apiService = ApiService();
   bool _isLoading = true;
-  bool _isActionLoading = false;
-  Trip? _tripData;
   List<dynamic> _expenses = [];
-  final Map<String, bool> _isSavingReport = {};
+  final Map<int, bool> _isSavingReport = {};
 
   @override
   void initState() {
@@ -34,275 +28,152 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
   Future<void> _fetchExpenses() async {
     setState(() => _isLoading = true);
     try {
-      final trip = await _tripService.fetchTripDetails(widget.travelId);
+      final trip = await _tripService.fetchTripDetails(widget.tripId);
       setState(() {
-        _tripData = trip;
         _expenses = trip.expenses ?? [];
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
       }
     }
-  }
-
-  bool _isOwner() {
-    if (_tripData == null) return false;
-    final user = _apiService.getUser();
-    if (user == null) return false;
-    return user['id'].toString() == _tripData!.userId.toString();
-  }
-
-  Future<void> _handleAction(String action) async {
-    setState(() => _isActionLoading = true);
-    try {
-      final taskId = (_tripData != null && _tripData!.claim != null)
-          ? "CLAIM-${_tripData!.claim!['id']}"
-          : widget.travelId;
-      await _tripService.performApproval(taskId, action);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('$action successful'), backgroundColor: Colors.green));
-      }
-      _fetchExpenses();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Failed to $action: $e'), backgroundColor: Colors.red));
-      }
-    } finally {
-      setState(() => _isActionLoading = false);
-    }
-  }
-
-  Map<String, dynamic> _parseDesc(dynamic exp) {
-    try {
-      if (exp['description'] is String &&
-          (exp['description'] as String).startsWith('{')) {
-        return Map<String, dynamic>.from(jsonDecode(exp['description']));
-      } else if (exp['description'] is Map) {
-        return Map<String, dynamic>.from(exp['description'] as Map);
-      }
-    } catch (_) {}
-    return {};
-  }
-
-  String _getJobReport(dynamic exp) =>
-      (_parseDesc(exp)['jobReport'] ?? '').toString();
-
-  List<String> _getJobReportAttachments(dynamic exp) {
-    final attachments = _parseDesc(exp)['jobReportAttachments'];
-    if (attachments is List) {
-      return List<String>.from(attachments.map((e) => e.toString()));
-    }
-    return [];
-  }
-
-  String _getExpenseMainDisplay(dynamic exp) {
-    final desc = _parseDesc(exp);
-    if (desc['origin'] != null && desc['destination'] != null) {
-      return '${desc['origin']} → ${desc['destination']}';
-    }
-    return exp['remarks'] ?? 'Expense Entry';
-  }
-
-  Future<void> _saveJobReport(dynamic exp, String reportText, List<String> attachments) async {
-    final expenseId = exp['id'].toString();
-    setState(() => _isSavingReport[expenseId] = true);
-    try {
-      final desc = _parseDesc(exp);
-      desc['jobReport'] = reportText;
-      desc['jobReportAttachments'] = attachments;
-      await _tripService.patchExpense(expenseId, {'description': jsonEncode(desc)});
-
-      // Optimistic local update
-      final idx = _expenses.indexWhere((e) => e['id'].toString() == expenseId);
-      if (idx != -1) {
-        final updated = Map<String, dynamic>.from(_expenses[idx] as Map);
-        updated['description'] = jsonEncode(desc);
-        setState(() => _expenses[idx] = updated);
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Job report saved.'),
-            backgroundColor: Color(0xFF10B981)));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Failed to save: $e'), backgroundColor: Colors.red));
-      }
-    } finally {
-      setState(() => _isSavingReport.remove(expenseId));
-    }
-  }
-
-  // ── Opens the job report bottom sheet ──
-  void _openJobReportSheet(dynamic exp) {
-    final jobReport = _getJobReport(exp);
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => JobReportComposerScreen(
-          travelId: widget.travelId,
-          initialReport: jobReport,
-          initialAttachments: _getJobReportAttachments(exp),
-          onSave: (text, attachments) => _saveJobReport(exp, text, attachments),
-        ),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    double totalAmount = _expenses.fold(
-        0.0, (s, e) => s + (double.tryParse(e['amount']?.toString() ?? '0') ?? 0.0));
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text('Travel Expense Grid',
-            style: GoogleFonts.plusJakartaSans(
-                fontWeight: FontWeight.w800, fontSize: 16, color: Colors.white)),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-          onPressed: () => Navigator.pop(context),
+        title: Text(
+          'Journey Log & ODO',
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w800,
+            fontSize: 16,
+          ),
         ),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            icon: const Icon(Icons.refresh_rounded, size: 20),
             onPressed: _fetchExpenses,
-          )
+          ),
+          const SizedBox(width: 8),
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF6366F1)))
-          : Stack(children: [
-              Container(
-                height: 280,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF4F46E5), Color(0xFF818CF8), Color(0xFF6366F1)],
-                  ),
-                ),
-              ),
-              SafeArea(
-                child: SingleChildScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Column(children: [
-                    const SizedBox(height: 20),
-                    _buildSummaryHeader(totalAmount),
-                    const SizedBox(height: 24),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('EXPENSE CATEGORIES',
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          : SingleChildScrollView(
+              child: Column(
+                children: [
+                  // Dashboard Stats
+                  _buildStatsSection(),
+                  
+                  // Category Selection (Web-app style)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'QUICK LOG CATEGORIES',
                           style: GoogleFonts.plusJakartaSans(
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: FontWeight.w900,
-                              color: Colors.white.withOpacity(0.9),
-                              letterSpacing: 1.2)),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildCategoryCard('LOCAL CONVEYANCE', 'Local Travel',
-                        const Color(0xFF4F46E5), Icons.directions_car_filled_rounded),
-                    const SizedBox(height: 20),
-                    _buildCategoryCard('INCIDENTAL EXPENSES', 'Incidental',
-                        const Color(0xFFF59E0B), Icons.receipt_long_rounded),
-                    const SizedBox(height: 40),
-                    if (_isOwner() &&
-                        _tripData != null &&
-                        (_tripData!.claim == null ||
-                            _tripData!.claim!['status'] == 'Draft' ||
-                            _tripData!.claim!['status'] == 'Pending'))
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed:
-                              _isActionLoading ? null : () => _handleAction('Submit'),
-                          icon: const Icon(Icons.send_rounded, size: 18),
-                          label: Text('SUBMIT FOR CLAIM',
-                              style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13,
-                                  letterSpacing: 1)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF10B981),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 20),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20)),
-                            elevation: 4,
-                          ),
+                              color: const Color(0xFF64748B),
+                              letterSpacing: 1.2),
                         ),
-                      ),
-                    const SizedBox(height: 40),
-                  ]),
-                ),
+                        const SizedBox(height: 12),
+                        _buildCategoryCard('LOCAL CONVEYANCE', 'Local Travel',
+                            const Color(0xFF4F46E5), Icons.directions_car_filled_rounded),
+                        const SizedBox(height: 20),
+                        _buildCategoryCard('INCIDENTAL EXPENSES', 'Incidental',
+                            const Color(0xFFF59E0B), Icons.receipt_long_rounded),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              if (_isActionLoading)
-                Container(
-                  color: Colors.black.withOpacity(0.3),
-                  child: const Center(
-                      child: CircularProgressIndicator(color: Colors.white)),
-                ),
-            ]),
+            ),
     );
   }
 
-  Widget _buildSummaryHeader(double total) {
+  Widget _buildStatsSection() {
+    double totalKm = 0;
+    double totalExp = 0;
+
+    for (var e in _expenses) {
+      final cat = e['category']?.toString().toLowerCase();
+      if (cat == 'fuel' || cat == 'local travel') {
+        final desc = jsonDecode(e['description'] ?? '{}');
+        final start = double.tryParse(desc['odoStart']?.toString() ?? '0') ?? 0;
+        final end = double.tryParse(desc['odoEnd']?.toString() ?? '0') ?? 0;
+        totalKm += (end - start).clamp(0, 99999);
+      }
+      totalExp += double.tryParse(e['amount']?.toString() ?? '0') ?? 0;
+    }
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 40,
-              offset: const Offset(0, 20))
-        ],
-      ),
-      child: Column(children: [
-        Text('TOTAL CLAIM AMOUNT',
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: Colors.white.withOpacity(0.8),
-                letterSpacing: 1)),
-        const SizedBox(height: 8),
-        Text('₹${total.toStringAsFixed(2)}',
-            style: GoogleFonts.plusJakartaSans(
-                fontSize: 40,
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-                letterSpacing: -1)),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.confirmation_num_outlined, color: Colors.white, size: 14),
-            const SizedBox(width: 8),
-            Text('ID: ${widget.travelId.toUpperCase()}',
-                style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
-          ]),
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF0F172A).withOpacity(0.1),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            )
+          ],
         ),
-      ]),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildStatItem('TOTAL DISTANCE', '${totalKm.toStringAsFixed(1)} KM',
+                Icons.add_road_rounded),
+            Container(width: 1, height: 40, color: Colors.white.withOpacity(0.1)),
+            _buildStatItem('TOTAL COST', '₹${totalExp.toStringAsFixed(0)}',
+                Icons.account_balance_wallet_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, color: Colors.white.withOpacity(0.5), size: 16),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: GoogleFonts.plusJakartaSans(
+              color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+              color: Colors.white.withOpacity(0.5),
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5),
+        ),
+      ],
     );
   }
 
@@ -316,99 +187,68 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       return cat == category.toLowerCase();
     }).toList();
 
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-              color: const Color(0xFF4F46E5).withOpacity(0.06),
-              blurRadius: 30,
-              offset: const Offset(0, 10))
-        ],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 16, 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(children: [
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                      color: color.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(14)),
-                  child: Icon(icon, color: color, size: 20),
+                      color: color.withOpacity(0.1), shape: BoxShape.circle),
+                  child: Icon(icon, color: color, size: 16),
                 ),
-                const SizedBox(width: 16),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(title,
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          color: const Color(0xFF1E293B))),
-                  Text('${categoryExpenses.length} Entries Logged',
-                      style: GoogleFonts.plusJakartaSans(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF94A3B8))),
-                ]),
-              ]),
-              IconButton(
-                icon: Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.add_rounded, color: Color(0xFF4F46E5), size: 18),
+                const SizedBox(width: 12),
+                Text(
+                  title,
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12, fontWeight: FontWeight.w900, color: color),
                 ),
-                onPressed: () => _openAddForm(category),
-              ),
-            ],
-          ),
-        ),
-        if (categoryExpenses.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-            child: Container(
-              padding: const EdgeInsets.all(24),
-              width: double.infinity,
-              decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFF1F5F9))),
-              child: Column(children: [
-                const Icon(Icons.receipt_long_outlined,
-                    color: Color(0xFFCBD5E1), size: 32),
-                const SizedBox(height: 8),
-                Text('No entries found yet',
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        color: const Color(0xFF94A3B8),
-                        fontWeight: FontWeight.w600)),
-              ]),
+              ],
             ),
+            TextButton.icon(
+              onPressed: () => _openAddForm(category),
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 14),
+              label: const Text('ADD'),
+              style: TextButton.styleFrom(
+                  foregroundColor: color,
+                  textStyle: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800, fontSize: 10)),
+            )
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (categoryExpenses.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 30),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: const Color(0xFFF1F5F9))),
+            child: Center(
+                child: Text('Click ADD to log journey',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        color: const Color(0xFF94A3B8),
+                        fontWeight: FontWeight.w600))),
           )
         else
-          Column(
-              children: categoryExpenses
-                  .map((exp) => _buildExpenseTile(exp, category))
-                  .toList()),
-        const SizedBox(height: 12),
-      ]),
+          ...categoryExpenses.map((exp) => _buildExpenseTile(category, exp)),
+      ],
     );
   }
 
-  Widget _buildExpenseTile(dynamic exp, String category) {
-    final desc = _parseDesc(exp);
-    final expenseId = exp['id'].toString();
-    final jobReport = _getJobReport(exp);
+  Widget _buildExpenseTile(String category, dynamic exp) {
+    final desc = jsonDecode(exp['description'] ?? '{}');
+    final subType = desc['subType']?.toString() ?? 'N/A';
     final odoStart = desc['odoStart']?.toString() ?? '';
     final odoEnd = desc['odoEnd']?.toString() ?? '';
     final odoRate = desc['odoRate']?.toString() ?? '9.0';
-    final subType = (desc['subType'] ?? desc['mode'] ?? 'Local').toString();
+    final jobReport = desc['jobReport']?.toString() ?? '';
+    final expenseId = exp['id'];
     final isSaving = _isSavingReport[expenseId] == true;
 
     double dist = 0;
@@ -626,13 +466,101 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.plusJakartaSans(
-                  fontSize: 11,
+                  fontSize: 10,
                   color: const Color(0xFF64748B),
-                  fontWeight: FontWeight.w500,
-                  height: 1.5),
+                  fontStyle: FontStyle.italic),
             ),
           ),
       ]),
+    );
+  }
+
+  String _getExpenseMainDisplay(dynamic exp) {
+    try {
+      final cat = exp['category']?.toString().toLowerCase();
+      final desc = jsonDecode(exp['description'] ?? '{}');
+
+      if (cat == 'fuel' || cat == 'local travel') {
+        String origin = desc['origin'] ?? 'Start';
+        String dest = desc['destination'] ?? 'End';
+        return '$origin → $dest';
+      }
+      return exp['remarks'] ?? exp['category'] ?? 'Expense';
+    } catch (e) {
+      return exp['remarks'] ?? 'Expense';
+    }
+  }
+
+  void _openJobReportSheet(Map<String, dynamic> exp) {
+    final desc = jsonDecode(exp['description'] ?? '{}');
+    final controller = TextEditingController(text: desc['jobReport'] ?? '');
+    final expenseId = exp['id'];
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+            24, 24, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('JOURNEY JOB REPORT',
+                  style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14, fontWeight: FontWeight.w900)),
+              IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded))
+            ]),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              maxLines: 5,
+              decoration: InputDecoration(
+                  hintText: 'Enter specific work details performed during this journey...',
+                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+                  filled: true,
+                  fillColor: const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  setState(() => _isSavingReport[expenseId] = true);
+                  
+                  try {
+                    desc['jobReport'] = controller.text;
+                    await _tripService.updateExpense(expenseId.toString(), {
+                      'description': jsonEncode(desc),
+                      'remarks': controller.text,
+                    });
+                    _fetchExpenses();
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                  } finally {
+                    setState(() => _isSavingReport[expenseId] = false);
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F172A),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+                child: Text('SAVE REPORT', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: Colors.white)),
+              ),
+            )
+          ],
+        ),
+      ),
     );
   }
 
@@ -641,7 +569,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       context,
       MaterialPageRoute(
           builder: (context) => TripExpenseFormDetailedScreen(
-              category: category, tripId: widget.travelId)),
+              category: category, tripId: widget.tripId)),
     );
     if (result == true) _fetchExpenses();
   }
@@ -651,10 +579,8 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       context,
       MaterialPageRoute(
           builder: (context) => TripExpenseFormDetailedScreen(
-              category: category, tripId: widget.travelId, expenseData: exp)),
+              category: category, tripId: widget.tripId, expenseData: exp)),
     );
     if (result == true) _fetchExpenses();
   }
 }
-
-

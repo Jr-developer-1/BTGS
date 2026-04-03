@@ -79,6 +79,7 @@ const Sidebar = () => {
                 { title: 'Master Management', icon: <Settings size={18} />, path: '/master-management', roles: ['admin'] },
                 { title: 'Fuel Rate Master', icon: <Fuel size={18} />, path: '/fuel-master', roles: ['admin'] },
                 { title: 'Masters', icon: <Settings size={18} />, path: '/AdminMasters', roles: ['admin'] },
+                { title: 'App Version Config', icon: <Settings size={18} />, path: '/app-version', roles: ['admin'] },
             ]
         },
         {

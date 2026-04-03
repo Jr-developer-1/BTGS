@@ -256,7 +256,7 @@ const MyTrips = () => {
                             New Trip Request
                         </button>
                     )}
-                    {(typeFilter === 'All' || typeFilter === 'Travel') && (
+                    {(user?.role === 'oe' || user?.designation === 'OE') && (typeFilter === 'All' || typeFilter === 'Travel') && (
                         <button className="btn-primary" style={{ backgroundColor: 'white', color: 'var(--magenta)', border: '1px solid var(--magenta)' }} onClick={() => navigate('/travel-creation')}>
                             <Briefcase size={18} style={{ marginRight: '8px' }} />
                             New Tour Plan
@@ -276,14 +276,16 @@ const MyTrips = () => {
                     />
                 </div>
 
-                <div className="filter-group">
-                    <Briefcase size={18} />
-                    <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                        <option>All</option>
-                        <option>Trip</option>
-                        <option>Travel</option>
-                    </select>
-                </div>
+                {(user?.role === 'oe' || user?.designation === 'OE') && (
+                    <div className="filter-group">
+                        <Briefcase size={18} />
+                        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                            <option>All</option>
+                            <option>Trip</option>
+                            <option>Travel</option>
+                        </select>
+                    </div>
+                )}
             </div>
 
             <div className="trips-grid">

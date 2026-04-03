@@ -34,6 +34,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   String _viewType = 'special'; // 'special' or 'monthly'
   final Set<String> _selectedIds = {}; // for batch actions parity with web
   final TextEditingController _searchController = TextEditingController();
+  Map<String, dynamic>? _currentUser;
+  final Map<int, Map<String, String>> _batchRowEdits = {};
+  bool _isActionLoading = false;
 
   final List<Map<String, dynamic>> _filterOptions = [
     {'value': 'all', 'label': 'All'},
@@ -50,6 +53,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     if (widget.enforceTab != null) {
       _activeTab = widget.enforceTab == 0 ? 'pending' : 'history';
     }
+    _currentUser = ApiService().getUser();
     _fetchData();
   }
 
@@ -59,46 +63,21 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       final counts = await _tripService.fetchApprovalCounts();
       List<Map<String, dynamic>> finalTasks = [];
 
+      // Fetch tasks using the unified approvals endpoint
+      // This ensures we get the same data as the web inbox (including resubmitted batches)
+      finalTasks = await _tripService.fetchApprovals(
+        tab: _activeTab,
+        type: _filterType,
+        viewType: _viewType,
+        search: _searchController.text,
+      );
+
+      // If we are in monthly view, we might need to map some fields if they are missing
       if (_viewType == 'monthly') {
-        final batchesData = await _tripService.fetchBulkActivities();
-        // Filter those pending for me
-        // However, on mobile we don't have user info in this screen to filter 'current_approver',
-        // so we'll just show what the backend returns. The backend should ideally filter by approver.
-        finalTasks = batchesData.where((b) {
-          final s = b['status']?.toString() ?? '';
-          if (_activeTab == 'pending') {
-            return s == 'Submitted' || s == 'Manager Approved';
-          } else {
-            return s == 'Approved' || s == 'Rejected' || s == 'Finance Review' || s == 'Settled';
-          }
-        }).map((b) {
-          final rows = (b['data_json'] as List?) ?? [];
-          final entryCount = rows.where((r) {
-            final dateStr = r['date']?.toString() ?? '';
-            return !dateStr.toLowerCase().contains('instruc');
-          }).length;
-          
-          return {
-            'id': b['id']?.toString() ?? '',
-            'type': 'Monthly Tour Plan',
-            'requester': b['employee_name']?.toString() ?? 'Unknown Employee',
-            'purpose': 'Monthly Tour Plan',
-            'status': b['status'],
-            'date': b['created_at']?.toString().split('T').first ?? '',
-            'cost': '$entryCount Entries',
-            'risk': 'Low',
-            'data_json': rows,
-            'file_name': b['file_name']?.toString() ?? 'Daily Activities',
-            'remarks': b['remarks'],
-          };
+        finalTasks = finalTasks.map((t) {
+          if (t['type'] == null) t['type'] = 'Monthly Tour Plan';
+          return t;
         }).toList();
-      } else {
-        finalTasks = await _tripService.fetchApprovals(
-          tab: _activeTab,
-          type: _filterType,
-          viewType: _viewType,
-          search: _searchController.text,
-        );
       }
       if (mounted) {
         setState(() {
@@ -115,7 +94,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             content: Text('Failed to load tasks: $e'),
             backgroundColor: const Color(0xFFEF4444),
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
           ),
         );
       }
@@ -138,11 +119,17 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       String verb;
       switch (action.toLowerCase()) {
         case 'approve':
-          verb = 'Approved';
+        case 'approvevalid':
+          verb = action.toLowerCase() == 'approvevalid'
+              ? 'Approved Valid Entries'
+              : 'Approved';
           break;
         case 'reject':
+        case 'rejectall':
         case 'rejectbyfinance':
-          verb = 'Rejected';
+          verb = action.toLowerCase() == 'rejectall'
+              ? 'Rejected All Entries'
+              : 'Rejected';
           break;
         case 'pay':
           verb = 'Paid';
@@ -155,7 +142,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           content: Text('Request $verb successfully'),
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
       setState(() => _selectedIds.clear());
@@ -167,13 +156,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       } else if (e.toString().contains('authorized')) {
         message = 'You are not authorized to perform this action.';
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(message),
           backgroundColor: const Color(0xFFEF4444),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
     }
@@ -206,7 +197,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           Column(
             children: [
               if (!widget.hideHeader) _buildCustomHeader(),
-              if (widget.enforceTab == null) _buildFilterToggleSection(),
+              _buildFilterToggleSection(),
               _buildTypeFilterSection(),
               Expanded(
                 child: _isLoading
@@ -346,27 +337,29 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           ),
           const SizedBox(height: 16),
           // CATEGORY SELECTOR (Special vs Monthly) - Mirrors Web Workflow
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
+          if (_canSeeMonthlyTourPlan())
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(child: _categoryBtn('special', 'Special Requests')),
+                  Expanded(child: _categoryBtn('monthly', 'Monthly Tour Plan')),
+                ],
+              ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _categoryBtn('special', 'Special Requests'),
-                ),
-                Expanded(
-                  child: _categoryBtn('monthly', 'Monthly Tour Plan'),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
+  }
+
+  bool _canSeeMonthlyTourPlan() {
+    // All authenticated users in the inbox should be able to see both categories
+    return _currentUser != null;
   }
 
   Widget _categoryBtn(String type, String label) {
@@ -479,7 +472,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
                 value: _filterType,
-                icon: const Icon(Icons.filter_list_rounded, color: Color(0xFFBB0633), size: 18),
+                icon: const Icon(
+                  Icons.filter_list_rounded,
+                  color: Color(0xFFBB0633),
+                  size: 18,
+                ),
                 style: GoogleFonts.plusJakartaSans(
                   color: const Color(0xFF0F172A),
                   fontWeight: FontWeight.w800,
@@ -510,6 +507,12 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
+    if (task['type'] == 'Monthly Tour Plan') {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: _buildBulkBatchSection(task),
+      );
+    }
     final bool isHistory = _activeTab == 'history';
     final statusColor = task['status'] == 'Approved'
         ? Colors.green
@@ -742,6 +745,609 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       ),
     );
   }
+
+  // ─── Monthly Tour Plan / Bulk Activity Batch ─────────────────────────────
+
+  Widget _buildBulkBatchSection(Map<String, dynamic> task) {
+    final List<dynamic> rows = task['data_json'] ?? [];
+    final String fileName =
+        task['file_name']?.toString() ??
+        task['purpose']?.toString() ??
+        'Monthly Tour Plan';
+    final filteredRows = rows.where((r) {
+      final dateStr = r['date']?.toString() ?? '';
+      return !dateStr.toLowerCase().contains('instruc');
+    }).toList();
+
+    if (filteredRows.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Text(
+          'No activity entries found.',
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 13,
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.calendar_month_rounded,
+              color: Color(0xFFBB0633),
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Daily Activities — ${filteredRows.length} Entries',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F172A),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(
+          fileName,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 11,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w700,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 16),
+        ...filteredRows.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final row = Map<String, dynamic>.from(entry.value as Map);
+          return _buildBulkRowCard(idx, row, task);
+        }),
+      ],
+    );
+  }
+
+  Widget _buildBulkRowCard(
+    int idx,
+    Map<String, dynamic> row,
+    Map<String, dynamic> task,
+  ) {
+    final bool isHistory = _activeTab == 'history';
+    final editState = _batchRowEdits[idx] ?? {};
+    final rowStatus = editState['status'] ?? row['_status']?.toString() ?? '';
+    final isRejected = rowStatus == 'Rejected';
+    final isValidated = rowStatus == 'Validated' || rowStatus == 'OK';
+    final startTime = row['start_time']?.toString() ?? '';
+    final reachTime =
+        row['reach_time']?.toString() ?? row['end_time']?.toString() ?? '';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isRejected
+            ? const Color(0xFFFFF1F2)
+            : isValidated
+            ? const Color(0xFFF0FDF4)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isRejected
+              ? const Color(0xFFFECACA)
+              : isValidated
+              ? const Color(0xFFBBF7D0)
+              : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.calendar_today_rounded,
+                      size: 13,
+                      color: Color(0xFF94A3B8),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      row['date']?.toString() ?? '',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                  ],
+                ),
+                if (isRejected)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'REJECTED',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  )
+                else if (isValidated)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'VALIDATED',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'FROM',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          color: const Color(0xFF94A3B8),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      Text(
+                        row['origin_route']?.toString() ?? '-',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F172A),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Color(0xFFBB0633),
+                    size: 16,
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'TO',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          color: const Color(0xFF94A3B8),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      Text(
+                        row['destination_route']?.toString() ?? '-',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F172A),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.end,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                _timeChip('START', startTime),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.arrow_right_alt_rounded,
+                  color: Color(0xFF94A3B8),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                _timeChip('REACH', reachTime),
+                const Spacer(),
+                if ((row['visit_intent'] ?? '').toString().isNotEmpty)
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        row['visit_intent']?.toString() ?? '',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF475569),
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // Show remarks from server or from locally-saved rejection (before next refresh)
+          if ((row['_remarks'] ?? editState['remark'] ?? '')
+              .toString()
+              .isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline_rounded,
+                      size: 13,
+                      color: Color(0xFFEF4444),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        (row['_remarks'] ?? editState['remark'] ?? '')
+                            .toString(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: const Color(0xFFDC2626),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          // Hide action buttons once this row is rejected or validated (from server OR locally)
+          if (!isHistory &&
+              rowStatus != 'Rejected' &&
+              !isValidated &&
+              rowStatus != 'Approved') ...[
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              // Enforce mandatory rejection reason via dialog
+                              final remark = await _showRemarksDialog();
+                              if (remark == null || remark.isEmpty) return;
+
+                              setState(() => _isActionLoading = true);
+                              try {
+                                await _tripService.performApproval(
+                                  task['id'],
+                                  'UpdateBatchRow',
+                                  extraData: {
+                                    'row_index': idx,
+                                    'row_status': 'Rejected',
+                                    'remarks': remark,
+                                  },
+                                );
+                                // Update local state so the remark shows immediately
+                                setState(() {
+                                  _batchRowEdits[idx] = {
+                                    ...(_batchRowEdits[idx] ?? {}),
+                                    'status': 'Rejected',
+                                    'remark': 'Rejected by You: $remark',
+                                  };
+                                });
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text(
+                                        'Row rejected and reason saved',
+                                      ),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Failed to reject row: $e'),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted)
+                                  setState(() => _isActionLoading = false);
+                              }
+                            },
+                      icon: const Icon(Icons.close_rounded, size: 14),
+                      label: Text(
+                        'Reject',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red,
+                        side: const BorderSide(color: Color(0xFFFECACA)),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              setState(() => _isActionLoading = true);
+                              try {
+                                await _tripService.performApproval(
+                                  task['id'],
+                                  'UpdateBatchRow',
+                                  extraData: {
+                                    'row_index': idx,
+                                    'row_status': 'Validated',
+                                    'remarks': '',
+                                  },
+                                );
+                                setState(() {
+                                  _batchRowEdits[idx] = {
+                                    ...(_batchRowEdits[idx] ?? {}),
+                                    'status': 'Validated',
+                                  };
+                                });
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text(
+                                        'Row validated successfully',
+                                      ),
+                                      backgroundColor: const Color(0xFF10B981),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to validate row: $e',
+                                      ),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted)
+                                  setState(() => _isActionLoading = false);
+                              }
+                            },
+                      icon: const Icon(Icons.check_rounded, size: 14),
+                      label: _isActionLoading
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              'Validate',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF10B981),
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 14),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _timeChip(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 8,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            value.isEmpty ? '--:--' : value,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<String?> _showRemarksDialog() async {
+    String remark = '';
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(
+            'Rejection Reason',
+            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Please enter the reason for rejection:',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  color: const Color(0xFF64748B),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                autofocus: true,
+                onChanged: (v) => remark = v,
+                decoration: InputDecoration(
+                  hintText: 'Required for rejection...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                maxLines: 3,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.plusJakartaSans(
+                  color: const Color(0xFF64748B),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, remark.trim()),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFBB0633),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Text(
+                'Confirm Rejection',
+                style: GoogleFonts.plusJakartaSans(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class _TaskDetailsContent extends StatefulWidget {
@@ -911,7 +1517,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           content: Text('Item ${status.toLowerCase()}ed with feedback'),
           backgroundColor: const Color(0xFF10B981),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
       widget.onRefresh(); // Trigger main screen refresh
@@ -921,7 +1529,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           content: Text('Failed to update item: $e'),
           backgroundColor: const Color(0xFFEF4444),
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
         ),
       );
     } finally {
@@ -1111,9 +1721,19 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ),
 
                 // ── Monthly Tour Plan (Bulk Batch) ───────────────────────────
-                if (type == 'Monthly Tour Plan' || task['data_json'] != null) ...[
+                if (type == 'Monthly Tour Plan' ||
+                    task['data_json'] != null) ...[
                   const SizedBox(height: 32),
                   _buildBulkBatchSection(task),
+                ],
+
+                // ── Trip/Claim Activity Batches ──────────────────────────────
+                if (details['activity_batches'] != null &&
+                    (details['activity_batches'] as List).isNotEmpty) ...[
+                  for (var batch in (details['activity_batches'] as List)) ...[
+                    const SizedBox(height: 32),
+                    _buildBulkBatchSection(Map<String, dynamic>.from(batch)),
+                  ],
                 ],
 
                 if (type == 'Trip' && details.isNotEmpty) ...[
@@ -1302,7 +1922,23 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     }
     if (execAmount.isNotEmpty) extra['executive_approved_amount'] = execAmount;
 
-    widget.onAction(action, extra: extra.isEmpty ? null : extra);
+    String? actionToPerform = action;
+
+    // Check if this is a bulk activity batch (Monthly Tour Plan or nested activity batches)
+    final bool isBulk = widget.task['data_json'] != null;
+
+    if (isBulk) {
+      if (action == 'Approve') {
+        actionToPerform = 'ApproveValid';
+      } else if (action == 'Reject') {
+        actionToPerform = 'RejectAll';
+      }
+    }
+
+    widget.onAction(
+      actionToPerform ?? action,
+      extra: extra.isEmpty ? null : extra,
+    );
   }
 
   Widget _buildBottomActions() {
@@ -1313,6 +1949,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
     String rejectLabel = isFinanceExec ? 'Return to HR' : 'Reject';
     String approveLabel;
+
+    // Detect if this is a bulk batch
+    final bool isBulk = widget.task['data_json'] != null;
+
     if (isFinanceExec &&
         [
           'PENDING_EXECUTIVE',
@@ -1322,6 +1962,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       approveLabel = 'Verify & Send to Head (₹$execAmount)';
     } else if (isFinanceHead) {
       approveLabel = 'Authorize Payment (₹$execAmount)';
+    } else if (isBulk) {
+      approveLabel = 'Authorize Valid Entries';
     } else {
       approveLabel = 'Approve';
     }
@@ -1500,7 +2142,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
   Widget _buildBulkBatchSection(Map<String, dynamic> task) {
     final List<dynamic> rows = task['data_json'] ?? [];
-    final String fileName = task['file_name']?.toString() ?? task['purpose']?.toString() ?? 'Monthly Tour Plan';
+    final String fileName =
+        task['file_name']?.toString() ??
+        task['purpose']?.toString() ??
+        'Monthly Tour Plan';
     final filteredRows = rows.where((r) {
       final dateStr = r['date']?.toString() ?? '';
       return !dateStr.toLowerCase().contains('instruc');
@@ -1516,7 +2161,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         ),
         child: Text(
           'No activity entries found.',
-          style: GoogleFonts.plusJakartaSans(fontSize: 13, color: const Color(0xFF64748B), fontWeight: FontWeight.w600),
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 13,
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
         ),
       );
     }
@@ -1526,12 +2175,20 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       children: [
         Row(
           children: [
-            const Icon(Icons.calendar_month_rounded, color: Color(0xFFBB0633), size: 18),
+            const Icon(
+              Icons.calendar_month_rounded,
+              color: Color(0xFFBB0633),
+              size: 18,
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'Daily Activities — ${filteredRows.length} Entries',
-                style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w900, color: const Color(0xFF0F172A)),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F172A),
+                ),
               ),
             ),
           ],
@@ -1539,7 +2196,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         const SizedBox(height: 6),
         Text(
           fileName,
-          style: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFF94A3B8), fontWeight: FontWeight.w700),
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 11,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w700,
+          ),
           overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(height: 16),
@@ -1552,21 +2213,34 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     );
   }
 
-  Widget _buildBulkRowCard(int idx, Map<String, dynamic> row, Map<String, dynamic> task) {
+  Widget _buildBulkRowCard(
+    int idx,
+    Map<String, dynamic> row,
+    Map<String, dynamic> task,
+  ) {
     final editState = _batchRowEdits[idx] ?? {};
     final rowStatus = editState['status'] ?? row['_status']?.toString() ?? '';
     final isRejected = rowStatus == 'Rejected';
     final isValidated = rowStatus == 'Validated' || rowStatus == 'OK';
     final startTime = row['start_time']?.toString() ?? '';
-    final reachTime = row['reach_time']?.toString() ?? row['end_time']?.toString() ?? '';
+    final reachTime =
+        row['reach_time']?.toString() ?? row['end_time']?.toString() ?? '';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: isRejected ? const Color(0xFFFFF1F2) : isValidated ? const Color(0xFFF0FDF4) : Colors.white,
+        color: isRejected
+            ? const Color(0xFFFFF1F2)
+            : isValidated
+            ? const Color(0xFFF0FDF4)
+            : Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isRejected ? const Color(0xFFFECACA) : isValidated ? const Color(0xFFBBF7D0) : const Color(0xFFE2E8F0),
+          color: isRejected
+              ? const Color(0xFFFECACA)
+              : isValidated
+              ? const Color(0xFFBBF7D0)
+              : const Color(0xFFE2E8F0),
         ),
       ),
       child: Column(
@@ -1579,25 +2253,61 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.calendar_today_rounded, size: 13, color: Color(0xFF94A3B8)),
+                    const Icon(
+                      Icons.calendar_today_rounded,
+                      size: 13,
+                      color: Color(0xFF94A3B8),
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       row['date']?.toString() ?? '',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w800, color: const Color(0xFF0F172A)),
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0F172A),
+                      ),
                     ),
                   ],
                 ),
                 if (isRejected)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: const Color(0xFFEF4444), borderRadius: BorderRadius.circular(6)),
-                    child: Text('REJECTED', style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 0.5)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'REJECTED',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
                   )
                 else if (isValidated)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: const Color(0xFF10B981), borderRadius: BorderRadius.circular(6)),
-                    child: Text('VALIDATED', style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 0.5)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'VALIDATED',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
                   ),
               ],
             ),
@@ -1610,10 +2320,22 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('FROM', style: GoogleFonts.plusJakartaSans(fontSize: 9, color: const Color(0xFF94A3B8), fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                      Text(
+                        'FROM',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          color: const Color(0xFF94A3B8),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                       Text(
                         row['origin_route']?.toString() ?? '-',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w800, color: const Color(0xFF0F172A)),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F172A),
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
@@ -1621,16 +2343,32 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Icon(Icons.arrow_forward_rounded, color: Color(0xFFBB0633), size: 16),
+                  child: Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Color(0xFFBB0633),
+                    size: 16,
+                  ),
                 ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text('TO', style: GoogleFonts.plusJakartaSans(fontSize: 9, color: const Color(0xFF94A3B8), fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+                      Text(
+                        'TO',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          color: const Color(0xFF94A3B8),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                       Text(
                         row['destination_route']?.toString() ?? '-',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w800, color: const Color(0xFF0F172A)),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F172A),
+                        ),
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
                       ),
@@ -1647,18 +2385,32 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               children: [
                 _timeChip('START', startTime),
                 const SizedBox(width: 8),
-                const Icon(Icons.arrow_right_alt_rounded, color: Color(0xFF94A3B8), size: 18),
+                const Icon(
+                  Icons.arrow_right_alt_rounded,
+                  color: Color(0xFF94A3B8),
+                  size: 18,
+                ),
                 const SizedBox(width: 8),
                 _timeChip('REACH', reachTime),
                 const Spacer(),
                 if ((row['visit_intent'] ?? '').toString().isNotEmpty)
                   Flexible(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F5F9),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                       child: Text(
                         row['visit_intent']?.toString() ?? '',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w700, color: const Color(0xFF475569)),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF475569),
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -1666,7 +2418,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               ],
             ),
           ),
-          if ((row['_remarks'] ?? '').toString().isNotEmpty) ...[
+          // Show remarks from server or from locally-saved rejection (before next refresh)
+          if ((row['_remarks'] ?? editState['remark'] ?? '')
+              .toString()
+              .isNotEmpty) ...[
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1679,12 +2434,21 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline_rounded, size: 13, color: Color(0xFFEF4444)),
+                    const Icon(
+                      Icons.info_outline_rounded,
+                      size: 13,
+                      color: Color(0xFFEF4444),
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        row['_remarks'].toString(),
-                        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFFDC2626), fontWeight: FontWeight.w600),
+                        (row['_remarks'] ?? editState['remark'] ?? '')
+                            .toString(),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: const Color(0xFFDC2626),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -1692,64 +2456,173 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               ),
             ),
           ],
-          if (!widget.isHistory && row['_status'] != 'Rejected') ...[
+          // Hide action buttons once this row is rejected (from server OR locally)
+          if (!widget.isHistory && rowStatus != 'Rejected') ...[
             const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: TextField(
-                onChanged: (v) => setState(() => _batchRowEdits[idx] = {...(_batchRowEdits[idx] ?? {}), 'remark': v}),
-                decoration: InputDecoration(
-                  hintText: 'Rejection reason (optional)...',
-                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFFCBD5E1), fontWeight: FontWeight.w500),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  isDense: true,
-                ),
-                style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
               child: Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        setState(() => _batchRowEdits[idx] = {...(_batchRowEdits[idx] ?? {}), 'status': 'Rejected'});
-                        try {
-                          await _tripService.performApproval(task['id'], 'UpdateBatchRow',
-                              extraData: {'row_index': idx, 'row_status': 'Rejected', 'remarks': editState['remark'] ?? ''});
-                        } catch (_) {}
-                      },
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              // Enforce mandatory rejection reason via dialog
+                              final remark = await _showRemarksDialog();
+                              if (remark == null || remark.isEmpty) return;
+
+                              setState(() => _isActionLoading = true);
+                              try {
+                                await _tripService.performApproval(
+                                  task['id'],
+                                  'UpdateBatchRow',
+                                  extraData: {
+                                    'row_index': idx,
+                                    'row_status': 'Rejected',
+                                    'remarks': remark,
+                                  },
+                                );
+                                // Update local state so the remark shows immediately
+                                setState(() {
+                                  _batchRowEdits[idx] = {
+                                    ...(_batchRowEdits[idx] ?? {}),
+                                    'status': 'Rejected',
+                                    'remark': 'Rejected by You: $remark',
+                                  };
+                                });
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text(
+                                        'Row rejected and reason saved',
+                                      ),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Failed to reject row: $e'),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted)
+                                  setState(() => _isActionLoading = false);
+                              }
+                            },
                       icon: const Icon(Icons.close_rounded, size: 14),
-                      label: Text('Reject', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w900)),
+                      label: Text(
+                        'Reject',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
                         side: const BorderSide(color: Color(0xFFFECACA)),
                         padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: () async {
-                        setState(() => _batchRowEdits[idx] = {...(_batchRowEdits[idx] ?? {}), 'status': 'Validated'});
-                        try {
-                          await _tripService.performApproval(task['id'], 'UpdateBatchRow',
-                              extraData: {'row_index': idx, 'row_status': 'Validated', 'remarks': editState['remark'] ?? ''});
-                        } catch (_) {}
-                      },
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              setState(() => _isActionLoading = true);
+                              try {
+                                await _tripService.performApproval(
+                                  task['id'],
+                                  'UpdateBatchRow',
+                                  extraData: {
+                                    'row_index': idx,
+                                    'row_status': 'Validated',
+                                    'remarks': '',
+                                  },
+                                );
+                                setState(() {
+                                  _batchRowEdits[idx] = {
+                                    ...(_batchRowEdits[idx] ?? {}),
+                                    'status': 'Validated',
+                                  };
+                                });
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: const Text(
+                                        'Row validated successfully',
+                                      ),
+                                      backgroundColor: const Color(0xFF10B981),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Failed to validate row: $e',
+                                      ),
+                                      backgroundColor: const Color(0xFFEF4444),
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted)
+                                  setState(() => _isActionLoading = false);
+                              }
+                            },
                       icon: const Icon(Icons.check_rounded, size: 14),
-                      label: Text('Validate', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white)),
+                      label: _isActionLoading
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                color: Colors.white,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              'Validate',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                            ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF10B981),
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                     ),
                   ),
@@ -1768,11 +2641,29 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: GoogleFonts.plusJakartaSans(fontSize: 8, color: const Color(0xFF94A3B8), fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 8,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
+          ),
+        ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
-          child: Text(value.isEmpty ? '--:--' : value, style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w900, color: Colors.white)),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            value.isEmpty ? '--:--' : value,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            ),
+          ),
         ),
       ],
     );
@@ -1994,15 +2885,19 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     children: [
                       Expanded(
                         child: () {
-                          String description = exp['description']?.toString() ?? '';
+                          String description =
+                              exp['description']?.toString() ?? '';
                           if (description.startsWith('{')) {
                             try {
-                              final d = jsonDecode(description) as Map<String, dynamic>;
+                              final d =
+                                  jsonDecode(description)
+                                      as Map<String, dynamic>;
                               description =
                                   "${d['origin'] ?? ''}${d['origin'] != null ? ' → ' : ''}${d['destination'] ?? d['location'] ?? d['hotelName'] ?? d['hotel_name'] ?? ''}";
                               if (d['remarks'] != null &&
                                   d['remarks'].toString().isNotEmpty &&
-                                  d['remarks'].toString().toLowerCase() != 'null') {
+                                  d['remarks'].toString().toLowerCase() !=
+                                      'null') {
                                 description += " (${d['remarks']})";
                               }
                             } catch (e) {
@@ -2031,13 +2926,18 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   ),
                   if (exp['receipt_image'] != null) ...[
                     const SizedBox(height: 8),
-                    _miniImageThumbnail(exp['receipt_image'].toString(), "Receipt"),
+                    _miniImageThumbnail(
+                      exp['receipt_image'].toString(),
+                      "Receipt",
+                    ),
                   ],
                   () {
                     String description = exp['description']?.toString() ?? '';
-                    if (!description.startsWith('{')) return const SizedBox.shrink();
+                    if (!description.startsWith('{'))
+                      return const SizedBox.shrink();
                     try {
-                      final details = jsonDecode(description) as Map<String, dynamic>;
+                      final details =
+                          jsonDecode(description) as Map<String, dynamic>;
                       if (details['odoStart'] == null &&
                           details['odoEnd'] == null &&
                           details['odoStartImg'] == null &&
@@ -2116,7 +3016,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     final pFin = exp['finance_remarks']?.toString();
                     final pHr = exp['hr_remarks']?.toString();
                     final pRm = exp['rm_remarks']?.toString();
-                    final hasRemarks = (pFin != null && pFin.isNotEmpty) ||
+                    final hasRemarks =
+                        (pFin != null && pFin.isNotEmpty) ||
                         (pHr != null && pHr.isNotEmpty) ||
                         (pRm != null && pRm.isNotEmpty);
 
@@ -2138,7 +3039,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                 children: [
                                   const TextSpan(
                                     text: 'Fin: ',
-                                    style: TextStyle(fontWeight: FontWeight.w800),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                   TextSpan(text: pFin),
                                 ],
@@ -2154,7 +3057,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                 children: [
                                   const TextSpan(
                                     text: 'HR: ',
-                                    style: TextStyle(fontWeight: FontWeight.w800),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                   TextSpan(text: pHr),
                                 ],
@@ -2170,7 +3075,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                 children: [
                                   const TextSpan(
                                     text: 'RM: ',
-                                    style: TextStyle(fontWeight: FontWeight.w800),
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                   TextSpan(text: pRm),
                                 ],
@@ -2342,6 +3249,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       ],
     );
   }
+
   Widget _miniInfoBlock(String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2386,14 +3294,18 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         .replaceFirst(RegExp(r"^\[u'"), '')
         .replaceFirst(RegExp(r"^u'"), '')
         .replaceFirst(RegExp(r"^'"), '');
-    path = path.replaceFirst(RegExp(r"'\]$"), '').replaceFirst(RegExp(r"'$"), '');
+    path = path
+        .replaceFirst(RegExp(r"'\]$"), '')
+        .replaceFirst(RegExp(r"'$"), '');
 
     Widget imageWidget;
     try {
       if (path.startsWith('data:image')) {
         final base64String = path.split(',').last;
-        imageWidget =
-            Image.memory(base64Decode(base64String), fit: BoxFit.cover);
+        imageWidget = Image.memory(
+          base64Decode(base64String),
+          fit: BoxFit.cover,
+        );
       } else if (path.startsWith('/9j/') ||
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
         imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
@@ -2410,7 +3322,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         );
       }
     } catch (e) {
-      imageWidget = const Icon(Icons.error_outline, size: 20, color: Colors.red);
+      imageWidget = const Icon(
+        Icons.error_outline,
+        size: 20,
+        color: Colors.red,
+      );
     }
 
     return Container(

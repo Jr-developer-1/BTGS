@@ -20,7 +20,8 @@ class JobReportComposerScreen extends StatefulWidget {
   });
 
   @override
-  State<JobReportComposerScreen> createState() => _JobReportComposerScreenState();
+  State<JobReportComposerScreen> createState() =>
+      _JobReportComposerScreenState();
 }
 
 class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
@@ -49,7 +50,10 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Failed to save: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -70,9 +74,23 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
             const SizedBox(height: 24),
-            Text('ADD ATTACHMENT', style: GoogleFonts.plusJakartaSans(fontSize: 18, fontWeight: FontWeight.w900, color: const Color(0xFF0F172A))),
+            Text(
+              'ADD ATTACHMENT',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF0F172A),
+              ),
+            ),
             const SizedBox(height: 24),
             Row(
               children: [
@@ -85,9 +103,13 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
                       Navigator.pop(context);
                       final result = await Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (context) => const ForensicCamera()),
+                        MaterialPageRoute(
+                          builder: (context) => const ForensicCamera(),
+                        ),
                       );
-                      if (result != null && result is Map && result['path'] != null) {
+                      if (result != null &&
+                          result is Map &&
+                          result['path'] != null) {
                         _processFile(File(result['path']));
                       }
                     },
@@ -102,7 +124,10 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
                     onTap: () async {
                       Navigator.pop(context);
                       final picker = ImagePicker();
-                      final XFile? image = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+                      final XFile? image = await picker.pickImage(
+                        source: ImageSource.gallery,
+                        imageQuality: 70,
+                      );
                       if (image != null) {
                         _processFile(File(image.path));
                       }
@@ -118,7 +143,12 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
     );
   }
 
-  Widget _pickerOption({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+  Widget _pickerOption({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -132,7 +162,14 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
           children: [
             Icon(icon, color: color, size: 32),
             const SizedBox(height: 12),
-            Text(label, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13, color: color)),
+            Text(
+              label,
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                color: color,
+              ),
+            ),
           ],
         ),
       ),
@@ -151,13 +188,28 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text('Job Report', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800)),
+        title: Text(
+          'Job Report',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800),
+        ),
         backgroundColor: const Color(0xFF0F172A),
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
           if (_isSaving)
-            const Center(child: Padding(padding: EdgeInsets.only(right: 16), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))))
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.only(right: 16),
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                ),
+              ),
+            )
           else
             TextButton(
               onPressed: _handleSave,
@@ -210,9 +262,14 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
               child: TextField(
                 controller: _controller,
                 maxLines: null,
-                style: GoogleFonts.inter(fontSize: 15, color: const Color(0xFF334155), height: 1.5),
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  color: const Color(0xFF334155),
+                  height: 1.5,
+                ),
                 decoration: InputDecoration(
-                  hintText: 'Describe the work performed, site status, or activity details...',
+                  hintText:
+                      'Describe the work performed, site status, or activity details...',
                   hintStyle: GoogleFonts.inter(color: const Color(0xFF94A3B8)),
                   border: InputBorder.none,
                 ),
@@ -220,8 +277,7 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
               ),
             ),
           ),
-          if (_attachments.isNotEmpty)
-            _buildAttachmentList(),
+          if (_attachments.isNotEmpty) _buildAttachmentList(),
           _buildAttachmentButton(),
         ],
       ),
@@ -262,7 +318,11 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
                       color: Color(0xFFEF4444),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 12),
+                    child: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 12,
+                    ),
                   ),
                 ),
               ),
@@ -298,7 +358,9 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
                 foregroundColor: const Color(0xFF4F46E5),
                 side: const BorderSide(color: Color(0xFF4F46E5)),
                 padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
             ),
           ),
