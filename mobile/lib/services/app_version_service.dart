@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:install_plugin_v2/install_plugin_v2.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -127,8 +128,8 @@ class AppVersionService {
                         var contentLength = response.contentLength;
                         var bytes = <int>[];
                         
-                        var dir = await getExternalStorageDirectory();
-                        var filePath = '${dir!.path}/app_update.apk';
+                        var dir = await getTemporaryDirectory();
+                        var filePath = '${dir.path}/app_update.apk';
                         var file = File(filePath);
 
                         response.stream.listen(
@@ -148,30 +149,37 @@ class AppVersionService {
                           onDone: () async {
                             await file.writeAsBytes(bytes);
                             setState(() {
-                              downloadStatus = 'Installing...';
+                              downloadStatus = 'Launching Installer...';
                             });
                             
-                            // Ask Android to Install the APK
-                            final result = await OpenFilex.open(filePath);
-                            if (result.type != ResultType.done) {
-                               setState(() {
-                                  isDownloading = false;
-                                  downloadStatus = 'Failed to open installer: ${result.message}';
-                               });
+                            // Ask Android to explicitly launch Package Installer
+                            try {
+                              final packageInfo = await PackageInfo.fromPlatform();
+                              await InstallPlugin.installApk(filePath, appId: packageInfo.packageName);
+                              // Reset state regardless so user isn't stuck forever
+                              setState(() {
+                                isDownloading = false;
+                                downloadStatus = 'Tap Update to try again';
+                              });
+                            } catch (e) {
+                              setState(() {
+                                isDownloading = false;
+                                downloadStatus = 'Failed: $e';
+                              });
                             }
                           },
                           onError: (e) {
-                            setState(() {
-                              isDownloading = false;
-                              downloadStatus = 'Download failed.';
-                            });
+                             setState(() {
+                                isDownloading = false;
+                                downloadStatus = 'Download Error: $e';
+                             });
                           },
                           cancelOnError: true,
                         );
                       } catch (e) {
                         setState(() {
                           isDownloading = false;
-                          downloadStatus = 'Error occurred.';
+                          downloadStatus = 'Update Failed';
                         });
                         print('Download error: $e');
                       }
