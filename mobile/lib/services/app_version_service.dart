@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import '../constants/api_constants.dart';
 
 class AppVersionService {
@@ -61,35 +64,124 @@ class AppVersionService {
     return showDialog(
       context: context,
       barrierDismissible: !isForce,
-      builder: (BuildContext context) {
-        return WillPopScope(
-          onWillPop: () async => !isForce,
-          child: AlertDialog(
-            title: Text(isForce ? 'Update Required' : 'Update Available'),
-            content: Text(message),
-            actions: <Widget>[
-              if (!isForce)
-                TextButton(
-                  child: const Text('Skip'),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
+      builder: (BuildContext dialogContext) {
+        bool isDownloading = false;
+        double downloadProgress = 0.0;
+        String downloadStatus = '';
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return WillPopScope(
+              onWillPop: () async => !isForce && !isDownloading,
+              child: AlertDialog(
+                title: Text(isForce ? 'Update Required' : 'Update Available'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message),
+                    if (isDownloading) ...[
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(value: downloadProgress),
+                      const SizedBox(height: 8),
+                      Text(downloadStatus, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ]
+                  ],
                 ),
-              ElevatedButton(
-                child: const Text('Update'),
-                onPressed: () async {
-                  if (updateUrl != null && updateUrl.isNotEmpty) {
-                    final uri = Uri.parse(updateUrl);
-                    if (await canLaunchUrl(uri)) {
-                      await launchUrl(uri, mode: LaunchMode.externalApplication);
-                    } else {
-                      print('Could not launch \$updateUrl');
-                    }
-                  }
-                },
+                actions: <Widget>[
+                  if (!isForce && !isDownloading)
+                    TextButton(
+                      child: const Text('Skip'),
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                      },
+                    ),
+                  ElevatedButton(
+                    onPressed: isDownloading ? null : () async {
+                      if (updateUrl == null || updateUrl.isEmpty) {
+                        return;
+                      }
+
+                      // If it's a Play Store link, handle normally via browser
+                      if (!updateUrl.toLowerCase().endsWith('.apk')) {
+                        final uri = Uri.parse(updateUrl);
+                        if (await canLaunchUrl(uri)) {
+                          await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        } else {
+                          print('Could not launch $updateUrl');
+                        }
+                        return;
+                      }
+
+                      // Handle Direct APK Download
+                      setState(() {
+                        isDownloading = true;
+                        downloadStatus = 'Starting download...';
+                        downloadProgress = 0.0;
+                      });
+
+                      try {
+                        var request = http.Request('GET', Uri.parse(updateUrl));
+                        var response = await http.Client().send(request);
+                        
+                        var contentLength = response.contentLength;
+                        var bytes = <int>[];
+                        
+                        var dir = await getTemporaryDirectory();
+                        var filePath = '${dir.path}/app_update.apk';
+                        var file = File(filePath);
+
+                        response.stream.listen(
+                          (List<int> chunk) {
+                            bytes.addAll(chunk);
+                            if (contentLength != null && contentLength > 0) {
+                              setState(() {
+                                downloadProgress = bytes.length / contentLength;
+                                downloadStatus = 'Downloading... ${(downloadProgress * 100).toStringAsFixed(1)}%';
+                              });
+                            } else {
+                              setState(() {
+                                downloadStatus = 'Downloading... ${(bytes.length / 1024 / 1024).toStringAsFixed(2)} MB';
+                              });
+                            }
+                          },
+                          onDone: () async {
+                            await file.writeAsBytes(bytes);
+                            setState(() {
+                              downloadStatus = 'Installing...';
+                            });
+                            
+                            // Ask Android to Install the APK
+                            final result = await OpenFilex.open(filePath);
+                            if (result.type != ResultType.done) {
+                               setState(() {
+                                  isDownloading = false;
+                                  downloadStatus = 'Failed to open installer: ${result.message}';
+                               });
+                            }
+                          },
+                          onError: (e) {
+                            setState(() {
+                              isDownloading = false;
+                              downloadStatus = 'Download failed.';
+                            });
+                          },
+                          cancelOnError: true,
+                        );
+                      } catch (e) {
+                        setState(() {
+                          isDownloading = false;
+                          downloadStatus = 'Error occurred.';
+                        });
+                        print('Download error: $e');
+                      }
+                    },
+                    child: Text(isDownloading ? 'Please wait...' : 'Update'),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          }
         );
       },
     );
