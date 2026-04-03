@@ -127,8 +127,8 @@ class AppVersionService {
                         var contentLength = response.contentLength;
                         var bytes = <int>[];
                         
-                        var dir = await getTemporaryDirectory();
-                        var filePath = '${dir.path}/app_update.apk';
+                        var dir = await getExternalStorageDirectory();
+                        var filePath = '${dir!.path}/app_update.apk';
                         var file = File(filePath);
 
                         response.stream.listen(
