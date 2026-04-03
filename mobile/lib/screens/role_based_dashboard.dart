@@ -1429,13 +1429,18 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   Color _getKpiColor(String colorName) {
     switch (colorName) {
       case 'orange':
-        return const Color(0xFFF2994A); // Vibrant orange from image
+        return const Color(0xFF10B981); // Requested Green
       case 'red':
-        return const Color(0xFFBB0633); // Primary Burgundy
+        return const Color(0xFFF2994A); // Requested Orange
       case 'magenta':
-        return const Color(0xFFE91E63); // Vibrant Magenta
+        return const Color(0xFFBB0633); // Requested Red
       case 'yellow':
-        return const Color(0xFFF2C94C); // Soft Golden Yellow
+        return const Color(0xFFFF9A8B); // Requested Peach
+      // Fallbacks
+      case 'green':
+        return const Color(0xFF10B981); 
+      case 'peach':
+        return const Color(0xFFFF9A8B);
       default:
         return const Color(0xFF3B82F6); // Professional Blue
     }
