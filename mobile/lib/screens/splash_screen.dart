@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:video_player/video_player.dart';
 import '../services/api_service.dart';
 import '../services/expense_reminder_service.dart';
 import '../services/app_version_service.dart';
@@ -13,17 +14,33 @@ class SplashScreen extends StatefulWidget {
   _SplashScreenState createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
-  Timer? _timer;
+class _SplashScreenState extends State<SplashScreen> {
+  late VideoPlayerController _videoController;
+  bool _isVideoReady = false;
+  bool _videoCompleted = false;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(vsync: this, duration: const Duration(seconds: 2));
-    _fadeAnimation = CurvedAnimation(parent: _animationController, curve: Curves.easeIn);
-    _animationController.forward();
+
+    _videoController = VideoPlayerController.asset('assets/logo_video.mp4')
+      ..initialize().then((_) {
+        _videoController.setVolume(0.0);
+        _videoController.setLooping(false);
+        _videoController.play();
+        _videoController.addListener(() {
+          if (_videoController.value.isInitialized &&
+              !_videoCompleted &&
+              _videoController.value.position >= _videoController.value.duration) {
+            setState(() {
+              _videoCompleted = true;
+            });
+          }
+        });
+        setState(() {
+          _isVideoReady = true;
+        });
+      });
 
     // Start background services and navigate after a brief pause
     _initializeAndNavigate();
@@ -37,16 +54,22 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       debugPrint('Startup service error (silent): $e');
     }
 
-    // 2. Allow logo to be visible for at least 2.5 seconds
-    await Future.delayed(const Duration(milliseconds: 2500));
+    // 2. Allow the splash experience to run for at least 2.5 seconds
+    final minimumSplash = Future.delayed(const Duration(milliseconds: 2500));
 
     if (!mounted) return;
 
     // 3. App Version Check
     bool canProceed = await AppVersionService.checkVersionAndPrompt(context);
-    
+    await minimumSplash;
+
     if (canProceed && mounted) {
-      _navigateAfterSplash();
+      if (_isVideoReady && !_videoCompleted) {
+        await _waitForVideoCompletion();
+      }
+      if (mounted) {
+        _navigateAfterSplash();
+      }
     }
   }
 
@@ -79,34 +102,42 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
 
   @override
   void dispose() {
-    _animationController.dispose();
-    _timer?.cancel();
+    _videoController.dispose();
     super.dispose();
+  }
+
+  Future<void> _waitForVideoCompletion() async {
+    if (!_videoController.value.isInitialized) return;
+
+    final duration = _videoController.value.duration;
+    if (duration == Duration.zero) return;
+
+    while (mounted && !_videoCompleted) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Image.asset(
-                'assets/logo.png',
-                height: 120,
-                width: 120,
-                errorBuilder: (context, error, stackTrace) => const Icon(Icons.business_rounded, color: Color(0xFF7C1D1D), size: 60),
-              ),
-              const SizedBox(height: 24),
-              const CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Color(0xFF7C1D1D),
-              ),
-            ],
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF56B0E2), Color(0xFF56B0E2)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
           ),
+        ),
+        child: Center(
+          child: _isVideoReady && _videoController.value.isInitialized
+              ? AspectRatio(
+                  aspectRatio: _videoController.value.aspectRatio,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: VideoPlayer(_videoController),
+                  ),
+                )
+              : const CircularProgressIndicator(color: Colors.white),
         ),
       ),
     );

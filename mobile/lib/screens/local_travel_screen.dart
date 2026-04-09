@@ -324,12 +324,12 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF10B981).withOpacity(0.1),
+                color: const Color(0xFF0D9488).withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(
                 Icons.check_circle_rounded,
-                color: Color(0xFF10B981),
+                color: Color(0xFF0D9488),
                 size: 64,
               ),
             ),
@@ -339,12 +339,17 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
               style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w900,
                 fontSize: 20,
+                color: const Color(0xFF134E4A),
               ),
             ),
             const SizedBox(height: 12),
             Text(
               'Tour plan request submitted.\nID: $tripId',
               textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+              ),
             ),
             const SizedBox(height: 32),
             ElevatedButton(
@@ -362,7 +367,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0F172A),
+                backgroundColor: const Color(0xFF134E4A),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -371,9 +376,13 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                   vertical: 14,
                 ),
               ),
-              child: const Text(
+              child: Text(
                 'VIEW STORY',
-                style: TextStyle(color: Colors.white),
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: 1,
+                ),
               ),
             ),
           ],
@@ -385,16 +394,25 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         title: Text(
           'New Tour Plan',
           style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w900,
             color: Colors.white,
+            letterSpacing: 0.5,
           ),
         ),
-        backgroundColor: const Color(0xFFA9052E),
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF0F766E), Color(0xFF0D9488)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+        ),
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
       ),
@@ -440,20 +458,22 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _handleSubmit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFBB0633),
+                        backgroundColor: const Color(0xFF134E4A),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(18),
                         ),
-                        elevation: 4,
+                        elevation: 8,
+                        shadowColor: const Color(0xFF134E4A).withOpacity(0.3),
                       ),
                       child: _isLoading
                           ? const CircularProgressIndicator(color: Colors.white)
                           : Text(
                               'INITIATE TOUR PLAN SETTLEMENT',
                               style: GoogleFonts.plusJakartaSans(
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w900,
                                 color: Colors.white,
                                 fontSize: 13,
+                                letterSpacing: 1,
                               ),
                             ),
                     ),
@@ -573,12 +593,19 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [const Color(0xFF0F1E2A), const Color(0xFF1E293B)],
+        gradient: const LinearGradient(
+          colors: [Color(0xFF134E4A), Color(0xFF0D9488)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D9488).withOpacity(0.2),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -587,13 +614,13 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             'Requestor',
             _apiService.getUser()?['name'] ?? 'Self',
           ),
-          const Divider(color: Colors.white12, height: 24),
+          const Divider(color: Colors.white24, height: 24),
           _infoRow(
             Icons.account_tree_outlined,
             'Reporting to',
             _reportingManagerName,
           ),
-          const Divider(color: Colors.white12, height: 24),
+          const Divider(color: Colors.white24, height: 24),
           _infoRow(
             Icons.directions_car_outlined,
             'Travel Mode',
@@ -607,7 +634,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   Widget _infoRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, color: Colors.white60, size: 20),
+        Icon(icon, color: Colors.white.withOpacity(0.7), size: 20),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -615,7 +642,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             Text(
               label,
               style: GoogleFonts.plusJakartaSans(
-                color: Colors.white60,
+                color: Colors.white.withOpacity(0.7),
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.5,
@@ -625,7 +652,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
               value,
               style: GoogleFonts.plusJakartaSans(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -657,22 +684,22 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             'Activity Log Upload',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF134E4A),
             ),
           ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.05),
+              color: const Color(0xFFF0FDFA),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.withOpacity(0.1)),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.info_outline, color: Colors.blue, size: 20),
+                const Icon(Icons.info_outline, color: Color(0xFF0D9488), size: 20),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -682,8 +709,8 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                         'Monthly tour plans require a validated bulk upload of daily activities.',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 12,
-                          color: Colors.blue.shade900,
-                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF134E4A),
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                       const SizedBox(height: 8),

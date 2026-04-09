@@ -8,12 +8,12 @@ import '../constants/api_constants.dart';
 class TripService {
   final ApiService _apiService = ApiService();
 
-  Future<List<Trip>> fetchTrips({String? search, bool all = false}) async {
-    List<String> params = [];
+  Future<List<Trip>> fetchTrips({String? search, bool all = false, int page = 1}) async {
+    List<String> params = ['page=$page'];
     if (search != null && search.isNotEmpty) params.add('search=$search');
     if (all) params.add('all=true');
 
-    String queryString = params.isNotEmpty ? '?${params.join('&')}' : '';
+    String queryString = '?${params.join('&')}';
 
     final tripsResponse = await _apiService.get(
       '${ApiConstants.trips}$queryString',
@@ -23,12 +23,23 @@ class TripService {
     );
 
     List<Trip> trips = [];
-    if (tripsResponse is List) {
+    
+    // Handle paginated or list response for trips
+    if (tripsResponse is Map && tripsResponse.containsKey('results')) {
+      final results = tripsResponse['results'] as List;
+      trips.addAll(results.map((json) => Trip.fromJson(json)));
+    } else if (tripsResponse is List) {
       trips.addAll(tripsResponse.map((json) => Trip.fromJson(json)));
     }
-    if (travelsResponse is List) {
+    
+    // Handle paginated or list response for travels
+    if (travelsResponse is Map && travelsResponse.containsKey('results')) {
+      final results = travelsResponse['results'] as List;
+      trips.addAll(results.map((json) => Trip.fromJson(json)));
+    } else if (travelsResponse is List) {
       trips.addAll(travelsResponse.map((json) => Trip.fromJson(json)));
     }
+    
     return trips;
   }
 
@@ -138,14 +149,17 @@ class TripService {
     String type = 'all',
     String viewType = 'special',
     String? search,
+    int page = 1,
   }) async {
     String url =
-        '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType';
+        '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType&page=$page';
     if (search != null && search.isNotEmpty) {
       url += '&search=$search';
     }
     final response = await _apiService.get(url);
-    if (response is List) {
+    if (response is Map && response.containsKey('results')) {
+      return List<Map<String, dynamic>>.from(response['results']);
+    } else if (response is List) {
       return List<Map<String, dynamic>>.from(response);
     }
     return [];
@@ -259,14 +273,17 @@ class TripService {
 
   Future<double?> fetchFuelRate(String vehicleType) async {
     try {
-      final response = await _apiService.get(
-        '${ApiConstants.fuelRates}?vehicle_type=$vehicleType',
-      );
+      // Use Uri with queryParameters to properly encode spaces as %20
+      // (e.g. '2 Wheeler' → '2%20Wheeler') — same as axios does in the web app.
+      final uri = Uri.parse(
+        ApiConstants.fuelRates,
+      ).replace(queryParameters: {'vehicle_type': vehicleType});
+      final response = await _apiService.get(uri.toString());
       if (response != null && response['rate_per_km'] != null) {
         return double.tryParse(response['rate_per_km'].toString());
       }
     } catch (e) {
-      debugPrint('Error fetching fuel rate: $e');
+      debugPrint('Error fetching fuel rate for $vehicleType: $e');
     }
     return null;
   }

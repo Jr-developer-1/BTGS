@@ -91,36 +91,33 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
           style: GoogleFonts.plusJakartaSans(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: Colors.grey[400],
-            letterSpacing: 0.5,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         GestureDetector(
           onTap: () => _showSearchDialog(context),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: const Color(0xFFF0FDFA),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Row(
               children: [
                 if (widget.icon != null) ...[
-                  Icon(widget.icon, size: 18, color: Colors.blue),
-                  const SizedBox(width: 12),
+                  Icon(widget.icon, size: 16, color: const Color(0xFF0D9488)),
+                  const SizedBox(width: 10),
                 ],
                 Expanded(
                   child: Text(
                     widget.value?.isEmpty ?? true ? 'Select ${widget.label}' : widget.value!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -128,7 +125,7 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
                     ),
                   ),
                 ),
-                const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.grey),
+                const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: Color(0xFF0D9488)),
               ],
             ),
           ),

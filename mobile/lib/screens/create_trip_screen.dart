@@ -768,7 +768,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: const Color(0xFFF0FDFA),
       body: Stack(
         children: [
           // Ultra-soft mesh blobs
@@ -781,7 +781,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFFA9052E).withOpacity(0.04),
+                    const Color(0xFF0D9488).withOpacity(0.06),
                     Colors.transparent,
                   ],
                 ),
@@ -798,7 +798,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF3B82F6).withOpacity(0.03),
+                    const Color(0xFF2DD4BF).withOpacity(0.04),
                     Colors.transparent,
                   ],
                 ),
@@ -850,7 +850,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             Container(
               color: Colors.black.withOpacity(0.1),
               child: const Center(
-                child: CircularProgressIndicator(color: Color(0xFFBB0633)),
+                child: CircularProgressIndicator(color: Color(0xFF0D9488)),
               ),
             ),
         ],
@@ -863,10 +863,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFA9052E),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F766E), Color(0xFF0D9488)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: const Color(0xFF0D9488).withOpacity(0.15),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -924,7 +928,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       borderRadius: BorderRadius.circular(16),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
+                          color: const Color(0xFF0D9488).withOpacity(0.2),
                           blurRadius: 15,
                           offset: const Offset(0, 5),
                         ),
@@ -932,7 +936,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                     ),
                     child: const Icon(
                       Icons.add_road_rounded,
-                      color: Color(0xFFBB0633),
+                      color: Color(0xFF0D9488),
                       size: 24,
                     ),
                   ),
@@ -977,14 +981,14 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       padding: const EdgeInsets.only(bottom: 14, left: 4),
       child: Row(
         children: [
-          Icon(icon, size: size + 4, color: const Color(0xFF0F172A)),
+          Icon(icon, size: size + 4, color: const Color(0xFF134E4A)),
           const SizedBox(width: 10),
           Text(
             title,
             style: GoogleFonts.plusJakartaSans(
               fontSize: size,
               fontWeight: FontWeight.w900,
-              color: const Color(0xFF0F172A),
+              color: const Color(0xFF134E4A),
               letterSpacing: -0.2,
             ),
           ),
@@ -1629,7 +1633,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F9FF),
+                color: const Color(0xFFF0FDFA),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -1637,7 +1641,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                   const Icon(
                     Icons.info_outline_rounded,
                     size: 16,
-                    color: Colors.blue,
+                    color: Color(0xFF0D9488),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -1646,7 +1650,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                       style: GoogleFonts.inter(
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
-                        color: Colors.blue,
+                        color: const Color(0xFF0D9488),
                       ),
                     ),
                   ),
@@ -1774,7 +1778,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                               child: const Icon(
                                 Icons.close_rounded,
                                 size: 12,
-                                color: Color(0xFFBB0633),
+                                color: Color(0xFF0D9488),
                               ),
                             ),
                           ),
@@ -2208,10 +2212,10 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
       ),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: const Color(0xFFF1F5F9))),
+        border: Border(top: BorderSide(color: const Color(0xFFE2E8F0))),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: const Color(0xFF0D9488).withOpacity(0.05),
             blurRadius: 20,
             offset: const Offset(0, -5),
           ),
@@ -2226,11 +2230,11 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               child: Container(
                 height: 58,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F1E2A),
+                  color: const Color(0xFF134E4A),
                   borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF0F1E2A).withOpacity(0.3),
+                      color: const Color(0xFF134E4A).withOpacity(0.3),
                       blurRadius: 15,
                       offset: const Offset(0, 8),
                     ),
@@ -2323,7 +2327,7 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
             width: 48,
             height: 5,
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
+              color: const Color(0xFFCCFBF1),
               borderRadius: BorderRadius.circular(10),
             ),
           ),
@@ -2337,7 +2341,7 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 20,
                       fontWeight: FontWeight.w900,
-                      color: const Color(0xFF0F172A),
+                      color: const Color(0xFF134E4A),
                       letterSpacing: -0.5,
                     ),
                   ),
@@ -2347,13 +2351,13 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
+                      color: const Color(0xFFF0FDFA),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.close_rounded,
                       size: 18,
-                      color: Color(0xFF64748B),
+                      color: Color(0xFF0D9488),
                     ),
                   ),
                 ),
@@ -2370,6 +2374,7 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
               style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w700,
                 fontSize: 14,
+                color: const Color(0xFF134E4A),
               ),
               decoration: InputDecoration(
                 hintText: 'Search locations...',
@@ -2380,10 +2385,10 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
                 prefixIcon: const Icon(
                   Icons.search_rounded,
                   size: 20,
-                  color: Color(0xFF64748B),
+                  color: Color(0xFF0D9488),
                 ),
                 filled: true,
-                fillColor: const Color(0xFFF8FAFC),
+                fillColor: const Color(0xFFF0FDFA),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
                   borderSide: BorderSide.none,
@@ -2394,10 +2399,7 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
-                  borderSide: const BorderSide(
-                    color: Color(0xFF0F172A),
-                    width: 1,
-                  ),
+                  borderSide: const BorderSide(color: Color(0xFF0D9488), width: 1.5),
                 ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 18),
               ),

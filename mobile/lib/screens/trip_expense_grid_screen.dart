@@ -44,7 +44,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         title: Text('Trip Expense Grid', 
           style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16)),
@@ -69,11 +69,11 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               child: Column(
                 children: [
-                  _buildCategorySection('OUTSTATION TRAVEL', 'Travel', const Color(0xFF6366F1), Icons.flight_takeoff_rounded),
-                  _buildCategorySection('LOCAL CONVEYANCE', 'Local Travel', const Color(0xFF4F46E5), Icons.directions_car_filled_rounded),
-                  _buildCategorySection('FOOD & REFRESHMENTS', 'Food', const Color(0xFFEC4899), Icons.restaurant_rounded),
-                  _buildCategorySection('ACCOMMODATION', 'Accommodation', const Color(0xFFF59E0B), Icons.hotel_rounded),
-                  _buildCategorySection('INCIDENTAL / OTHERS', 'Incidental', const Color(0xFF64748B), Icons.receipt_long_rounded),
+                  _buildCategorySection('OUTSTATION TRAVEL', 'Travel', const Color(0xFF0D9488), Icons.flight_takeoff_rounded),
+                  _buildCategorySection('LOCAL CONVEYANCE', 'Local Travel', const Color(0xFF0891B2), Icons.directions_car_filled_rounded),
+                  _buildCategorySection('FOOD & REFRESHMENTS', 'Food', const Color(0xFF0EA5E9), Icons.restaurant_rounded),
+                  _buildCategorySection('ACCOMMODATION', 'Accommodation', const Color(0xFF0284C7), Icons.hotel_rounded),
+                  _buildCategorySection('INCIDENTAL / OTHERS', 'Incidental', const Color(0xFF0369A1), Icons.receipt_long_rounded),
                   const SizedBox(height: 40),
                 ],
               ),
@@ -218,10 +218,10 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: themeColor.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(_getIconForExp(category, desc), size: 16, color: const Color(0xFF64748B)),
+                child: Icon(_getIconForExp(category, desc), size: 16, color: themeColor),
               ),
               const SizedBox(width: 12),
               Expanded(

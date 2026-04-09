@@ -54,6 +54,9 @@ class _ProfilePageState extends State<ProfilePage> {
       final freshUser = await _refreshUserData();
       if (freshUser != null) {
         await _fetchDetailedProfile();
+      } else {
+        // If auth/profile refresh fails, still attempt to fetch the detailed employee profile
+        await _fetchDetailedProfile();
       }
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
@@ -78,23 +81,14 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _fetchDetailedProfile() async {
-    // We now get all necessary data from fetchFreshUser in _refreshUserData
-    // This method is kept for compatibility but optimized to just use the existing data
-    if (_userData != null && _userData!['external_profile'] != null) {
-      if (mounted) {
-        setState(() {
-          _profileData = _userData!['external_profile'];
-          _isLoading = false;
-        });
-      }
-      return;
-    }
-
     try {
-      // Use employee_id from session for the API filter, exactly like Profile.jsx
       final empId = _userData?['employee_id'] ?? _userData?['username'] ?? widget.username;
+      if (empId == null || empId.toString().isEmpty) {
+        return;
+      }
+
       final response = await _apiService.get(
-        '/api/employees/?employee_code=$empId',
+        '/api/employees/?employee_code=${Uri.encodeComponent(empId.toString())}',
       );
 
       List<dynamic> results = [];
@@ -102,7 +96,6 @@ class _ProfilePageState extends State<ProfilePage> {
         results = response['results'];
       }
 
-      // Matching logic similar to Profile.jsx find()
       dynamic matchedEmployee;
       if (results.isNotEmpty) {
         final searchId = empId.toString().toLowerCase();
@@ -117,19 +110,25 @@ class _ProfilePageState extends State<ProfilePage> {
             break;
           }
         }
-        // Fallback to first if no exact match found
         matchedEmployee ??= results.first;
       }
 
       if (mounted) {
         setState(() {
-          _profileData = matchedEmployee;
+          _profileData = matchedEmployee ?? _userData?['external_profile'];
           _isLoading = false;
         });
       }
     } catch (e) {
       debugPrint("Profile fetch error: $e");
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          if (_profileData == null && _userData != null && _userData!['external_profile'] != null) {
+            _profileData = _userData!['external_profile'];
+          }
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -184,7 +183,6 @@ class _ProfilePageState extends State<ProfilePage> {
         _userData?['external_profile']?['position']?['reporting_to'] ??
         [];
 
-    // Fallback to top-level manager names if list is empty
     if (managers.isEmpty) {
       if (_userData?['reporting_manager'] != null) {
         managers.add({'name': _userData!['reporting_manager'], 'role': 'Reporting Manager'});
@@ -202,7 +200,6 @@ class _ProfilePageState extends State<ProfilePage> {
         _userData?['external_profile']?['project']?['name'] ??
         '';
 
-    // Derive project code if missing, matching Profile.jsx logic
     String derivedProjectCode =
         _profileData?['project']?['code'] ??
         _userData?['external_profile']?['project']?['code'] ??
@@ -242,38 +239,24 @@ class _ProfilePageState extends State<ProfilePage> {
         '';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: Navigator.canPop(context)
-            ? IconButton(
-                icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  color: Color(0xFF0F172A),
-                  size: 20,
-                ),
-                onPressed: () => Navigator.pop(context),
-              )
-            : null,
-        title: Text(
-          'My Profile',
-          style: GoogleFonts.outfit(
-            color: const Color(0xFF0F172A),
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
-            letterSpacing: -0.5,
-          ),
-        ),
-        centerTitle: true,
-      ),
-      extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFFF0FDFA),
       body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFFBB0633)),
+              child: CircularProgressIndicator(color: Color(0xFF0D9488)),
             )
           : Stack(
               children: [
+                Positioned.fill(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xFFFFFFFF), Color(0xFFF0FDFA)],
+                      ),
+                    ),
+                  ),
+                ),
                 Positioned(
                   top: -150,
                   right: -100,
@@ -283,7 +266,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     decoration: BoxDecoration(
                       gradient: RadialGradient(
                         colors: [
-                          const Color(0xFFA9052E).withOpacity(0.04),
+                          const Color(0xFF0D9488).withOpacity(0.04),
                           Colors.transparent,
                         ],
                       ),
@@ -291,95 +274,90 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                   ),
                 ),
-                Positioned(
-                  top: 250,
-                  left: -150,
-                  child: Container(
-                    width: 400,
-                    height: 400,
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        colors: [Colors.orange.withOpacity(0.03), Colors.transparent],
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: 100,
-                  right: -100,
-                  child: Container(
-                    width: 350,
-                    height: 350,
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        colors: [
-                          const Color(0xFF3B82F6).withOpacity(0.03),
-                          Colors.transparent,
-                        ],
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-                
                 RefreshIndicator(
                   onRefresh: _runBackgroundRefresh,
-                  color: const Color(0xFFBB0633),
-                  child: SingleChildScrollView(
+                  color: const Color(0xFF0D9488),
+                  child: CustomScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 100, 20, 20),
-                    child: Column(
-                      children: [
-                        _buildPremiumIdentityCard(
-                          employeeName,
-                          designation,
-                          employeeCode,
-                          department,
-                          email,
-                          phone,
-                          photo,
-                        ),
-                        const SizedBox(height: 24),
-                        _buildInfoSection(
-                          title: 'Organization Details',
-                          icon: Icons.business_center_rounded,
-                          color: const Color(0xFFBB0633),
-                          children: [
-                            _buildInfoItem('Department', department),
-                            _buildInfoItem('Section', section),
-                            _buildInfoItem('Project Name', projectName),
-                            _buildInfoItem('Project Code', projectCode),
-                          ],
-                          managers: managers,
-                        ),
-                        const SizedBox(height: 16),
-                        _buildInfoSection(
-                          title: 'Work Location',
-                          icon: Icons.location_on_rounded,
-                          color: const Color(0xFF0F172A),
-                          children: [
-                            _buildInfoItem('Office Name', officeName),
-                            _buildInfoItem('Base Level', officeLevel),
-                            _buildInfoItem('District', district),
-                            _buildInfoItem(
-                              'State, Country',
-                              '$state${state.isNotEmpty ? ", " : ""}$country',
+                    slivers: [
+                      SliverAppBar(
+                        expandedHeight: 70,
+                        floating: false,
+                        pinned: true,
+                        elevation: 0,
+                        backgroundColor: Colors.white.withOpacity(0.9),
+                        surfaceTintColor: Colors.transparent,
+                        automaticallyImplyLeading: false,
+                        flexibleSpace: FlexibleSpaceBar(
+                          titlePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                          title: Text(
+                            'MY PROFILE',
+                            style: GoogleFonts.plusJakartaSans(
+                              color: const Color(0xFF134E4A),
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              letterSpacing: 1,
                             ),
-                          ],
+                          ),
+                          background: Container(color: Colors.white.withOpacity(0.5)),
                         ),
-                        const SizedBox(height: 32),
-                        _buildFaceUpdateButton(),
-                        const SizedBox(height: 16),
-                        if (ModuleConstants.normalizeRole(_userData?['role']) ==
-                            'admin') ...[
-                          _buildDiagnosticsButton(),
-                          const SizedBox(height: 16),
-                        ],
-                        _buildLogoutButton(),
-                        const SizedBox(height: 120),
-                      ],
-                    ),
+                      ),
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 40),
+                          child: Column(
+                            children: [
+                              _buildPremiumIdentityCard(
+                                employeeName,
+                                designation,
+                                employeeCode,
+                                department,
+                                email,
+                                phone,
+                                photo,
+                              ),
+                              const SizedBox(height: 24),
+                              _buildInfoSection(
+                                title: 'Organization',
+                                icon: Icons.business_center_rounded,
+                                color: const Color(0xFF0D9488),
+                                children: [
+                                  _buildInfoItem('Department', department),
+                                  _buildInfoItem('Section', section),
+                                  _buildInfoItem('Project Name', projectName),
+                                  _buildInfoItem('Project Code', projectCode),
+                                ],
+                                managers: managers,
+                              ),
+                              const SizedBox(height: 16),
+                              _buildInfoSection(
+                                title: 'Location',
+                                icon: Icons.location_on_rounded,
+                                color: const Color(0xFF0D9488),
+                                children: [
+                                  _buildInfoItem('Office Name', officeName),
+                                  _buildInfoItem('Base Level', officeLevel),
+                                  _buildInfoItem('District', district),
+                                  _buildInfoItem(
+                                    'State, Country',
+                                    '$state${state.isNotEmpty ? ", " : ""}$country',
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 32),
+                              _buildFaceUpdateButton(),
+                              if (ModuleConstants.normalizeRole(_userData?['role']) == 'admin') ...[
+                                const SizedBox(height: 12),
+                                _buildDiagnosticsButton(),
+                              ],
+                              const SizedBox(height: 12),
+                              _buildLogoutButton(),
+                              const SizedBox(height: 60),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -400,127 +378,159 @@ class _ProfilePageState extends State<ProfilePage> {
       width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white, width: 2),
+        borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.04),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+            color: const Color(0xFF0D9488).withOpacity(0.06),
+            blurRadius: 30,
+            offset: const Offset(0, 15),
           ),
         ],
       ),
       child: Column(
         children: [
-          const SizedBox(height: 40),
           Stack(
+            alignment: Alignment.topCenter,
             children: [
               Container(
-                width: 120,
                 height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFFF1F5F9), width: 4),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(60),
-                  child: ResponsiveImage(
-                    imageData: photo,
-                    width: 120,
-                    height: 120,
-                    fit: BoxFit.cover,
+                width: double.infinity,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF134E4A), Color(0xFF0D9488)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(32),
+                    topRight: Radius.circular(32),
                   ),
                 ),
               ),
-              Positioned(
-                bottom: 8,
-                right: 8,
-                child: Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF10B981),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 3),
-                  ),
+              Padding(
+                padding: const EdgeInsets.only(top: 60),
+                child: Stack(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white,
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF0D9488).withOpacity(0.2),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(60),
+                        child: ResponsiveImage(
+                          imageData: photo,
+                          width: 110,
+                          height: 110,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 5,
+                      right: 5,
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                        ),
+                        child: const Icon(Icons.check, color: Colors.white, size: 12),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 20),
-          Text(
-            name,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: const Color(0xFF0F172A),
-              letterSpacing: -0.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            role,
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: const Color(0xFF64748B),
-              fontWeight: FontWeight.w600,
-            ),
           ),
           const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (code.isNotEmpty) _profileBadge(Icons.assignment_ind_rounded, code),
-              const SizedBox(width: 8),
-              if (dept.isNotEmpty) _profileBadge(Icons.business_rounded, dept),
-            ],
-          ),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: Divider(color: Color(0xFFF1F5F9), height: 1),
-          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
               children: [
-                _contactTile(
-                  Icons.email_outlined,
-                  'EMAIL ADDRESS',
-                  email,
+                Text(
+                  name,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF134E4A),
+                    letterSpacing: -0.5,
+                  ),
                 ),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF0FDFA),
+                    borderRadius: BorderRadius.circular(100),
+                    border: Border.all(color: const Color(0xFFCCFBF1)),
+                  ),
+                  child: Text(
+                    role.toUpperCase(),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      color: const Color(0xFF0D9488),
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _idBadge(Icons.fingerprint_rounded, code),
+                    _idBadge(Icons.account_tree_rounded, dept),
+                  ],
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Divider(color: Color(0xFFF1F5F9), height: 1),
+                ),
+                _contactInfo(Icons.alternate_email_rounded, 'Personal Email', email),
                 const SizedBox(height: 16),
-                _contactTile(
-                  Icons.phone_iphone_rounded,
-                  'MOBILE PHONE',
-                  phone,
-                ),
+                _contactInfo(Icons.phone_iphone_rounded, 'Mobile Contact', phone),
+                const SizedBox(height: 32),
               ],
             ),
           ),
-          const SizedBox(height: 40),
         ],
       ),
     );
   }
 
-  Widget _profileBadge(IconData icon, String text) {
+  Widget _idBadge(IconData icon, String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: const Color(0xFFF0FDFA),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFCCFBF1)),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF64748B)),
-          const SizedBox(width: 6),
+          Icon(icon, size: 14, color: const Color(0xFF0D9488)),
+          const SizedBox(width: 8),
           Text(
             text,
-            style: GoogleFonts.inter(
+            style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF1E293B),
+              color: const Color(0xFF134E4A),
             ),
           ),
         ],
@@ -528,39 +538,43 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _contactTile(IconData icon, String label, String value) {
+  Widget _contactInfo(IconData icon, String label, String value) {
     return Row(
       children: [
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
+            color: const Color(0xFFF0FDFA),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFCCFBF1)),
           ),
-          child: Icon(icon, size: 20, color: const Color(0xFF64748B)),
+          child: Icon(icon, size: 18, color: const Color(0xFF0D9488)),
         ),
         const SizedBox(width: 16),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label.toUpperCase(),
-              style: GoogleFonts.inter(
-                fontSize: 9,
-                fontWeight: FontWeight.w900,
-                color: Colors.black26,
-                letterSpacing: 0.5,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.toUpperCase(),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF94A3B8),
+                  letterSpacing: 1,
+                ),
               ),
-            ),
-            Text(
-              value.isEmpty ? '--' : value,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF0F172A),
+              const SizedBox(height: 2),
+              Text(
+                value.isEmpty ? '--' : value,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF134E4A),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -575,16 +589,15 @@ class _ProfilePageState extends State<ProfilePage> {
   }) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        borderRadius: BorderRadius.circular(32),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.03),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
+            color: const Color(0xFF0D9488).withOpacity(0.04),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -596,52 +609,41 @@ class _ProfilePageState extends State<ProfilePage> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  shape: BoxShape.circle,
+                  color: const Color(0xFFF0FDFA),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, size: 18, color: color),
+                child: Icon(icon, size: 18, color: const Color(0xFF0D9488)),
               ),
               const SizedBox(width: 12),
               Text(
-                title,
-                style: GoogleFonts.outfit(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
-                  letterSpacing: -0.2,
+                title.toUpperCase(),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF134E4A),
+                  letterSpacing: 1,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          LayoutBuilder(builder: (context, constraints) {
-            final double itemWidth = (constraints.maxWidth - 20) / 2;
-            return Wrap(
-              spacing: 20,
-              runSpacing: 16,
-              children: children.map((c) => SizedBox(width: itemWidth, child: c)).toList(),
-            );
-          }),
+          const SizedBox(height: 24),
+          ...children.expand((c) => [c, const SizedBox(height: 16)]).toList()..removeLast(),
           if (managers != null && managers.isNotEmpty) ...[
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
+              padding: EdgeInsets.symmetric(vertical: 24),
               child: Divider(color: Color(0xFFF1F5F9)),
             ),
             Text(
-              'REPORTING MANAGER(S)',
-              style: GoogleFonts.inter(
-                fontSize: 9,
+              'REPORTING AUTHORITY',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
                 fontWeight: FontWeight.w900,
-                color: Colors.black26,
-                letterSpacing: 0.5,
+                color: const Color(0xFF94A3B8),
+                letterSpacing: 1,
               ),
             ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: managers.map((m) => _managerChip(m)).toList(),
-            ),
+            const SizedBox(height: 20),
+            ...managers.map((m) => _managerTile(m)).toList(),
           ],
         ],
       ),
@@ -654,77 +656,70 @@ class _ProfilePageState extends State<ProfilePage> {
       children: [
         Text(
           label.toUpperCase(),
-          style: GoogleFonts.inter(
+          style: GoogleFonts.plusJakartaSans(
             fontSize: 9,
-            fontWeight: FontWeight.w900,
-            color: Colors.black26,
-            letterSpacing: 0.5,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           value.isEmpty ? '--' : value,
-          style: GoogleFonts.inter(
+          style: GoogleFonts.plusJakartaSans(
             fontSize: 14,
             fontWeight: FontWeight.w700,
-            color: const Color(0xFF0F172A),
+            color: const Color(0xFF134E4A),
           ),
         ),
       ],
     );
   }
 
-  Widget _managerChip(dynamic m) {
-    final name =
-        (m is Map ? (m['name'] ?? m['employee_name'] ?? 'Unknown') : 'Unknown')
-            .toString();
-    final role = (m is Map ? (m['role'] ?? m['position_name'] ?? '') : '')
-        .toString();
-    return Container(
-      padding: const EdgeInsets.fromLTRB(4, 4, 12, 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(50),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+  Widget _managerTile(dynamic m) {
+    final name = (m is Map ? (m['name'] ?? m['employee_name'] ?? 'Unknown') : 'Unknown').toString();
+    final role = (m is Map ? (m['role'] ?? m['position_name'] ?? '') : '').toString();
+    
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           CircleAvatar(
-            radius: 12,
-            backgroundColor: const Color(0xFF7C1D1D).withOpacity(0.1),
+            radius: 20,
+            backgroundColor: const Color(0xFFF0FDFA),
             child: Text(
               name[0].toUpperCase(),
-              style: const TextStyle(
-                color: Color(0xFF7C1D1D),
-                fontWeight: FontWeight.bold,
-                fontSize: 10,
+              style: GoogleFonts.plusJakartaSans(
+                color: const Color(0xFF0D9488),
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                name,
-                style: GoogleFonts.outfit(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
-                  letterSpacing: -0.2,
-                ),
-              ),
-              if (role.isNotEmpty)
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  role,
-                  style: GoogleFonts.inter(
-                    fontSize: 9,
-                    color: const Color(0xFF64748B),
-                    fontWeight: FontWeight.w600,
+                  name,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF134E4A),
                   ),
                 ),
-            ],
+                if (role.isNotEmpty)
+                  Text(
+                    role,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      color: const Color(0xFF64748B),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -735,48 +730,232 @@ class _ProfilePageState extends State<ProfilePage> {
     final bool isFaceEnrolled = _userData?['is_face_enrolled'] == true;
     final bool isResetAllowed = _userData?['allow_photo_reset'] == true;
     final bool hasManager = _userData?['reporting_manager'] != null;
-
-    // If already enrolled and not specifically allowed to reset, they must request
     final bool needsRequest = isFaceEnrolled && !isResetAllowed && hasManager;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: ElevatedButton(
-        onPressed: () => _handleFaceUpdateAction(!needsRequest),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xFF7C1D1D),
-          elevation: 0,
-          side: const BorderSide(color: Color(0xFFF1F5F9), width: 1.5),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: InkWell(
+        onTap: () => _handleFaceUpdateAction(!needsRequest),
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF134E4A), Color(0xFF0D9488)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0D9488).withOpacity(0.2),
+                blurRadius: 15,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.face_retouching_natural_rounded, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      !isFaceEnrolled ? 'Face Registration' : (needsRequest ? 'Request Update' : 'Re-enroll Face'),
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      !isFaceEnrolled ? 'Secure your session now' : 'Update your biometric data',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 14),
+            ],
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              !needsRequest
-                  ? Icons.camera_front_rounded
-                  : Icons.face_retouching_natural_rounded,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              !isFaceEnrolled
-                  ? 'START FACE REGISTRATION'
-                  : (needsRequest
-                        ? 'REQUEST FACE PHOTO UPDATE'
-                        : 'RE-ENROLL FACE DATA'),
-              style: GoogleFonts.inter(
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-                fontSize: 12,
+      ),
+    );
+  }
+
+  Widget _buildLogoutButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: InkWell(
+        onTap: () {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              title: Text(
+                'SIGN OUT',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: const Color(0xFF134E4A),
+                  letterSpacing: 1,
+                ),
               ),
+              content: Text(
+                'Are you sure you want to end your current session?',
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  color: const Color(0xFF64748B),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    'CANCEL',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF94A3B8),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    await _apiService.clearToken();
+                    if (mounted) {
+                      Navigator.of(context).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (context) => const LoginScreen()),
+                        (route) => false,
+                      );
+                    }
+                  },
+                  child: Text(
+                    'LOGOUT',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: const Color(0xFFEF4444),
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
+          );
+        },
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFFEE2E2)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.logout_rounded, color: Color(0xFFEF4444), size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Logout Session',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF134E4A),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      'Sign out of your account securely',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded, color: Color(0xFFCBD5E1), size: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiagnosticsButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: InkWell(
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const DebugLogsScreen())),
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.terminal_rounded, color: Color(0xFF64748B), size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'System Diagnostics',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF134E4A),
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      'View technical logs and status',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios_rounded, color: Color(0xFFCBD5E1), size: 14),
+            ],
+          ),
         ),
       ),
     );
@@ -789,48 +968,59 @@ class _ProfilePageState extends State<ProfilePage> {
         MaterialPageRoute(builder: (context) => const FrsEnrollmentScreen()),
       );
       if (result == true) {
-        // Update local session data if possible or just refresh
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Face updated successfully')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Face updated successfully')),
+          );
+        }
       }
     } else {
       final TextEditingController reasonController = TextEditingController();
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
           title: Text(
-            'Request Face Update',
-            style: GoogleFonts.interTight(fontWeight: FontWeight.bold),
+            'REQUEST PHOTO UPDATE',
+            style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+              color: const Color(0xFF134E4A),
+              letterSpacing: 1,
+            ),
           ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Your face data is locked for security. To update it, please provide a reason for your reporting manager.',
-                style: GoogleFonts.inter(fontSize: 14),
+                'Please provide a reason to reset your face data for manager approval.',
+                style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF64748B), fontWeight: FontWeight.w500),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               TextField(
                 controller: reasonController,
+                style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w700, color: const Color(0xFF134E4A)),
                 decoration: InputDecoration(
-                  hintText: 'e.g., Changed appearance, Glasses, etc.',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFF7C1D1D)),
-                  ),
+                  hintText: 'e.g., Changed appearance...',
+                  hintStyle: GoogleFonts.inter(color: const Color(0xFF94A3B8), fontSize: 14),
+                  filled: true,
+                  fillColor: const Color(0xFFF0FDFA),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFFCCFBF1))),
                 ),
-                maxLines: 3,
+                maxLines: 4,
               ),
             ],
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
+              child: Text(
+                'CANCEL',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8)),
+              ),
             ),
             ElevatedButton(
               onPressed: () async {
@@ -844,132 +1034,28 @@ class _ProfilePageState extends State<ProfilePage> {
                     );
                   }
                 } catch (e) {
-                  if (mounted)
+                  if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(e.toString()),
-                        backgroundColor: Colors.red,
-                      ),
+                      SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
                     );
+                  }
                 }
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7C1D1D),
+                backgroundColor: const Color(0xFF0D9488),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
-              child: const Text(
-                'Submit Request',
-                style: TextStyle(color: Colors.white),
+              child: Text(
+                'SUBMIT REQUEST',
+                style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.5),
               ),
             ),
           ],
         ),
       );
     }
-  }
-
-  Widget _buildLogoutButton() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: ElevatedButton(
-        onPressed: () {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Confirm Logout'),
-              content: const Text(
-                'Are you sure you want to sign out from your account?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    await _apiService.clearToken();
-                    if (mounted) {
-                      Navigator.of(context).pushAndRemoveUntil(
-                        MaterialPageRoute(
-                          builder: (context) => const LoginScreen(),
-                        ),
-                        (route) => false,
-                      );
-                    }
-                  },
-                  child: const Text(
-                    'Logout',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.redAccent,
-          elevation: 0,
-          side: const BorderSide(color: Color(0xFFFFE4E6), width: 1.5),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.logout_rounded, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              'LOGOUT FROM SESSION',
-              style: GoogleFonts.inter(
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDiagnosticsButton() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: ElevatedButton(
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => const DebugLogsScreen()),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: const Color(0xFF1E293B),
-          elevation: 0,
-          side: const BorderSide(color: Color(0xFFF1F5F9), width: 1.5),
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.terminal_rounded, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              'VIEW SYSTEM LOGS',
-              style: GoogleFonts.inter(
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-                fontSize: 12,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../services/trip_service.dart';
 import 'trip_expense_form_detailed.dart';
+import 'bulk_resolve_rejections_screen.dart';
 
 class TravelExpenseGridScreen extends StatefulWidget {
   final String tripId;
@@ -17,6 +18,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
   final TripService _tripService = TripService();
   bool _isLoading = true;
   List<dynamic> _expenses = [];
+  List<dynamic> _rejectedExpenses = [];
   final Map<int, bool> _isSavingReport = {};
 
   @override
@@ -29,8 +31,18 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
     setState(() => _isLoading = true);
     try {
       final trip = await _tripService.fetchTripDetails(widget.tripId);
+      final all = trip.expenses ?? [];
+      
       setState(() {
-        _expenses = trip.expenses ?? [];
+        _rejectedExpenses = all.where((e) {
+          final s = (e['status'] ?? '').toString().toLowerCase().trim();
+          return s == 'rejected' || s == 'fix required' || s.contains('rejected');
+        }).toList();
+        _expenses = all.where((e) {
+          final s = (e['status'] ?? '').toString().toLowerCase().trim();
+          return s != 'rejected' && s != 'fix required' && !s.contains('rejected');
+        }).toList();
+        
         _isLoading = false;
       });
     } catch (e) {
@@ -46,55 +58,64 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         title: Text(
-          'Journey Log & ODO',
+          'Journey Log',
           style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w800,
-            fontSize: 16,
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: const Color(0xFF134E4A),
+            letterSpacing: -0.5,
           ),
         ),
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        foregroundColor: const Color(0xFF134E4A),
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: const Color(0xFFCCFBF1)),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, size: 20),
+            icon: const Icon(Icons.refresh_rounded, size: 22, color: Color(0xFF0D9488)),
             onPressed: _fetchExpenses,
           ),
           const SizedBox(width: 8),
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF0D9488), strokeWidth: 2))
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // Dashboard Stats
                   _buildStatsSection(),
-                  
-                  // Category Selection (Web-app style)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'QUICK LOG CATEGORIES',
+                          'EXPENSE CATEGORIES',
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w900,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 1.2),
+                              color: const Color(0xFF94A3B8),
+                              letterSpacing: 1.5),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 16),
                         _buildCategoryCard('LOCAL CONVEYANCE', 'Local Travel',
-                            const Color(0xFF4F46E5), Icons.directions_car_filled_rounded),
+                            const Color(0xFF0D9488), Icons.directions_car_filled_rounded),
                         const SizedBox(height: 20),
                         _buildCategoryCard('INCIDENTAL EXPENSES', 'Incidental',
-                            const Color(0xFFF59E0B), Icons.receipt_long_rounded),
-                        const SizedBox(height: 40),
+                            const Color(0xFF0F766E), Icons.receipt_long_rounded),
+                        const SizedBox(height: 30),
+                        if (_rejectedExpenses.isNotEmpty) ...[
+                          _buildBulkRejectionsButton(),
+                          const SizedBox(height: 60),
+                        ],
                       ],
                     ),
                   ),
@@ -102,6 +123,103 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
               ),
             ),
     );
+  }
+
+  Widget _buildBulkRejectionsButton() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFEE2E2)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: _openBulkResolutions,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.error_outline_rounded, color: Colors.white, size: 24),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'BULK UPLOAD REJECTIONS',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF991B1B),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${_rejectedExpenses.length} items need correction and resubmission',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFFB91C1C).withOpacity(0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: Color(0xFFEF4444)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openBulkResolutions() async {
+    // Find a batch ID to use. If multiple batches, we might need a more complex selection,
+    // but typically rejections are handled per batch.
+    String? batchId;
+    for (var exp in _rejectedExpenses) {
+      if (exp['batch_id'] != null) {
+        batchId = exp['batch_id'].toString();
+        break;
+      }
+    }
+
+    if (batchId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No batch information found for rejected items.')),
+      );
+      return;
+    }
+
+    // When opening bulk resolution, we pass all rows belonging to that batch if possible,
+    // but here we just pass the rejected items if we don't have the full batch info.
+    // However, the BulkResolveRejectionsScreen expects allRows to split them.
+    
+    // For now, let's navigate to a screen that handles these specific rejected items.
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BulkResolveRejectionsScreen(
+          tripId: widget.tripId,
+          batchId: batchId!,
+          allRows: _rejectedExpenses, // Just pass the rejected ones if that's all we want to show
+        ),
+      ),
+    );
+
+    if (result == true) _fetchExpenses();
   }
 
   Widget _buildStatsSection() {
@@ -122,22 +240,22 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
     return Container(
       width: double.infinity,
       color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+            colors: [Color(0xFF134E4A), Color(0xFF0D9488)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(30),
+          borderRadius: BorderRadius.circular(28),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF0F172A).withOpacity(0.1),
+              color: const Color(0xFF134E4A).withOpacity(0.2),
               blurRadius: 20,
               offset: const Offset(0, 10),
-            )
+            ),
           ],
         ),
         child: Row(
@@ -145,7 +263,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
           children: [
             _buildStatItem('TOTAL DISTANCE', '${totalKm.toStringAsFixed(1)} KM',
                 Icons.add_road_rounded),
-            Container(width: 1, height: 40, color: Colors.white.withOpacity(0.1)),
+            Container(width: 1, height: 40, color: Colors.white.withOpacity(0.15)),
             _buildStatItem('TOTAL COST', '₹${totalExp.toStringAsFixed(0)}',
                 Icons.account_balance_wallet_rounded),
           ],
@@ -187,57 +305,93 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       return cat == category.toLowerCase();
     }).toList();
 
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                      color: color.withOpacity(0.1), shape: BoxShape.circle),
-                  child: Icon(icon, color: color, size: 16),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12, fontWeight: FontWeight.w900, color: color),
-                ),
-              ],
-            ),
-            TextButton.icon(
-              onPressed: () => _openAddForm(category),
-              icon: const Icon(Icons.add_circle_outline_rounded, size: 14),
-              label: const Text('ADD'),
-              style: TextButton.styleFrom(
-                  foregroundColor: color,
-                  textStyle: GoogleFonts.plusJakartaSans(
-                      fontWeight: FontWeight.w800, fontSize: 10)),
-            )
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (categoryExpenses.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 30),
-            decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: const Color(0xFFF1F5F9))),
-            child: Center(
-                child: Text('Click ADD to log journey',
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D9488).withOpacity(0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDFA),
+                        borderRadius: BorderRadius.circular(12)),
+                    child: Icon(icon, color: color, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    title,
                     style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        color: const Color(0xFF94A3B8),
-                        fontWeight: FontWeight.w600))),
-          )
-        else
-          ...categoryExpenses.map((exp) => _buildExpenseTile(category, exp)),
-      ],
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF134E4A),
+                        letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+              GestureDetector(
+                onTap: () => _openAddForm(category),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF134E4A),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.add_rounded, color: Colors.white, size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        'ADD',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 10,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (categoryExpenses.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 28),
+              decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDFA),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFCCFBF1))),
+              child: Center(
+                  child: Text(
+                    'Tap ADD to log a journey',
+                    style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        color: const Color(0xFF0D9488),
+                        fontWeight: FontWeight.w700),
+                  )),
+            )
+          else
+            ...categoryExpenses.map((exp) => _buildExpenseTile(category, exp)),
+        ],
+      ),
     );
   }
 
@@ -246,7 +400,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
     final subType = desc['subType']?.toString() ?? 'N/A';
     final odoStart = desc['odoStart']?.toString() ?? '';
     final odoEnd = desc['odoEnd']?.toString() ?? '';
-    final odoRate = desc['odoRate']?.toString() ?? '9.0';
+    final odoRate = desc['odoRate']?.toString() ?? '0.0';
     final jobReport = desc['jobReport']?.toString() ?? '';
     final expenseId = exp['id'];
     final isSaving = _isSavingReport[expenseId] == true;
@@ -255,16 +409,23 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
     if (odoStart.isNotEmpty && odoEnd.isNotEmpty) {
       dist = ((double.tryParse(odoEnd) ?? 0) - (double.tryParse(odoStart) ?? 0)).clamp(0, 99999);
     }
-    final odoExpense = dist * (double.tryParse(odoRate) ?? 9.0);
+    final odoExpense = dist * (double.tryParse(odoRate) ?? 0.0);
 
     bool hasReport = jobReport.isNotEmpty;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF8FFFE),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        border: Border.all(color: const Color(0xFFCCFBF1)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D9488).withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // ── Expense info row (tap to edit) ──
@@ -301,9 +462,9 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                     Text(
                       _getExpenseMainDisplay(exp),
                       style: GoogleFonts.plusJakartaSans(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: const Color(0xFF0F172A)),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF134E4A)),
                     ),
                     if (category == 'Local Travel') ...[
                       const SizedBox(height: 3),
@@ -312,7 +473,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                             style: GoogleFonts.plusJakartaSans(
                                 fontSize: 9,
                                 fontWeight: FontWeight.w800,
-                                color: const Color(0xFF4F46E5))),
+                                color: const Color(0xFF0D9488))),
                         if (odoStart.isNotEmpty) ...[
                           Text('  •  ',
                               style: TextStyle(
@@ -320,7 +481,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                           Text('₹$odoRate/km',
                               style: GoogleFonts.plusJakartaSans(
                                   fontSize: 9,
-                                  color: const Color(0xFF10B981),
+                                  color: const Color(0xFF0F766E),
                                   fontWeight: FontWeight.w800)),
                           Text('  •  ',
                               style: TextStyle(
@@ -347,8 +508,8 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                 Text('₹${exp['amount']}',
                     style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                        color: const Color(0xFF0F172A))),
+                        fontSize: 18,
+                        color: const Color(0xFF134E4A))),
               ]),
             ),
           ),
@@ -380,7 +541,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
-                        color: const Color(0xFF4F46E5)),
+                        color: const Color(0xFF0D9488)),
                   ),
                 ]),
               ),
@@ -422,12 +583,12 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                           horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: hasReport
-                            ? const Color(0xFFF0FDF4)
-                            : const Color(0xFFEEF2FF),
+                            ? const Color(0xFFF0FDFA)
+                            : const Color(0xFFF0FDFA),
                         border: Border.all(
                           color: hasReport
-                              ? const Color(0xFFBBF7D0)
-                              : const Color(0xFFC7D2FE),
+                              ? const Color(0xFFCCFBF1)
+                              : const Color(0xFFCCFBF1),
                         ),
                         borderRadius: BorderRadius.circular(20),
                       ),
@@ -437,9 +598,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                               ? Icons.edit_note_rounded
                               : Icons.article_outlined,
                           size: 13,
-                          color: hasReport
-                              ? const Color(0xFF15803D)
-                              : const Color(0xFF4F46E5),
+                          color: const Color(0xFF0D9488),
                         ),
                         const SizedBox(width: 5),
                         Text(
@@ -447,9 +606,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                           style: GoogleFonts.plusJakartaSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w700,
-                              color: hasReport
-                                  ? const Color(0xFF15803D)
-                                  : const Color(0xFF4F46E5)),
+                              color: const Color(0xFF0D9488)),
                         ),
                       ]),
                     ),
@@ -525,10 +682,11 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
               maxLines: 5,
               decoration: InputDecoration(
                   hintText: 'Enter specific work details performed during this journey...',
-                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 12, color: const Color(0xFF94A3B8)),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none)),
+                  fillColor: const Color(0xFFF0FDFA),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFFCCFBF1)))),
             ),
             const SizedBox(height: 24),
             SizedBox(
@@ -553,7 +711,8 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                   }
                 },
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0F172A),
+                    backgroundColor: const Color(0xFF134E4A),
+                    elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                 child: Text('SAVE REPORT', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, color: Colors.white)),
               ),

@@ -15,7 +15,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   final TripService _tripService = TripService();
   bool _isLoading = true;
   List<Map<String, dynamic>> _records = [];
-  String _selectedTab = 'action_required'; // action_required, under_process, completed, rejected
+  String _selectedTab = 'pending'; // pending, processing, completed, rejected
   final TextEditingController _searchController = TextEditingController();
 
   // Stats mirroring web
@@ -34,14 +34,21 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
     if (!mounted) return;
     setState(() => _isLoading = true);
     try {
+      // 1. Fetch record list mirroring web app's simple tab-based request
       final data = await _tripService.fetchApprovals(
         tab: _selectedTab,
+        viewType: 'all', 
         search: _searchController.text,
       );
+
       if (mounted) {
         setState(() {
           _records = data;
           _isLoading = false;
+          // Update KPI from list length (as seen in FinanceDashboard.jsx)
+          if (_selectedTab == 'pending') {
+            _pendingAuditCount = _records.length;
+          }
         });
       }
     } catch (e) {
@@ -767,8 +774,8 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
 
   Widget _buildFilterTabs() {
     final tabs = [
-      {'id': 'action_required', 'label': 'Action Required'},
-      {'id': 'under_process', 'label': 'Under Process'},
+      {'id': 'pending', 'label': 'Action Required'},
+      {'id': 'processing', 'label': 'Under Process'},
       {'id': 'completed', 'label': 'Transfer Completed'},
       {'id': 'rejected', 'label': 'Flagged/Rejected'},
     ];
@@ -866,7 +873,8 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   }
 
   Widget _buildTransactionCard(Map<String, dynamic> rec) {
-    bool canProcess = _selectedTab == 'action_required';
+    // Both 'pending' and 'processing' tabs allow actions in finance hub
+    bool canProcess = _selectedTab == 'pending' || _selectedTab == 'processing';
     
     return Container(
       margin: const EdgeInsets.only(bottom: 16),

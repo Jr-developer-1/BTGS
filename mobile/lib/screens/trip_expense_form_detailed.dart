@@ -44,6 +44,7 @@ class _TripExpenseFormDetailedScreenState
   List<String> _masterMealCategories = [];
   List<String> _masterMealTypes = [];
   List<String> _masterClasses = [];
+  List<String> _masterIncidentalTypes = [];
   bool get isStartFieldsComplete =>
       _originController.text.isNotEmpty &&
       _odoStartController.text.isNotEmpty &&
@@ -69,8 +70,9 @@ class _TripExpenseFormDetailedScreenState
   final TextEditingController _odoEndController = TextEditingController();
   final TextEditingController _incidentalAmountController =
       TextEditingController();
+  // Rate is fetched from backend (Fuel Management). Default to 0.00
   final TextEditingController _odoRateController = TextEditingController(
-    text: '9.0',
+    text: '0.00',
   );
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _earlyCheckInController = TextEditingController();
@@ -103,6 +105,8 @@ class _TripExpenseFormDetailedScreenState
   double? _odoStartLong;
   double? _odoEndLat;
   double? _odoEndLong;
+  double? _rate2W; // fetched from backend
+  double? _rate4W; // fetched from backend
   List<Map<String, dynamic>> _incidentals = [];
 
   bool _mealIncluded = false;
@@ -117,6 +121,7 @@ class _TripExpenseFormDetailedScreenState
   TimeOfDay _startTime = TimeOfDay.now();
   TimeOfDay _endTime = TimeOfDay.now();
   List<String> _jobReportAttachments = [];
+  List<String> _expenseBills = [];
   List<String> _selfieImages = [];
 
   // Scheduled Timings for Outstation Travel (to match web)
@@ -125,12 +130,21 @@ class _TripExpenseFormDetailedScreenState
   TimeOfDay _scheduledStartTime = TimeOfDay.now();
   TimeOfDay _scheduledEndTime = TimeOfDay.now();
 
+  int? _batchId;
+  int? _rowIndex;
+  bool _fromBulkUpload = false;
+
   @override
   void initState() {
     super.initState();
     _loadMasters();
     if (widget.expenseData != null) {
       _loadExpenseData();
+      // Also fetch live rates when editing so that recalculations use
+      // the current backend-configured rate, not the hardcoded fallback.
+      if (widget.category == 'Local Travel') {
+        _fetchRates();
+      }
     } else {
       // Set defaults based on category
       if (widget.category == 'Local Travel') {
@@ -143,14 +157,24 @@ class _TripExpenseFormDetailedScreenState
 
   Future<void> _fetchRates() async {
     if (widget.category != 'Local Travel') return;
-
-    final type = (_travelSubType == 'Own Car') ? '4 Wheeler' : '2 Wheeler';
-    final rate = await _tripService.fetchFuelRate(type);
-    if (rate != null) {
+    // Fetch both rates upfront (mirrors web app)
+    final r2 = await _tripService.fetchFuelRate('2 Wheeler');
+    final r4 = await _tripService.fetchFuelRate('4 Wheeler');
+    if (mounted) {
       setState(() {
-        _odoRateController.text = rate.toStringAsFixed(2);
+        _rate2W = r2;
+        _rate4W = r4;
+        // Set default display rate based on current sub-type
+        _updateRateForSubType(_travelSubType);
       });
     }
+  }
+
+  void _updateRateForSubType(String? subType) {
+    double? rate;
+    if (subType == 'Own Car') rate = _rate4W;
+    if (subType == 'Own Bike') rate = _rate2W;
+    _odoRateController.text = (rate ?? 0.0).toStringAsFixed(2);
   }
 
   Future<void> _loadMasters() async {
@@ -159,10 +183,27 @@ class _TripExpenseFormDetailedScreenState
         _masterService.getTravelModes(),
         _masterService.getBookingTypes(),
         _masterService.getLocalTravelModes(),
-        _masterService.fetchMasterList(ApiConstants.masterStayTypes, 'results', 'stay_type'),
-        _masterService.fetchMasterList(ApiConstants.masterRoomTypes, 'results', 'room_type'),
-        _masterService.fetchMasterList(ApiConstants.masterMealCategories, 'results', 'category_name'),
-        _masterService.fetchMasterList(ApiConstants.masterMealTypes, 'results', 'meal_type'),
+        _masterService.fetchMasterList(
+          ApiConstants.masterStayTypes,
+          'results',
+          'stay_type',
+        ),
+        _masterService.fetchMasterList(
+          ApiConstants.masterRoomTypes,
+          'results',
+          'room_type',
+        ),
+        _masterService.fetchMasterList(
+          ApiConstants.masterMealCategories,
+          'results',
+          'category_name',
+        ),
+        _masterService.fetchMasterList(
+          ApiConstants.masterMealTypes,
+          'results',
+          'meal_type',
+        ),
+        _masterService.getIncidentalTypes(),
       ]);
 
       if (mounted) {
@@ -174,8 +215,9 @@ class _TripExpenseFormDetailedScreenState
           _masterRoomTypes = results[4];
           _masterMealCategories = results[5];
           _masterMealTypes = results[6];
+          _masterIncidentalTypes = results[7];
         });
-        
+
         // Load classes if mode is already set
         if (_travelMode != null) {
           _loadClasses();
@@ -209,7 +251,18 @@ class _TripExpenseFormDetailedScreenState
       } catch (e) {}
     }
 
-    _jobReportController.text = exp['remarks'] ?? details['remarks'] ?? details['jobReport'] ?? (widget.category != 'Food' ? (details['purpose'] ?? '') : '');
+    _batchId = details['batch_id'] != null
+        ? int.tryParse(details['batch_id'].toString())
+        : null;
+    _rowIndex = details['row_index'] != null
+        ? int.tryParse(details['row_index'].toString())
+        : null;
+    _fromBulkUpload =
+        details['from_bulk_upload'] == true ||
+        details['from_bulk_upload'] == 'true';
+
+    _jobReportController.text =
+        exp['remarks'] ?? details['remarks'] ?? details['jobReport'] ?? '';
 
     _originController.text = details['origin'] ?? '';
     _destController.text = details['destination'] ?? '';
@@ -219,8 +272,10 @@ class _TripExpenseFormDetailedScreenState
       _addressController.text = details['purpose'] ?? '';
     }
     if (widget.category == 'Accommodation') {
-      _earlyCheckInController.text = (details['earlyCheckInCharges'] ?? '').toString();
-      _lateCheckOutController.text = (details['lateCheckOutCharges'] ?? '').toString();
+      _earlyCheckInController.text = (details['earlyCheckInCharges'] ?? '')
+          .toString();
+      _lateCheckOutController.text = (details['lateCheckOutCharges'] ?? '')
+          .toString();
     }
     _hotelNameController.text = details['hotelName'] ?? '';
     _cityController.text = details['city'] ?? '';
@@ -231,8 +286,15 @@ class _TripExpenseFormDetailedScreenState
     _seatNoController.text = details['seatNo'] ?? '';
     _personsController.text = (details['persons'] ?? '').toString();
     _vehicleNoController.text = details['vehicleNo'] ?? '';
-    _odoStartController.text = (details['odoStart'] ?? '').toString();
-    _odoEndController.text = (details['odoEnd'] ?? '').toString();
+    // Only set ODO values if they are non-zero (zero means not yet entered)
+    final rawOdoStart = double.tryParse(details['odoStart']?.toString() ?? '');
+    _odoStartController.text = (rawOdoStart != null && rawOdoStart > 0)
+        ? rawOdoStart.toStringAsFixed(0)
+        : '';
+    final rawOdoEnd = double.tryParse(details['odoEnd']?.toString() ?? '');
+    _odoEndController.text = (rawOdoEnd != null && rawOdoEnd > 0)
+        ? rawOdoEnd.toStringAsFixed(0)
+        : '';
     _odoStartImg = details['odoStartImg'];
     _odoEndImg = details['odoEndImg'];
     _odoStartLat = double.tryParse(details['odoStartLat']?.toString() ?? '');
@@ -269,10 +331,35 @@ class _TripExpenseFormDetailedScreenState
     _nightTravel = details['nightTravel'] ?? false;
     _isSharedMeal = details['isShared'] ?? false;
 
+    // SEPARATE LOADS: Job Report Attachments vs Main Expense Bills
+    _jobReportAttachments = [];
+    _expenseBills = [];
+
+    // Main Receipts (Bills)
+    final receiptImg = exp['receipt_image'];
+    if (receiptImg != null && receiptImg is String && receiptImg != '[]') {
+      try {
+        _expenseBills = List<String>.from(jsonDecode(receiptImg));
+      } catch (e) {}
+    } else if (receiptImg is List) {
+      _expenseBills = List<String>.from(receiptImg);
+    }
+
+    // Job Report Proofs
     final attachments = details['jobReportAttachments'];
     if (attachments is List) {
       _jobReportAttachments = List<String>.from(
         attachments.map((e) => e.toString()),
+      );
+    }
+
+    // Legacy fallback (moving to bills if found in generic attachments)
+    final commonAttachments = details['attachments'];
+    if (commonAttachments != null &&
+        commonAttachments is List &&
+        _expenseBills.isEmpty) {
+      _expenseBills = List<String>.from(
+        commonAttachments.map((e) => e.toString()),
       );
     }
 
@@ -282,24 +369,22 @@ class _TripExpenseFormDetailedScreenState
     }
 
     if (details['date'] != null)
-      _startDate = DateTime.tryParse(details['date']) ?? _startDate;
-    if (details['depDate'] != null)
-      _startDate = DateTime.tryParse(details['depDate']) ?? _startDate;
-    if (details['arrDate'] != null)
-      _endDate = DateTime.tryParse(details['arrDate']) ?? _endDate;
-    if (details['checkIn'] != null)
-      _startDate = DateTime.tryParse(details['checkIn']) ?? _startDate;
-    if (details['checkOut'] != null)
-      _endDate = DateTime.tryParse(details['checkOut']) ?? _endDate;
+      _startDate = _parseDate(details['date']);
+    else if (exp['date'] != null)
+      _startDate = _parseDate(exp['date']);
+    if (details['depDate'] != null) _startDate = _parseDate(details['depDate']);
+    if (details['arrDate'] != null) _endDate = _parseDate(details['arrDate']);
+    if (details['checkIn'] != null) _startDate = _parseDate(details['checkIn']);
+    if (details['checkOut'] != null) _endDate = _parseDate(details['checkOut']);
 
     if (details['depTime'] != null) _startTime = _parseTime(details['depTime']);
     if (details['arrTime'] != null) _endTime = _parseTime(details['arrTime']);
 
     // Load Scheduled Timings
     if (details['scheduledDepDate'] != null)
-      _scheduledStartDate = DateTime.tryParse(details['scheduledDepDate']) ?? _scheduledStartDate;
+      _scheduledStartDate = _parseDate(details['scheduledDepDate']);
     if (details['scheduledArrDate'] != null)
-      _scheduledEndDate = DateTime.tryParse(details['scheduledArrDate']) ?? _scheduledEndDate;
+      _scheduledEndDate = _parseDate(details['scheduledArrDate']);
     if (details['scheduledDepTime'] != null)
       _scheduledStartTime = _parseTime(details['scheduledDepTime']);
     if (details['scheduledArrTime'] != null)
@@ -308,7 +393,12 @@ class _TripExpenseFormDetailedScreenState
       _startTime = _parseTime(details['mealTime']);
 
     if (widget.category == 'Local Travel') {
-      _odoRateController.text = (details['odoRate'] ?? '9.0').toString();
+      // Restore previously saved rate if available; the async _fetchRates()
+      // call (triggered in initState) will overwrite this with the live backend
+      // value once it resolves — so do NOT fall back to any hardcoded value.
+      if (details['odoRate'] != null) {
+        _odoRateController.text = details['odoRate'].toString();
+      }
       _incidentalAmountController.text = (details['incidentalAmount'] ?? '')
           .toString();
       _incidentalCategory = details['incidentalCategory'];
@@ -330,27 +420,92 @@ class _TripExpenseFormDetailedScreenState
       }
 
       if (details['startDate'] != null)
-        _startDate = DateTime.tryParse(details['startDate']) ?? _startDate;
+        _startDate = _parseDate(details['startDate']);
+      else if (details['date'] != null)
+        _startDate = _parseDate(details['date']);
+      else if (exp['date'] != null)
+        _startDate = _parseDate(exp['date']);
+
       if (details['endDate'] != null)
-        _endDate = DateTime.tryParse(details['endDate']) ?? _endDate;
+        _endDate = _parseDate(details['endDate']);
+      else if (details['date'] != null)
+        _endDate = _parseDate(details['date']);
+      else if (exp['date'] != null)
+        _endDate = _parseDate(exp['date']);
+
+      // Timing with nesting and naming fallbacks
+      final timing = details['time'];
       if (details['startTime'] != null)
-        _startTime = _parseTime(details['startTime']);
-      if (details['endTime'] != null) _endTime = _parseTime(details['endTime']);
+        _startTime = _parseTime(details['startTime'].toString());
+      else if (details['start_time'] != null)
+        _startTime = _parseTime(details['start_time'].toString());
+      else if (timing is Map && timing['boardingTime'] != null)
+        _startTime = _parseTime(timing['boardingTime'].toString());
+
+      if (details['endTime'] != null)
+        _endTime = _parseTime(details['endTime'].toString());
+      else if (details['reach_time'] != null)
+        _endTime = _parseTime(details['reach_time'].toString());
+      else if (details['end_time'] != null)
+        _endTime = _parseTime(details['end_time'].toString());
+      else if (timing is Map && timing['actualTime'] != null)
+        _endTime = _parseTime(timing['actualTime'].toString());
+      else
+        _endTime = _startTime; // Fallback to start time so it's not "now"
     }
+  }
+
+  DateTime _parseDate(dynamic date) {
+    if (date == null || date == 'N/A' || date == '') return DateTime.now();
+    final dStr = date.toString();
+
+    // Try ISO format (YYYY-MM-DD)
+    DateTime? dt = DateTime.tryParse(dStr);
+    if (dt != null) return dt;
+
+    // Try DD-MM-YYYY
+    try {
+      return DateFormat('dd-MM-yyyy').parse(dStr);
+    } catch (_) {}
+
+    // Try YYYY-MM-DD explicitly
+    try {
+      return DateFormat('yyyy-MM-dd').parse(dStr);
+    } catch (_) {}
+
+    return DateTime.now();
   }
 
   TimeOfDay _parseTime(String timeStr) {
     try {
-      final parts = timeStr.split(':');
+      // Handle full ISO timestamps or space-separated date-times
+      if (timeStr.contains('T')) {
+        final dt = DateTime.tryParse(timeStr);
+        if (dt != null) return TimeOfDay.fromDateTime(dt);
+      }
+
+      String workingTime = timeStr.trim();
+      if (workingTime.contains(' ')) {
+        final parts = workingTime.split(' ');
+        // If first part looks like date (YYYY-MM-DD or DD-MM-YYYY)
+        if (parts[0].contains('-') || parts[0].contains('/')) {
+          workingTime = parts.last;
+        }
+      }
+
+      // Now workingTime should be "HH:mm:ss..." or "HH:mm AM/PM"
+      final parts = workingTime.split(':');
       if (parts.length >= 2) {
         int hour = int.parse(parts[0].replaceAll(RegExp(r'[^0-9]'), ''));
-        int minute = int.parse(parts[1].split(' ')[0]);
-        if (timeStr.toLowerCase().contains('pm') && hour < 12) hour += 12;
-        if (timeStr.toLowerCase().contains('am') && hour == 12) hour = 0;
-        return TimeOfDay(hour: hour, minute: minute);
+        int minute = int.parse(parts[1].replaceAll(RegExp(r'[^0-9]'), ''));
+
+        if (workingTime.toLowerCase().contains('pm') && hour < 12) hour += 12;
+        if (workingTime.toLowerCase().contains('am') && hour == 12) hour = 0;
+
+        return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
       }
-    } catch (e) {}
-    return TimeOfDay.now();
+    } catch (_) {}
+    return const TimeOfDay(hour: 9, minute: 0);
   }
 
   void _calculateNights() {
@@ -367,6 +522,9 @@ class _TripExpenseFormDetailedScreenState
       double odoTotal = 0.0;
 
       if (widget.category == 'Local Travel') {
+        final isOwnVehicle =
+            _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+
         double startOdo =
             double.tryParse(
               _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
@@ -378,15 +536,19 @@ class _TripExpenseFormDetailedScreenState
             ) ??
             0;
         double dist = (endOdo - startOdo).clamp(0, 99999);
-        double rate =
-            double.tryParse(
-              _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
-            ) ??
-            9.0;
-        odoTotal = dist * rate;
-        if (odoTotal > 0) {
-          amount = odoTotal;
+
+        if (isOwnVehicle) {
+          // Mirror web: auto-calculate from distance × fuel rate.
+          // Fallback to 0.0 as requested if no rate is configured in Fuel Management
+          final rate = _travelSubType == 'Own Car'
+              ? (_rate4W ?? double.tryParse(_odoRateController.text) ?? 0.0)
+              : (_rate2W ?? double.tryParse(_odoRateController.text) ?? 0.0);
+
+          odoTotal = dist * rate;
+          if (odoTotal >= 0) amount = odoTotal;
         }
+        // For other subtypes (Ride Hailing, Rental, PT etc.)
+        // amount stays as manually entered in _amountController
       }
 
       final payload = {
@@ -398,14 +560,15 @@ class _TripExpenseFormDetailedScreenState
         'date': DateFormat('yyyy-MM-dd').format(_startDate),
         'remarks': _jobReportController.text,
         'description': jsonEncode(_buildDescription()),
-        'receipt_image': jsonEncode(_jobReportAttachments),
+        'receipt_image': jsonEncode(_expenseBills),
       };
 
       // NEW: Handle correction of rejected bulk rows
-      if (widget.expenseData != null && widget.expenseData['is_bulk_correction'] == true) {
+      if (widget.expenseData != null &&
+          widget.expenseData['is_bulk_correction'] == true) {
         final batchId = widget.expenseData['batch_id'].toString();
         final rowIndex = widget.expenseData['row_index'];
-        
+
         // Prepare row update data
         final rowUpdate = {
           ..._buildDescription(),
@@ -413,20 +576,20 @@ class _TripExpenseFormDetailedScreenState
           'date': DateFormat('yyyy-MM-dd').format(_startDate),
           'remarks': _jobReportController.text,
           '_status': 'Validated', // Reset status as it's now corrected
-          '_remark': 'Corrected on mobile: ${_jobReportController.text}'
+          '_remark': 'Corrected on mobile: ${_jobReportController.text}',
         };
 
         await _tripService.handleBulkBatchAction(
-          batchId, 
+          batchId,
           'UpdateItem',
-          extraData: {
-            'row_index': rowIndex,
-            'new_data': rowUpdate
-          }
+          extraData: {'row_index': rowIndex, 'new_data': rowUpdate},
         );
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Bulk row corrected and resubmitted'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Bulk row corrected and resubmitted'),
+            backgroundColor: Colors.green,
+          ),
         );
         Navigator.pop(context, true);
         return;
@@ -439,30 +602,29 @@ class _TripExpenseFormDetailedScreenState
       } else {
         final res = await _tripService.addExpense(payload);
         mainExpenseId = res['id']?.toString();
-      }
 
-      // Handle Incidentals separately as individual records
-      if (widget.category == 'Local Travel' && _incidentals.isNotEmpty) {
-        for (var inc in _incidentals) {
-          final incAmount =
-              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
-          if (incAmount > 0) {
-            await _tripService.addExpense({
-              'trip': widget.tripId,
-              'category': 'Incidental',
-              'amount': incAmount,
-              'date': DateFormat('yyyy-MM-dd').format(_startDate),
-              'remarks': 'Attached to ODO entry [${mainExpenseId ?? 'New'}]',
-              'description': jsonEncode({
-                'incidentalType': inc['category'] ?? 'Misc',
-                'notes': _jobReportController.text,
-                'parentOdoId': mainExpenseId,
-              }),
-              // If there's a bill for this incidental, it should be sent too
-              'receipt_image': inc['bill'] != null
-                  ? jsonEncode([inc['bill']])
-                  : '[]',
-            });
+        // Handle Incidentals separately as individual records ONLY for new entries
+        if (widget.category == 'Local Travel' && _incidentals.isNotEmpty) {
+          for (var inc in _incidentals) {
+            final incAmount =
+                double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+            if (incAmount > 0) {
+              await _tripService.addExpense({
+                'trip': widget.tripId,
+                'category': 'Incidental',
+                'amount': incAmount,
+                'date': DateFormat('yyyy-MM-dd').format(_startDate),
+                'remarks': 'Attached to ODO entry [${mainExpenseId ?? 'New'}]',
+                'description': jsonEncode({
+                  'incidentalType': inc['category'] ?? 'Misc',
+                  'notes': _jobReportController.text,
+                  'parentOdoId': mainExpenseId,
+                }),
+                'receipt_image': inc['bill'] != null
+                    ? jsonEncode([inc['bill']])
+                    : '[]',
+              });
+            }
           }
         }
       }
@@ -543,7 +705,9 @@ class _TripExpenseFormDetailedScreenState
         'bookingTime': _bookingTime.format(context),
 
         // Scheduled Timings (Parity with Web)
-        'scheduledDepDate': DateFormat('yyyy-MM-dd').format(_scheduledStartDate),
+        'scheduledDepDate': DateFormat(
+          'yyyy-MM-dd',
+        ).format(_scheduledStartDate),
         'scheduledArrDate': DateFormat('yyyy-MM-dd').format(_scheduledEndDate),
         'scheduledDepTime': _scheduledStartTime.format(context),
         'scheduledArrTime': _scheduledEndTime.format(context),
@@ -588,25 +752,41 @@ class _TripExpenseFormDetailedScreenState
     desc['jobReportAttachments'] = _jobReportAttachments;
     desc['selfies'] = _selfieImages;
 
+    if (_fromBulkUpload) {
+      desc['from_bulk_upload'] = true;
+    }
+    if (_batchId != null) {
+      desc['batch_id'] = _batchId;
+    }
+    if (_rowIndex != null) {
+      desc['row_index'] = _rowIndex;
+    }
+
     return desc;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         title: Text(
-          '${widget.category} Details',
+          '${widget.category} Details'.toUpperCase(),
           style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w900,
             fontSize: 16,
+            letterSpacing: 1,
+            color: Colors.white,
           ),
         ),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: const Color(0xFF0F766E),
+        foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -674,7 +854,15 @@ class _TripExpenseFormDetailedScreenState
                 label: 'TRAVEL MODE',
                 value: _travelMode,
                 icon: Icons.flight_takeoff_rounded,
-                initialOptions: _masterTravelModes.isNotEmpty ? _masterTravelModes : ['Flight', 'Train', 'Intercity Bus', 'Intercity Cab', 'Others'],
+                initialOptions: _masterTravelModes.isNotEmpty
+                    ? _masterTravelModes
+                    : [
+                        'Flight',
+                        'Train',
+                        'Intercity Bus',
+                        'Intercity Cab',
+                        'Others',
+                      ],
                 onChanged: (v) => setState(() {
                   _travelMode = v;
                   _masterClasses = [];
@@ -777,7 +965,12 @@ class _TripExpenseFormDetailedScreenState
             label: 'TRAVEL CLASS',
             value: _travelClass,
             icon: Icons.airline_seat_recline_extra_rounded,
-            initialOptions: ['Economy', 'Premium Economy', 'Business', 'First Class'],
+            initialOptions: [
+              'Economy',
+              'Premium Economy',
+              'Business',
+              'First Class',
+            ],
             onChanged: (v) => setState(() => _travelClass = v),
           ),
         ] else if (_travelMode == 'Intercity Cab') ...[
@@ -858,11 +1051,25 @@ class _TripExpenseFormDetailedScreenState
                 child: _buildDropdownMini(
                   _travelMode == 'Intercity Bus' ? 'BUS TYPE' : 'CLASS',
                   _travelClass,
-                  _masterClasses.isNotEmpty 
-                    ? _masterClasses 
-                    : (_travelMode == 'Train'
-                      ? ['Sleeper', '3AC', '2AC', '1AC', 'Chair Car', 'General']
-                      : ['Sleeper', 'Semi Sleeper', 'AC', 'Non-AC', 'Volvo', 'Seater']),
+                  _masterClasses.isNotEmpty
+                      ? _masterClasses
+                      : (_travelMode == 'Train'
+                            ? [
+                                'Sleeper',
+                                '3AC',
+                                '2AC',
+                                '1AC',
+                                'Chair Car',
+                                'General',
+                              ]
+                            : [
+                                'Sleeper',
+                                'Semi Sleeper',
+                                'AC',
+                                'Non-AC',
+                                'Volvo',
+                                'Seater',
+                              ]),
                   (v) => setState(() => _travelClass = v),
                 ),
               ),
@@ -1069,8 +1276,6 @@ class _TripExpenseFormDetailedScreenState
     );
   }
 
-
-
   Widget _buildLocalTravelForm() {
     if (_isTravelo) return _buildTraveloLocalForm();
     return _buildTripLocalTravelForm();
@@ -1092,7 +1297,7 @@ class _TripExpenseFormDetailedScreenState
         double.tryParse(
           _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
         ) ??
-        9.0;
+        0.0;
     double odoTotal = dist * rate;
 
     // Incidental sum is now 0 as it's removed from UI
@@ -1193,7 +1398,9 @@ class _TripExpenseFormDetailedScreenState
                     label: 'MODE',
                     value: _travelMode,
                     icon: Icons.directions_car_filled_rounded,
-                    initialOptions: _masterLocalTravelModes.isNotEmpty ? _masterLocalTravelModes : ['Bike', 'Car / Cab', 'Public Transport', 'Walk'],
+                    initialOptions: _masterLocalTravelModes.isNotEmpty
+                        ? _masterLocalTravelModes
+                        : ['Bike', 'Car / Cab', 'Public Transport', 'Walk'],
                     onChanged: (v) => setState(() {
                       _travelMode = v;
                       _travelSubType = null;
@@ -1215,7 +1422,12 @@ class _TripExpenseFormDetailedScreenState
                         : ['N/A'],
                     (v) => setState(() {
                       _travelSubType = v;
-                      _fetchRates();
+                      // Mirror web: instantly switch rate; only fetch if rates not loaded yet
+                      if (_rate2W == null || _rate4W == null) {
+                        _fetchRates();
+                      } else {
+                        _updateRateForSubType(v);
+                      }
                     }),
                   ),
                 ),
@@ -1226,7 +1438,9 @@ class _TripExpenseFormDetailedScreenState
               label: 'BOOKING TYPE',
               value: _bookingType,
               icon: Icons.confirmation_number_rounded,
-              initialOptions: _masterBookingTypes.isNotEmpty ? _masterBookingTypes : ['Online', 'Agent', 'Direct'],
+              initialOptions: _masterBookingTypes.isNotEmpty
+                  ? _masterBookingTypes
+                  : ['Online', 'Agent', 'Direct'],
               onChanged: (v) => setState(() => _bookingType = v),
             ),
           ],
@@ -1431,7 +1645,9 @@ class _TripExpenseFormDetailedScreenState
                         result['path'] != null) {
                       final bytes = await File(result['path']).readAsBytes();
                       setState(() {
-                        _selfieImages.add('data:image/jpeg;base64,${base64Encode(bytes)}');
+                        _selfieImages.add(
+                          'data:image/jpeg;base64,${base64Encode(bytes)}',
+                        );
                       });
                     }
                   },
@@ -1552,7 +1768,7 @@ class _TripExpenseFormDetailedScreenState
         double.tryParse(
           _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
         ) ??
-        9.0;
+        0.0;
     double odoTotal = dist * rate;
 
     double incidentalSum = 0.0;
@@ -1704,153 +1920,221 @@ class _TripExpenseFormDetailedScreenState
             ),
             const SizedBox(height: 24),
             // Professional Insight Card
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            Builder(
+              builder: (context) {
+                final isOwnVehicle =
+                    _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Column(
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'ODO DISTANCE',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
-                            ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'ODO DISTANCE',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 9,
+                                  color: const Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              Text(
+                                '${dist.toStringAsFixed(1)} KM',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  color: const Color(0xFF4F46E5),
+                                ),
+                              ),
+                            ],
                           ),
-                          Text(
-                            '${dist.toStringAsFixed(1)} KM',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                              color: const Color(0xFF4F46E5),
-                            ),
+                          Container(
+                            width: 1,
+                            height: 30,
+                            color: const Color(0xFFE2E8F0),
                           ),
+                          if (isOwnVehicle) ...[
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  'ODO RATE (₹/KM)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 9,
+                                    color: const Color(0xFF64748B),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                Text(
+                                  '₹${_odoRateController.text.isNotEmpty ? _odoRateController.text : '-'}/km',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 16,
+                                    color: const Color(0xFF10B981),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  'AMOUNT (₹)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 9,
+                                    color: const Color(0xFF64748B),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 100,
+                                  height: 28,
+                                  child: TextFormField(
+                                    controller: _amountController,
+                                    keyboardType: TextInputType.number,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 16,
+                                      color: const Color(0xFF4F46E5),
+                                    ),
+                                    textAlign: TextAlign.right,
+                                    decoration: const InputDecoration(
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.zero,
+                                      hintText: '0',
+                                      prefixText: '₹',
+                                    ),
+                                    onChanged: (v) => setState(() {}),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
-                      Container(
-                        width: 1,
-                        height: 30,
-                        color: const Color(0xFFE2E8F0),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            'ODO RATE (₹/KM)',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
+                      if (isOwnVehicle) ...[
+                        const SizedBox(height: 12),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'ODOMETER EXPENSE',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 9,
+                                    color: const Color(0xFF64748B),
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                                Text(
+                                  '₹${odoTotal.toStringAsFixed(2)}',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 18,
+                                    color: const Color(0xFF10B981),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          SizedBox(
-                            width: 60,
-                            height: 24,
-                            child: TextFormField(
-                              controller: _odoRateController,
-                              keyboardType: TextInputType.number,
-                              style: GoogleFonts.plusJakartaSans(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                                color: const Color(0xFF4F46E5),
+                            TextButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        JobReportComposerScreen(
+                                          travelId: widget.tripId,
+                                          initialReport:
+                                              _jobReportController.text,
+                                          initialAttachments:
+                                              _jobReportAttachments,
+                                          onSave: (text, attachments) async {
+                                            setState(() {
+                                              _jobReportController.text = text;
+                                              _jobReportAttachments =
+                                                  attachments;
+                                            });
+                                          },
+                                        ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(
+                                Icons.edit_note_rounded,
+                                size: 18,
                               ),
-                              textAlign: TextAlign.right,
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.zero,
+                              label: Text(
+                                'WRITE REPORT',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 11,
+                                  letterSpacing: 0.5,
+                                ),
                               ),
-                              onChanged: (v) => setState(() {}),
+                              style: TextButton.styleFrom(
+                                foregroundColor: const Color(0xFF334155),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                backgroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: const BorderSide(
+                                    color: Color(0xFFE2E8F0),
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 12),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 14,
+                              color: Color(0xFF94A3B8),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Fare/cost amount to be entered manually for this travel type.',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  color: const Color(0xFF94A3B8),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ODOMETER EXPENSE',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          Text(
-                            '₹${odoTotal.toStringAsFixed(2)}',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 18,
-                              color: const Color(0xFF10B981),
-                            ),
-                          ),
-                        ],
-                      ),
-                      TextButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => JobReportComposerScreen(
-                                travelId: widget.tripId,
-                                initialReport: _jobReportController.text,
-                                initialAttachments: _jobReportAttachments,
-                                onSave: (text, attachments) async {
-                                  setState(() {
-                                    _jobReportController.text = text;
-                                    _jobReportAttachments = attachments;
-                                  });
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.edit_note_rounded, size: 18),
-                        label: Text(
-                          'WRITE REPORT',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 11,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        style: TextButton.styleFrom(
-                          foregroundColor: const Color(0xFF334155),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          backgroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: const BorderSide(color: Color(0xFFE2E8F0)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                );
+              },
             ),
           ],
         ),
@@ -1971,7 +2255,9 @@ class _TripExpenseFormDetailedScreenState
                             child: _buildDropdownMini(
                               'CATEGORY',
                               inc['category'],
-                              ['Toll', 'Parking', 'Repairs', 'Cleaning'],
+                              _masterIncidentalTypes.isNotEmpty
+                                  ? _masterIncidentalTypes
+                                  : ['Toll', 'Parking', 'Repairs', 'Cleaning'],
                               (v) => setState(
                                 () => _incidentals[index]['category'] = v,
                               ),
@@ -2106,6 +2392,10 @@ class _TripExpenseFormDetailedScreenState
     required bool isStart,
     required bool isEnabled,
   }) {
+    final now = DateTime.now();
+    final bool isDateToday =
+        date.year == now.year && date.month == now.month && date.day == now.day;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2164,6 +2454,8 @@ class _TripExpenseFormDetailedScreenState
                 'ODO READING',
                 odoController,
                 keyboardType: TextInputType.number,
+                hint: 'e.g. 12345',
+                enabled: isDateToday,
               ),
             ),
             const SizedBox(width: 8),
@@ -2179,65 +2471,82 @@ class _TripExpenseFormDetailedScreenState
                   ),
                 ),
                 const SizedBox(height: 8),
-                InkWell(
-                  onTap: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ForensicCamera()),
-                    );
-                    if (result != null && result is Map) {
-                      final bytes = await File(result['path']).readAsBytes();
-                      onImg('data:image/jpeg;base64,${base64Encode(bytes)}');
-                      setState(() {
-                        if (isStart) {
-                          _odoStartLat = result['latitude'];
-                          _odoStartLong = result['longitude'];
-                        } else {
-                          _odoEndLat = result['latitude'];
-                          _odoEndLong = result['longitude'];
-                        }
-                      });
-                    }
-                  },
-                  child: Container(
-                    height: 48,
-                    width: 80,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: odoImg != null
-                            ? const Color(0xFF10B981)
-                            : const Color(0xFFE2E8F0),
-                      ),
-                    ),
-                    child: odoImg != null
-                        ? const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.check_circle_rounded,
-                                size: 14,
-                                color: Color(0xFF10B981),
+                AbsorbPointer(
+                  absorbing: odoImg != null || !isDateToday,
+                  child: InkWell(
+                    onTap: (odoImg != null || !isDateToday)
+                        ? null
+                        : () async {
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ForensicCamera(),
                               ),
-                              SizedBox(width: 4),
-                              Text(
-                                'Captured',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
+                            );
+                            if (result != null && result is Map) {
+                              final bytes = await File(
+                                result['path'],
+                              ).readAsBytes();
+                              onImg(
+                                'data:image/jpeg;base64,${base64Encode(bytes)}',
+                              );
+                              setState(() {
+                                if (isStart) {
+                                  _odoStartLat = result['latitude'];
+                                  _odoStartLong = result['longitude'];
+                                } else {
+                                  _odoEndLat = result['latitude'];
+                                  _odoEndLong = result['longitude'];
+                                }
+                              });
+                            }
+                          },
+                    child: Container(
+                      height: 48,
+                      width: 80,
+                      decoration: BoxDecoration(
+                        color: odoImg != null
+                            ? const Color(0xFFDCFCE7)
+                            : !isDateToday
+                            ? const Color(0xFFF1F5F9)
+                            : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: odoImg != null
+                              ? const Color(0xFF10B981)
+                              : !isDateToday
+                              ? const Color(0xFFCBD5E1)
+                              : const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      child: odoImg != null
+                          ? const Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  size: 14,
                                   color: Color(0xFF10B981),
                                 ),
+                                SizedBox(width: 4),
+                                Text(
+                                  'Captured',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF10B981),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Center(
+                              child: Icon(
+                                Icons.camera_alt_rounded,
+                                size: 18,
+                                color: const Color(0xFF94A3B8),
                               ),
-                            ],
-                          )
-                        : Center(
-                            child: Icon(
-                              Icons.camera_alt_rounded,
-                              size: 18,
-                              color: const Color(0xFF94A3B8),
                             ),
-                          ),
+                    ),
                   ),
                 ),
               ],
@@ -2261,7 +2570,9 @@ class _TripExpenseFormDetailedScreenState
                 label: 'CATEGORY',
                 value: _mealCategory,
                 icon: Icons.category_rounded,
-                initialOptions: _masterMealCategories.isNotEmpty ? _masterMealCategories : ['Self Meal', 'Working Meal', 'Client Hosted'],
+                initialOptions: _masterMealCategories.isNotEmpty
+                    ? _masterMealCategories
+                    : ['Self Meal', 'Working Meal', 'Client Hosted'],
                 onChanged: (v) => setState(() => _mealCategory = v),
               ),
             ),
@@ -2271,48 +2582,68 @@ class _TripExpenseFormDetailedScreenState
                 label: 'MEAL TYPE',
                 value: _mealType,
                 icon: Icons.restaurant_menu_rounded,
-                initialOptions: _masterMealTypes.isNotEmpty ? _masterMealTypes : ['Breakfast', 'Lunch', 'Dinner', 'Snacks'],
+                initialOptions: _masterMealTypes.isNotEmpty
+                    ? _masterMealTypes
+                    : ['Breakfast', 'Lunch', 'Dinner', 'Snacks'],
                 onChanged: (v) => setState(() => _mealType = v),
               ),
             ),
           ],
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'RESTAURANT / HOTEL',
-          _restaurantController,
-          icon: Icons.storefront_rounded,
+        Row(
+          children: [
+            Expanded(
+              child: _buildTextFieldMini(
+                'RESTAURANT / HOTEL',
+                _restaurantController,
+                icon: Icons.storefront_rounded,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextFieldMini(
+                'ADDRESS',
+                _addressController,
+                icon: Icons.location_on_outlined,
+                hint: 'Location Address',
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'ADDRESS',
-          _addressController,
-          icon: Icons.location_on_outlined,
-          hint: 'Location Address',
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _buildTimePickerMini(
+                'MEAL TIME',
+                _startTime,
+                (t) => setState(() => _startTime = t),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextFieldMini(
+                'AMOUNT',
+                _amountController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.payments_outlined,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 20),
-        _buildTimePickerMini(
-          'MEAL TIME',
-          _startTime,
-          (t) => setState(() => _startTime = t),
-        ),
-        const SizedBox(height: 20),
-        if (_mealCategory == 'Working Meal' || _mealCategory == 'Client Hosted') ...[
+        if (_mealCategory == 'Working Meal' ||
+            _mealCategory == 'Client Hosted') ...[
+          const SizedBox(height: 20),
           _buildTextFieldMini(
             'NO. OF PERSONS (PAX)',
             _personsController,
             keyboardType: TextInputType.number,
             icon: Icons.people_outline,
           ),
-          const SizedBox(height: 20),
         ],
-        _buildTextFieldMini(
-          'AMOUNT',
-          _amountController,
-          prefix: '₹',
-          keyboardType: TextInputType.number,
-          icon: Icons.payments_outlined,
-        ),
       ],
     );
   }
@@ -2330,7 +2661,7 @@ class _TripExpenseFormDetailedScreenState
                 label: 'STAY TYPE',
                 value: _accomType,
                 icon: Icons.hotel_rounded,
-                initialOptions: _masterStayTypes.isNotEmpty ? _masterStayTypes : ['Hotel Stay', 'Bavya Guest House', 'Self Stay', 'Client Provided', 'No Stay'],
+                initialOptions: _masterStayTypes,
                 onChanged: (v) => setState(() => _accomType = v),
               ),
             ),
@@ -2340,25 +2671,33 @@ class _TripExpenseFormDetailedScreenState
                 label: 'ROOM TYPE',
                 value: _roomType,
                 icon: Icons.meeting_room_rounded,
-                initialOptions: _masterRoomTypes.isNotEmpty ? _masterRoomTypes : ['Standard', 'Deluxe', 'Executive', 'Suite', 'Guest House'],
+                initialOptions: _masterRoomTypes,
                 onChanged: (v) => setState(() => _roomType = v),
               ),
             ),
           ],
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'HOTEL / PROPERTY NAME',
-          _hotelNameController,
-          icon: Icons.business_rounded,
-        ),
-        const SizedBox(height: 20),
-        SearchableDropdown(
-          label: 'CITY',
-          value: _cityController.text,
-          icon: Icons.location_city_rounded,
-          isLocation: true,
-          onChanged: (v) => setState(() => _cityController.text = v),
+        Row(
+          children: [
+            Expanded(
+              child: _buildTextFieldMini(
+                'HOTEL / PROPERTY',
+                _hotelNameController,
+                icon: Icons.business_rounded,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SearchableDropdown(
+                label: 'CITY',
+                value: _cityController.text,
+                icon: Icons.location_city_rounded,
+                isLocation: true,
+                onChanged: (v) => setState(() => _cityController.text = v),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 20),
         Row(
@@ -2424,7 +2763,11 @@ class _TripExpenseFormDetailedScreenState
           ],
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini('PURPOSE / ADDRESS', _jobReportController, maxLines: 2),
+        _buildTextFieldMini(
+          'PURPOSE / ADDRESS',
+          _jobReportController,
+          maxLines: 2,
+        ),
       ],
     );
   }
@@ -2435,32 +2778,48 @@ class _TripExpenseFormDetailedScreenState
       icon: Icons.receipt_long_rounded,
       color: Colors.grey,
       children: [
-        _buildDropdownMini('EXPENSE TYPE', _mealCategory, [
-          'Parking',
-          'Toll',
-          'Fuel',
-          'Luggage',
-          'Others',
-        ], (v) => setState(() => _mealCategory = v)),
-        const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'LOCATION / DETAILS',
-          _originController,
-          icon: Icons.map_outlined,
+        Row(
+          children: [
+            Expanded(
+              child: _buildDropdownMini(
+                'EXPENSE TYPE',
+                _mealCategory,
+                _masterIncidentalTypes,
+                (v) => setState(() => _mealCategory = v),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextFieldMini(
+                'LOCATION / DETAILS',
+                _originController,
+                icon: Icons.map_outlined,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'AMOUNT',
-          _amountController,
-          prefix: '₹',
-          keyboardType: TextInputType.number,
-          icon: Icons.payments_outlined,
-        ),
-        const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'DESCRIPTION / PURPOSE',
-          _jobReportController,
-          maxLines: 3,
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _buildTextFieldMini(
+                'AMOUNT',
+                _amountController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.payments_outlined,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildTextFieldMini(
+                'DESCRIPTION / PURPOSE',
+                _jobReportController,
+                maxLines: 2,
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -2477,12 +2836,12 @@ class _TripExpenseFormDetailedScreenState
       margin: const EdgeInsets.only(bottom: 24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(28),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: const Color(0xFF0D9488).withOpacity(0.06),
             blurRadius: 20,
-            offset: const Offset(0, 8),
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -2490,32 +2849,51 @@ class _TripExpenseFormDetailedScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.05),
+              color: const Color(0xFFF0FDFA),
               borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(24),
-                topRight: Radius.circular(24),
+                topLeft: Radius.circular(28),
+                topRight: Radius.circular(28),
+              ),
+              border: Border(
+                bottom: BorderSide(
+                  color: const Color(0xFFCCFBF1).withOpacity(0.5),
+                ),
               ),
             ),
             child: Row(
               children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(icon, color: color, size: 16),
+                ),
+                const SizedBox(width: 14),
                 Text(
-                  title,
+                  title.toUpperCase(),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
-                    color: color,
-                    letterSpacing: 0.5,
+                    color: const Color(0xFF134E4A),
+                    letterSpacing: 1,
                   ),
                 ),
               ],
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
             child: Column(children: children),
           ),
         ],
@@ -2531,29 +2909,31 @@ class _TripExpenseFormDetailedScreenState
     int maxLines = 1,
     TextInputType? keyboardType,
     IconData? icon,
+    bool enabled = true,
     Function(String)? onChanged,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          label.toUpperCase(),
           style: GoogleFonts.plusJakartaSans(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF64748B),
-            letterSpacing: 0.3,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         TextFormField(
           controller: controller,
           maxLines: maxLines,
           keyboardType: keyboardType,
+          enabled: enabled,
           style: GoogleFonts.plusJakartaSans(
             fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: const Color(0xFF1E293B),
+            fontWeight: FontWeight.w700,
+            color: enabled ? const Color(0xFF134E4A) : const Color(0xFF94A3B8),
           ),
           onChanged: (v) {
             if (onChanged != null) onChanged(v);
@@ -2561,18 +2941,38 @@ class _TripExpenseFormDetailedScreenState
           },
           decoration: InputDecoration(
             hintText: hint,
+            hintStyle: GoogleFonts.inter(
+              color: const Color(0xFF94A3B8),
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
             prefixText: prefix,
+            prefixStyle: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF134E4A),
+              fontWeight: FontWeight.w700,
+            ),
             prefixIcon: icon != null
-                ? Icon(icon, size: 18, color: const Color(0xFF94A3B8))
+                ? Icon(icon, size: 18, color: const Color(0xFF0D9488))
                 : null,
             filled: true,
-            fillColor: const Color(0xFFF8FAFC),
+            fillColor: const Color(0xFFF0FDFA),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide.none,
             ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFFCCFBF1)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(
+                color: Color(0xFF0D9488),
+                width: 1.5,
+              ),
+            ),
             contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
+              horizontal: 12,
               vertical: 12,
             ),
           ),
@@ -2592,42 +2992,56 @@ class _TripExpenseFormDetailedScreenState
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          label.toUpperCase(),
           style: GoogleFonts.plusJakartaSans(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF64748B),
-            letterSpacing: 0.3,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
+            color: const Color(0xFFF0FDFA),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFCCFBF1)),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: options.contains(value) ? value : null,
               isExpanded: true,
+              dropdownColor: Colors.white,
+              icon: const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Color(0xFF0D9488),
+              ),
               hint: Text(
                 'Select',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 14,
                   color: const Color(0xFF94A3B8),
+                  fontWeight: FontWeight.w500,
                 ),
               ),
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF1E293B),
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF134E4A),
               ),
               onChanged: onChanged,
               items: options
                   .map(
-                    (String val) =>
-                        DropdownMenuItem(value: val, child: Text(val)),
+                    (String val) => DropdownMenuItem(
+                      value: val,
+                      child: Text(
+                        val,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   )
                   .toList(),
             ),
@@ -2636,7 +3050,6 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
-
 
   Widget _buildDatePickerMini(
     String label,
@@ -2647,14 +3060,15 @@ class _TripExpenseFormDetailedScreenState
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          label.toUpperCase(),
           style: GoogleFonts.plusJakartaSans(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF64748B),
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         InkWell(
           onTap: () async {
             final d = await showDatePicker(
@@ -2662,14 +3076,27 @@ class _TripExpenseFormDetailedScreenState
               initialDate: value,
               firstDate: DateTime(2023),
               lastDate: DateTime(2030),
+              builder: (context, child) {
+                return Theme(
+                  data: Theme.of(context).copyWith(
+                    colorScheme: const ColorScheme.light(
+                      primary: Color(0xFF0D9488),
+                      onPrimary: Colors.white,
+                      onSurface: Color(0xFF134E4A),
+                    ),
+                  ),
+                  child: child!,
+                );
+              },
             );
             if (d != null) onType(d);
           },
           child: Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFF0FDFA),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2678,13 +3105,14 @@ class _TripExpenseFormDetailedScreenState
                   DateFormat('dd MMM yyyy').format(value),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF134E4A),
                   ),
                 ),
                 const Icon(
-                  Icons.calendar_month_rounded,
+                  Icons.calendar_today_rounded,
                   size: 18,
-                  color: Color(0xFF94A3B8),
+                  color: Color(0xFF0D9488),
                 ),
               ],
             ),
@@ -2703,14 +3131,15 @@ class _TripExpenseFormDetailedScreenState
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
+          label.toUpperCase(),
           style: GoogleFonts.plusJakartaSans(
             fontSize: 10,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF64748B),
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         InkWell(
           onTap: () async {
             final t = await showTimePicker(
@@ -2720,10 +3149,11 @@ class _TripExpenseFormDetailedScreenState
             if (t != null) onType(t);
           },
           child: Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFF0FDFA),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2732,13 +3162,14 @@ class _TripExpenseFormDetailedScreenState
                   value.format(context),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF134E4A),
                   ),
                 ),
                 const Icon(
-                  Icons.access_time_rounded,
+                  Icons.access_time_filled_rounded,
                   size: 18,
-                  color: Color(0xFF94A3B8),
+                  color: Color(0xFF0D9488),
                 ),
               ],
             ),
@@ -2765,7 +3196,7 @@ class _TripExpenseFormDetailedScreenState
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey[300],
+                color: const Color(0xFFE2E8F0),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -2775,7 +3206,7 @@ class _TripExpenseFormDetailedScreenState
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
-                color: const Color(0xFF0F172A),
+                color: const Color(0xFF134E4A),
               ),
             ),
             const SizedBox(height: 24),
@@ -2785,7 +3216,7 @@ class _TripExpenseFormDetailedScreenState
                   child: _pickerOption(
                     icon: Icons.camera_alt_rounded,
                     label: 'Camera',
-                    color: const Color(0xFF4F46E5),
+                    color: const Color(0xFF0D9488),
                     onTap: () async {
                       Navigator.pop(context);
                       final result = await Navigator.push(
@@ -2799,7 +3230,9 @@ class _TripExpenseFormDetailedScreenState
                           result['path'] != null) {
                         final bytes = await File(result['path']).readAsBytes();
                         setState(() {
-                          _jobReportAttachments.add('data:image/jpeg;base64,${base64Encode(bytes)}');
+                          _expenseBills.add(
+                            'data:image/jpeg;base64,${base64Encode(bytes)}',
+                          );
                         });
                       }
                     },
@@ -2810,7 +3243,7 @@ class _TripExpenseFormDetailedScreenState
                   child: _pickerOption(
                     icon: Icons.photo_library_rounded,
                     label: 'Gallery',
-                    color: const Color(0xFF10B981),
+                    color: const Color(0xFF0D9488),
                     onTap: () async {
                       Navigator.pop(context);
                       final XFile? image = await picker.pickImage(
@@ -2820,7 +3253,9 @@ class _TripExpenseFormDetailedScreenState
                       if (image != null) {
                         final bytes = await image.readAsBytes();
                         setState(() {
-                          _jobReportAttachments.add('data:image/jpeg;base64,${base64Encode(bytes)}');
+                          _expenseBills.add(
+                            'data:image/jpeg;base64,${base64Encode(bytes)}',
+                          );
                         });
                       }
                     },
@@ -2876,22 +3311,234 @@ class _TripExpenseFormDetailedScreenState
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(
-              'ATTACHMENTS / BILLS',
+              'EXPENSE BILLS / RECEIPTS',
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 10,
                 fontWeight: FontWeight.w900,
-                color: const Color(0xFF64748B),
-                letterSpacing: 0.5,
+                color: const Color(0xFF94A3B8),
+                letterSpacing: 1,
               ),
             ),
             TextButton.icon(
               onPressed: _addAttachment,
-              icon: const Icon(Icons.add_a_photo_rounded, size: 16),
+              icon: const Icon(
+                Icons.add_a_photo_rounded,
+                size: 16,
+                color: Color(0xFF0D9488),
+              ),
               label: Text(
-                'ADD',
+                'ADD BILL',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 11,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0D9488),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_expenseBills.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0FDFA),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.receipt_long_rounded,
+                  color: Color(0xFF0D9488),
+                  size: 32,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'No bills or slips added.',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: const Color(0xFF94A3B8),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          SizedBox(
+            height: 100,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _expenseBills.length,
+              itemBuilder: (context, index) {
+                return Stack(
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(right: 12),
+                      width: 100,
+                      height: 100,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFCCFBF1)),
+                        image: DecorationImage(
+                          image: MemoryImage(
+                            base64Decode(
+                              _expenseBills[index].contains(',')
+                                  ? _expenseBills[index].split(',').last
+                                  : _expenseBills[index],
+                            ),
+                          ),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4,
+                      right: 16,
+                      child: GestureDetector(
+                        onTap: () =>
+                            setState(() => _expenseBills.removeAt(index)),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF0D9488),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        const SizedBox(height: 32),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'ACTIVITY PROOFS (JOB REPORT)',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF94A3B8),
+                letterSpacing: 1,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () async {
+                showModalBottomSheet(
+                  context: context,
+                  backgroundColor: Colors.transparent,
+                  builder: (context) => Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(32),
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE2E8F0),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Text(
+                          'ADD ACTIVITY PROOF',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF134E4A),
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _pickerOption(
+                                icon: Icons.camera_alt_rounded,
+                                label: 'Camera',
+                                color: const Color(0xFF0D9488),
+                                onTap: () async {
+                                  Navigator.pop(context);
+                                  final result = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const ForensicCamera(),
+                                    ),
+                                  );
+                                  if (result != null &&
+                                      result is Map &&
+                                      result['path'] != null) {
+                                    final bytes = await File(
+                                      result['path'],
+                                    ).readAsBytes();
+                                    setState(() {
+                                      _jobReportAttachments.add(
+                                        'data:image/jpeg;base64,${base64Encode(bytes)}',
+                                      );
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: _pickerOption(
+                                icon: Icons.photo_library_rounded,
+                                label: 'Gallery',
+                                color: const Color(0xFF0D9488),
+                                onTap: () async {
+                                  Navigator.pop(context);
+                                  final XFile? image = await picker.pickImage(
+                                    source: ImageSource.gallery,
+                                    imageQuality: 70,
+                                  );
+                                  if (image != null) {
+                                    final bytes = await image.readAsBytes();
+                                    setState(() {
+                                      _jobReportAttachments.add(
+                                        'data:image/jpeg;base64,${base64Encode(bytes)}',
+                                      );
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(
+                Icons.add_task_rounded,
+                size: 16,
+                color: Color(0xFF0D9488),
+              ),
+              label: Text(
+                'ADD PROOF',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0D9488),
                 ),
               ),
             ),
@@ -2903,23 +3550,20 @@ class _TripExpenseFormDetailedScreenState
             padding: const EdgeInsets.all(24),
             width: double.infinity,
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: const Color(0xFFF0FDFA),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: const Color(0xFFE2E8F0),
-                style: BorderStyle.solid,
-              ),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Column(
               children: [
-                Icon(
-                  Icons.receipt_long_rounded,
-                  color: const Color(0xFF94A3B8),
+                const Icon(
+                  Icons.assignment_turned_in_rounded,
+                  color: Color(0xFF0D9488),
                   size: 32,
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'No bills or attachments added.',
+                  'No activity proofs added.',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     color: const Color(0xFF94A3B8),
@@ -2944,10 +3588,14 @@ class _TripExpenseFormDetailedScreenState
                       height: 100,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        border: Border.all(color: const Color(0xFFCCFBF1)),
                         image: DecorationImage(
                           image: MemoryImage(
-                            base64Decode(_jobReportAttachments[index]),
+                            base64Decode(
+                              _jobReportAttachments[index].contains(',')
+                                  ? _jobReportAttachments[index].split(',').last
+                                  : _jobReportAttachments[index],
+                            ),
                           ),
                           fit: BoxFit.cover,
                         ),
@@ -2963,7 +3611,7 @@ class _TripExpenseFormDetailedScreenState
                         child: Container(
                           padding: const EdgeInsets.all(4),
                           decoration: const BoxDecoration(
-                            color: Colors.red,
+                            color: Color(0xFF0D9488),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -2982,5 +3630,4 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
-
 }

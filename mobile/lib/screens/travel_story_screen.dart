@@ -128,10 +128,10 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFFBB0633)),
+              child: CircularProgressIndicator(color: Color(0xFF0D9488)),
             )
           : _trip == null
           ? const Center(child: Text('Story not found'))
@@ -350,7 +350,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                           }
                         },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFBB0633),
+                    backgroundColor: const Color(0xFF0D9488),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
@@ -513,7 +513,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                           errorBuilder: (c, e, s) => const Icon(
                             Icons.business_rounded,
                             size: 16,
-                            color: Color(0xFFBB0633),
+                            color: Color(0xFF0D9488),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -611,11 +611,11 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: const Color(0xFF0F766E),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.2),
+            color: const Color(0xFF0F766E).withOpacity(0.2),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -728,14 +728,14 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 icon: const Icon(
                   Icons.add_circle_outline_rounded,
                   size: 14,
-                  color: Color(0xFFBB0633),
+                  color: Color(0xFF0D9488),
                 ),
                 label: Text(
                   'TOP-UP',
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFFBB0633),
+                    color: const Color(0xFF0D9488),
                   ),
                 ),
                 style: TextButton.styleFrom(
@@ -751,8 +751,8 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
             _finBoxLarge(
               'APPROVED ADVANCE',
               '₹${_trip!.totalApprovedAdvance?.toStringAsFixed(0) ?? '0'}',
-              const Color(0xFFBB0633),
-              const Color(0xFFFFF1F2),
+              const Color(0xFF0D9488),
+              const Color(0xFFF0FDFA),
               Icons.account_balance_wallet_rounded,
               'Funds disbursed by HQ',
             ),
@@ -1103,11 +1103,51 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
   Widget _buildExpenseSection() {
     final List<dynamic> sortedExpenses = List.from(_expenses);
 
+    // Track which bulk rows already have real Expense records to avoid duplicates
+    final Set<String> existingBulkKeys = {};
+    final Set<String> fallbackKeys = {};
+
+    for (var exp in _expenses) {
+      var details = exp['details'] ?? {};
+      if (details.isEmpty &&
+          exp['description'] is String &&
+          exp['description'].toString().startsWith('{')) {
+        try {
+          details = jsonDecode(exp['description']);
+        } catch (e) {}
+      }
+      if (details['batch_id'] != null && details['row_index'] != null) {
+        existingBulkKeys.add('${details['batch_id']}_${details['row_index']}');
+      }
+
+      // Fallback hook for legacy items created before batch_id was stored
+      if (details['from_bulk_upload'] == true) {
+        final origin = (details['origin'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        final dest = (details['destination'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        final date =
+            (exp['date'] ??
+                    ((details['time'] is Map)
+                        ? details['time']['boardingDate']
+                        : '') ??
+                    '')
+                .toString()
+                .trim();
+        fallbackKeys.add('${origin}_${dest}_$date');
+      }
+    }
+
+    final List<Widget> batchActions = [];
+
     // Add rows from non-final bulk batches so they can be viewed/fixed
     for (var batch in _bulkHistory) {
       final batchStatus = (batch['status'] ?? '').toString();
-      // Only skip fully resolved/resubmitted batches
-      if (batchStatus == 'Resolved') continue;
+      // We process ALL batches (including Resolved) to find approved rows
       dynamic dataJson = batch['data_json'];
       if (dataJson is String) {
         try {
@@ -1119,20 +1159,63 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
 
       if (dataJson is List) {
         final List<dynamic> rows = dataJson;
+        bool hasRejectedRow = false;
+
+        // For resubmitted batches that are still pending manager approval,
+        // only scan for rejections but never add rows to the expense grid.
+        final bool isFreshResubmission =
+            batchStatus == 'Submitted' &&
+            (batch['batch_name'] ?? '').toString().startsWith('resubmitted_');
+
         for (int i = 0; i < rows.length; i++) {
           final row = rows[i];
-          final rawStatus =
-              (row['_status'] ??
-                      row['status'] ??
-                      (batchStatus == 'Approved' ? 'Approved' : 'Pending'))
-                  .toString();
-          final isRowRejected = rawStatus.toLowerCase() == 'rejected';
 
-          final displayStatus = (isRowRejected)
+          // Determine the effective status of this individual row
+          // Priority: explicit _status > batch-level inference
+          final String rawStatus = (() {
+            final s = (row['_status'] ?? row['status'])?.toString();
+            if (s != null && s.isNotEmpty) return s;
+            // A Resolved batch means its non-rejected rows were approved
+            if (batchStatus == 'Approved' || batchStatus == 'Resolved')
+              return 'Approved';
+            return 'Pending';
+          })();
+
+          final String lowRaw = rawStatus.toLowerCase().trim();
+          final bool isValidated =
+              lowRaw == 'validated' || lowRaw == 'ok' || lowRaw == 'approved';
+          final isRowRejected =
+              lowRaw == 'rejected' ||
+              lowRaw == 'fix required' ||
+              lowRaw.contains('rejected');
+
+          final displayStatus = isRowRejected
               ? 'Rejected'
-              : (batchStatus == 'Approved' ? 'Approved' : rawStatus);
+              : (isValidated ? 'Approved' : rawStatus);
 
-          sortedExpenses.add({
+          // Skip deduplication check and grid insertion for fresh resubmissions
+          if (isFreshResubmission) {
+            // Only track rejections to potentially show the banner
+            if (isRowRejected) hasRejectedRow = true;
+            continue;
+          }
+
+          final String bulkKey = '${batch['id']}_$i';
+          if (existingBulkKeys.contains(bulkKey)) continue;
+
+          final originKey = (row['origin_route'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          final destKey = (row['destination_route'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          final dateKey = (row['date'] ?? '').toString().trim();
+          if (fallbackKeys.contains('${originKey}_${destKey}_$dateKey'))
+            continue;
+
+          final syntheticRow = {
             'id': 'bulk_${batch['id']}_$i',
             'is_synthetic': true,
             'batch_id': batch['id'],
@@ -1142,28 +1225,137 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
             'nature': 'Fuel',
             'status': displayStatus,
             'remarks': isRowRejected
-                ? (row['_remark'] ?? 'Rejected by manager')
+                ? (row['_remarks'] ??
+                      row['_remark'] ??
+                      row['remarks'] ??
+                      'Rejected by manager')
                 : '',
             'details': {
               'origin': row['origin_route'],
               'destination': row['destination_route'],
+              'start_time': row['start_time'],
+              'reach_time': row['reach_time'],
               'odoStart': row['odo_start'],
               'mode': row['mode'],
               'purpose': row['visit_intent'],
               'batch_id': batch['id'],
               'row_index': i,
             },
-          });
+          };
+
+          if (isRowRejected) {
+            hasRejectedRow = true;
+          } else if (isValidated) {
+            // Only show in the registry when fully approved
+            sortedExpenses.add(syntheticRow);
+          }
+        }
+
+        if (hasRejectedRow && batchStatus != 'Resolved') {
+          batchActions.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: const Color(0xFFFECACA),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFEF4444).withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEF4444),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.error_outline_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Bulk Upload Rejections',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              color: const Color(0xFF991B1B),
+                            ),
+                          ),
+                          Text(
+                            'Action Required: Resubmit rejected rows',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFFEF4444).withOpacity(0.8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () async {
+                        final refresh = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => BulkResolveRejectionsScreen(
+                              tripId: widget.tripId,
+                              batchId: (batch['id'] ?? '').toString(),
+                              allRows: rows,
+                            ),
+                          ),
+                        );
+                        if (refresh == true) _fetchDetails();
+                      },
+                      icon: const Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        color: Color(0xFFEF4444),
+                        size: 18,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
         }
       }
     }
 
-    sortedExpenses.sort((a, b) {
-      // Sort: Rejected rows first (need attention), then Draft, then rest
-      final statusA = (a['status'] ?? '').toString().toLowerCase();
-      final statusB = (b['status'] ?? '').toString().toLowerCase();
-      if (statusA == 'rejected' && statusB != 'rejected') return -1;
-      if (statusA != 'rejected' && statusB == 'rejected') return 1;
+    final List<dynamic> rejectedExpenses = sortedExpenses.where((e) {
+      final status = (e['status'] ?? '').toString().toLowerCase().trim();
+      return status == 'rejected' ||
+          status == 'fix required' ||
+          status.contains('rejected');
+    }).toList();
+
+    final List<dynamic> activeExpenses = sortedExpenses.where((e) {
+      final status = (e['status'] ?? '').toString().toLowerCase().trim();
+      return status != 'rejected' &&
+          status != 'fix required' &&
+          !status.contains('rejected');
+    }).toList();
+
+    activeExpenses.sort((a, b) {
+      final statusA = (a['status'] ?? '').toString().toLowerCase().trim();
+      final statusB = (b['status'] ?? '').toString().toLowerCase().trim();
       if (statusA == 'draft' && statusB != 'draft') return -1;
       if (statusA != 'draft' && statusB == 'draft') return 1;
       return 0;
@@ -1172,6 +1364,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (batchActions.isNotEmpty) ...batchActions,
         const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1208,8 +1401,12 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 24),
-        if (sortedExpenses.isEmpty)
+        const SizedBox(height: 16),
+        if (rejectedExpenses.isNotEmpty) ...[
+          _buildBulkRejectionsButton(rejectedExpenses),
+          const SizedBox(height: 24),
+        ],
+        if (activeExpenses.isEmpty)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(40),
@@ -1241,9 +1438,9 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: sortedExpenses.length,
+            itemCount: activeExpenses.length,
             itemBuilder: (context, index) =>
-                _buildExpenseCard(sortedExpenses[index]),
+                _buildExpenseCard(activeExpenses[index]),
           ),
         if (_isOwner() &&
             (_trip!.claim == null ||
@@ -1344,8 +1541,12 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
       routeText = date;
     }
 
-    final bool isRejected = status.toString().toLowerCase() == 'rejected';
-    final bool isApproved = status.toString().toLowerCase() == 'approved';
+    final String lowStatus = status.toString().toLowerCase().trim();
+    final bool isRejected = lowStatus == 'rejected';
+    final bool isApproved =
+        lowStatus == 'approved' ||
+        lowStatus == 'validated' ||
+        lowStatus == 'ok';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1428,6 +1629,21 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+                      if (hasLocalConveyanceData ||
+                          normalizedNature.toLowerCase() == 'local travel')
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            "${details['date'] ?? details['startDate'] ?? expense['date'] ?? 'N/A'}  •  ${details['startTime'] ?? details['start_time'] ?? '--:--'} - ${details['endTime'] ?? details['reach_time'] ?? details['end_time'] ?? '--:--'}",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              color: isRejected
+                                  ? const Color(0xFFEF4444).withOpacity(0.7)
+                                  : const Color(0xFF64748B),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                       if (isRejected)
                         Text(
                           'FIX REQUIRED',
@@ -1600,7 +1816,9 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 ],
               ),
             )
-          else if (expense['is_synthetic'] == true && !isRejected)
+          else if (expense['is_synthetic'] == true &&
+              !isRejected &&
+              !isApproved)
             // Non-rejected bulk row still pending approval
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -1634,7 +1852,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 ),
               ),
             )
-          else if (!isApproved)
+          else if (!isApproved && !isRejected)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Row(
@@ -2741,8 +2959,12 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               ),
             ],
             _buildDetailRow(
+              'Date',
+              '${details['date'] ?? details['startDate'] ?? expense['date'] ?? 'N/A'}',
+            ),
+            _buildDetailRow(
               'Timing',
-              '${details['boardingTime'] ?? ''} - ${details['actualTime'] ?? ''}',
+              '${details['startTime'] ?? details['start_time'] ?? '--:--'} - ${details['endTime'] ?? details['reach_time'] ?? details['end_time'] ?? '--:--'}',
             ),
             if (expense['job_report_id'] != null)
               Padding(
@@ -2804,5 +3026,103 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildBulkRejectionsButton(List<dynamic> rejected) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFFEE2E2)),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _openBulkResolutions(rejected),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.error_outline_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'BULK UPLOAD REJECTIONS',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF991B1B),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${rejected.length} items were rejected. Fix and resubmit them at once.',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFFB91C1C).withOpacity(0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFFEF4444),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openBulkResolutions(List<dynamic> rejected) async {
+    String? batchId;
+    for (var exp in rejected) {
+      if (exp['batch_id'] != null) {
+        batchId = exp['batch_id']?.toString();
+        break;
+      }
+    }
+
+    if (batchId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No batch information found for rejections.'),
+        ),
+      );
+      return;
+    }
+
+    final refresh = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BulkResolveRejectionsScreen(
+          tripId: widget.tripId,
+          batchId: batchId!,
+          allRows: rejected,
+        ),
+      ),
+    );
+    if (refresh == true) _fetchDetails();
   }
 }

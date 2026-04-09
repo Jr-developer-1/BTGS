@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/trip_service.dart';
 import '../services/api_service.dart';
+import '../constants/api_constants.dart';
 
 class ApprovalsInboxScreen extends StatefulWidget {
   final bool hideHeader;
@@ -37,6 +38,13 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   Map<String, dynamic>? _currentUser;
   final Map<int, Map<String, String>> _batchRowEdits = {};
   bool _isActionLoading = false;
+  final Set<String> _expandedBatchIds = {}; // for collapsible batch cards
+  
+  // PAGINATION CONTROLS
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isFetchingMore = false;
 
   final List<Map<String, dynamic>> _filterOptions = [
     {'value': 'all', 'label': 'All'},
@@ -55,26 +63,53 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     }
     _currentUser = ApiService().getUser();
     _fetchData();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.9 &&
+        _hasMore &&
+        !_isFetchingMore &&
+        !_isLoading) {
+      _fetchMoreData();
+    }
   }
 
   Future<void> _fetchData() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _currentPage = 1;
+      _hasMore = true;
+    });
     try {
       final counts = await _tripService.fetchApprovalCounts();
       List<Map<String, dynamic>> finalTasks = [];
 
-      // Fetch tasks using the unified approvals endpoint
-      // This ensures we get the same data as the web inbox (including resubmitted batches)
       finalTasks = await _tripService.fetchApprovals(
         tab: _activeTab,
         type: _filterType,
         viewType: _viewType,
         search: _searchController.text,
+        page: _currentPage,
       );
 
-      // If we are in monthly view, we might need to map some fields if they are missing
+      // If we got fewer than 5 items, we likely don't have more
+      if (finalTasks.length < 5) {
+        _hasMore = false;
+      }
+
       if (_viewType == 'monthly') {
         finalTasks = finalTasks.map((t) {
+          if (t['type'] == 'Bulk Upload' || t['id']?.toString().startsWith('BATCH-') == true) {
+            t['type'] = 'Monthly Tour Plan';
+          }
           if (t['type'] == null) t['type'] = 'Monthly Tour Plan';
           return t;
         }).toList();
@@ -85,22 +120,91 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           _tasks = finalTasks;
           _isLoading = false;
         });
+        
+        // AUTO-FETCH NEXT PAGE for seamless loading
+        if (_hasMore) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _fetchMoreData(isAuto: true);
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load tasks: $e'),
-            backgroundColor: const Color(0xFFEF4444),
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
-            ),
-          ),
-        );
+        _showError('Failed to load tasks: $e');
       }
     }
+  }
+
+  Future<void> _fetchMoreData({bool isAuto = false}) async {
+    if (_isFetchingMore || !_hasMore) return;
+    
+    if (mounted) setState(() => _isFetchingMore = true);
+    
+    // Add a slight delay for "auto" loading to show the loader at the bottom
+    if (isAuto) await Future.delayed(const Duration(milliseconds: 100));
+    try {
+      _currentPage++;
+      final moreTasks = await _tripService.fetchApprovals(
+        tab: _activeTab,
+        type: _filterType,
+        viewType: _viewType,
+        search: _searchController.text,
+        page: _currentPage,
+      );
+
+      if (moreTasks.isEmpty || moreTasks.length < 5) {
+        _hasMore = false;
+      }
+
+      List<Map<String, dynamic>> processedMore = moreTasks;
+      if (_viewType == 'monthly') {
+        processedMore = moreTasks.map((t) {
+          if (t['type'] == 'Bulk Upload' || t['id']?.toString().startsWith('BATCH-') == true) {
+            t['type'] = 'Monthly Tour Plan';
+          }
+          if (t['type'] == null) t['type'] = 'Monthly Tour Plan';
+          return t;
+        }).toList();
+      }
+
+      if (mounted) {
+        setState(() {
+          _tasks.addAll(processedMore);
+          _isFetchingMore = false;
+        });
+
+        // CONTINUE AUTO-FETCHING until all records are loaded
+        if (_hasMore) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _fetchMoreData(isAuto: true);
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingMore = false;
+          // If we hit an "Invalid page" error, it means we've reached the end
+          if (e.toString().contains('Invalid page') || e.toString().contains('404')) {
+            _hasMore = false;
+          }
+        });
+        if (!_hasMore) return; // Silent stop for end of pages
+        _showError('Failed to load more: $e');
+      }
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFFEF4444),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   void _handleFilterChange(String type) {
@@ -114,7 +218,16 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     Map<String, dynamic>? extra,
   }) async {
     try {
-      await _tripService.performApproval(id, action, extraData: extra);
+      if (id.startsWith('BATCH-')) {
+        final batchId = id.replaceAll('BATCH-', '');
+        await _tripService.handleBulkBatchAction(
+          batchId, 
+          action.toLowerCase(), 
+          extraData: extra ?? {},
+        );
+      } else {
+        await _tripService.performApproval(id, action, extraData: extra);
+      }
       // mirror web toast wording EXACTLY: "Request Approved successfully"
       String verb;
       switch (action.toLowerCase()) {
@@ -173,7 +286,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       body: Stack(
         children: [
           // Executive Mesh Blobs
@@ -186,7 +299,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFFA9052E).withOpacity(0.02),
+                    const Color(0xFF0D9488).withOpacity(0.04),
                     Colors.transparent,
                   ],
                 ),
@@ -203,19 +316,34 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                 child: _isLoading
                     ? const Center(
                         child: CircularProgressIndicator(
-                          color: Color(0xFFBB0633),
+                          color: Color(0xFF0D9488),
                         ),
                       )
                     : RefreshIndicator(
                         onRefresh: _fetchData,
-                        color: const Color(0xFFBB0633),
+                        color: const Color(0xFF0D9488),
                         child: _tasks.isEmpty
                             ? _buildEmptyState()
                             : ListView.builder(
+                                controller: _scrollController,
                                 padding: const EdgeInsets.all(20),
-                                itemCount: _tasks.length,
-                                itemBuilder: (context, index) =>
-                                    _buildTaskCard(_tasks[index]),
+                                itemCount: _tasks.length + (_hasMore ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index == _tasks.length) {
+                                    return _isFetchingMore
+                                        ? const Padding(
+                                            padding: EdgeInsets.symmetric(vertical: 20),
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                color: Color(0xFF0D9488),
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox.shrink();
+                                  }
+                                  return _buildTaskCard(_tasks[index]);
+                                },
                               ),
                       ),
               ),
@@ -230,7 +358,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
-        color: Color(0xFFA9052E),
+        gradient: LinearGradient(
+          colors: [Color(0xFF0F766E), Color(0xFF0D9488)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.only(
           bottomLeft: Radius.circular(36),
           bottomRight: Radius.circular(36),
@@ -372,7 +504,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF0F1E2A) : Colors.transparent,
+          color: isSelected ? const Color(0xFF134E4A) : Colors.transparent,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
@@ -401,15 +533,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          color: isActive ? const Color(0xFF0F1E2A) : Colors.white,
+          color: isActive ? const Color(0xFF134E4A) : Colors.white,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isActive ? const Color(0xFF0F1E2A) : const Color(0xFFF1F5F9),
+            color: isActive ? const Color(0xFF134E4A) : const Color(0xFFE2E8F0),
           ),
           boxShadow: isActive
               ? [
                   BoxShadow(
-                    color: const Color(0xFF0F1E2A).withOpacity(0.3),
+                    color: const Color(0xFF134E4A).withOpacity(0.3),
                     blurRadius: 10,
                     offset: const Offset(0, 4),
                   ),
@@ -451,7 +583,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF64748B),
+              color: const Color(0xFF0D9488),
               letterSpacing: 1.0,
             ),
           ),
@@ -460,10 +592,10 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF0F172A).withOpacity(0.04),
+                  color: const Color(0xFF0D9488).withOpacity(0.04),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
                 ),
@@ -474,11 +606,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                 value: _filterType,
                 icon: const Icon(
                   Icons.filter_list_rounded,
-                  color: Color(0xFFBB0633),
+                  color: Color(0xFF0D9488),
                   size: 18,
                 ),
                 style: GoogleFonts.plusJakartaSans(
-                  color: const Color(0xFF0F172A),
+                  color: const Color(0xFF134E4A),
                   fontWeight: FontWeight.w800,
                   fontSize: 13,
                 ),
@@ -507,9 +639,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
-    if (task['type'] == 'Monthly Tour Plan') {
+    if (task['type'] == 'Monthly Tour Plan' || task['type'] == 'Bulk Upload' || task['id']?.toString().startsWith('BATCH-') == true) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 20),
+        padding: const EdgeInsets.all(20),
         child: _buildBulkBatchSection(task),
       );
     }
@@ -547,7 +679,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      task['id'] ?? 'N/A',
+                      (task['type'] == 'Bulk Upload' && task['trip_id'] != null) 
+                          ? task['trip_id'] 
+                          : (task['id'] ?? 'N/A'),
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
@@ -662,7 +796,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        color: const Color(0xFFBB0633),
+                        color: const Color(0xFF0D9488),
                       ),
                     ),
                   ],
@@ -682,14 +816,14 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         children: [
           Container(
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF0FDFA),
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.verified_user_rounded,
               size: 40,
-              color: Color(0xFF94A3B8),
+              color: Color(0xFF0D9488),
             ),
           ),
           const SizedBox(height: 20),
@@ -749,11 +883,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   // ─── Monthly Tour Plan / Bulk Activity Batch ─────────────────────────────
 
   Widget _buildBulkBatchSection(Map<String, dynamic> task) {
-    final List<dynamic> rows = task['data_json'] ?? [];
-    final String fileName =
-        task['file_name']?.toString() ??
-        task['purpose']?.toString() ??
-        'Monthly Tour Plan';
+    // For resubmitted 'Bulk Upload' items, data comes nested inside details.activity_batches[0]
+    List<dynamic> rows = task['data_json'] ?? [];
+    if (rows.isEmpty) {
+      final batches = task['details']?['activity_batches'];
+      if (batches is List && batches.isNotEmpty) {
+        rows = batches[0]['data_json'] ?? [];
+      }
+    }
+
     final filteredRows = rows.where((r) {
       final dateStr = r['date']?.toString() ?? '';
       return !dateStr.toLowerCase().contains('instruc');
@@ -778,46 +916,201 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.calendar_month_rounded,
-              color: Color(0xFFBB0633),
-              size: 18,
+    final String tripId = task['trip_id']?.toString() ?? 'N/A';
+    final String requester = task['requester']?.toString() ?? 'Unknown';
+    final String batchId = task['id'];
+    final bool isExpanded = _expandedBatchIds.contains(batchId);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D9488).withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header / Summary Card
+          InkWell(
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedBatchIds.remove(batchId);
+                } else {
+                  _expandedBatchIds.add(batchId);
+                }
+              });
+            },
+            borderRadius: BorderRadius.circular(24),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0D9488).withOpacity(0.06),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.inventory_2_rounded,
+                          color: Color(0xFF0D9488),
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              requester,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Trip ID: $tripId',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF64748B),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        color: const Color(0xFF94A3B8),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.description_outlined, size: 14, color: Color(0xFF94A3B8)),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${filteredRows.length} Activities',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF475569),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Pending Approval',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Daily Activities — ${filteredRows.length} Entries',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: const Color(0xFF0F172A),
-                ),
+          ),
+
+          if (isExpanded) ...[
+            const Divider(height: 1, color: Color(0xFFF1F5F9)),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  ...filteredRows.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final row = Map<String, dynamic>.from(entry.value as Map);
+                    return _buildBulkRowCard(idx, row, task);
+                  }),
+                  const SizedBox(height: 20),
+                  // Batch-level Action Buttons
+                  if (_activeTab != 'history')
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () => _handleAction(task['id'], 'Approve'),
+                            icon: const Icon(Icons.check_circle_rounded, size: 20),
+                            label: Text(
+                              'Approve All',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _handleAction(task['id'], 'Reject'),
+                            icon: const Icon(Icons.cancel_rounded, size: 20),
+                            label: Text(
+                              'Reject All',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side: const BorderSide(color: Color(0xFFFEE2E2)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          fileName,
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 11,
-            color: const Color(0xFF94A3B8),
-            fontWeight: FontWeight.w700,
-          ),
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 16),
-        ...filteredRows.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final row = Map<String, dynamic>.from(entry.value as Map);
-          return _buildBulkRowCard(idx, row, task);
-        }),
-      ],
+        ],
+      ),
     );
   }
 
@@ -868,12 +1161,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       color: Color(0xFF94A3B8),
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      row['date']?.toString() ?? '',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: const Color(0xFF0F172A),
+                    Flexible(
+                      child: Text(
+                        row['date']?.toString() ?? '',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0F172A),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
@@ -1066,10 +1362,12 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             ),
           ],
           // Hide action buttons once this row is rejected or validated (from server OR locally)
+          // Also hide them if this is an Expense Claim (where activities are already final context)
           if (!isHistory &&
               rowStatus != 'Rejected' &&
               !isValidated &&
-              rowStatus != 'Approved') ...[
+              rowStatus != 'Approved' &&
+              !(task['type']?.toString() ?? '').toLowerCase().contains('claim')) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -1721,13 +2019,14 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ),
 
                 // ── Monthly Tour Plan (Bulk Batch) ───────────────────────────
-                if (type == 'Monthly Tour Plan' ||
-                    task['data_json'] != null) ...[
+                // Hide daily activities on Expense Claims as requested (already validated in bulk flow)
+                if (type == 'Monthly Tour Plan' || task['data_json'] != null) ...[
                   const SizedBox(height: 32),
                   _buildBulkBatchSection(task),
                 ],
 
                 // ── Trip/Claim Activity Batches ──────────────────────────────
+                // Hide daily activities on Expense Claims as requested
                 if (details['activity_batches'] != null &&
                     (details['activity_batches'] as List).isNotEmpty) ...[
                   for (var batch in (details['activity_batches'] as List)) ...[
@@ -1801,7 +2100,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _buildExpenseBreakdown(details['expenses']),
+                  _buildExpenseBreakdown((details['expenses'] as List)),
                 ],
 
                 if (details['odometer'] != null) ...[
@@ -2456,8 +2755,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               ),
             ),
           ],
-          // Hide action buttons once this row is rejected (from server OR locally)
-          if (!widget.isHistory && rowStatus != 'Rejected') ...[
+          // Also hide them if this is an Expense Claim (where activities are already final context)
+          if (!widget.isHistory && rowStatus != 'Rejected' && !(widget.task['type']?.toString() ?? '').toLowerCase().contains('claim')) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -3310,7 +3609,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
         imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
       } else {
-        const String backendBase = 'http://192.168.1.138:4567';
+        final String backendBase = ApiConstants.baseUrl;
         final String fullUrl = path.startsWith('http')
             ? path
             : '$backendBase${path.startsWith('/') ? '' : '/'}$path';

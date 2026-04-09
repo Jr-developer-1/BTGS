@@ -134,10 +134,10 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: const Color(0xFFF0FDFA),
       body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFFBB0633)),
+              child: CircularProgressIndicator(color: Color(0xFF0D9488)),
             )
           : _trip == null
           ? const Center(child: Text('Trip not found'))
@@ -188,12 +188,17 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                         final refresh = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => TripExpenseGridScreen(tripId: widget.tripId),
+                            builder: (context) =>
+                                TripExpenseGridScreen(tripId: widget.tripId),
                           ),
                         );
                         if (refresh == true) _fetchDetails();
                       },
-                      icon: const Icon(Icons.add_circle_rounded, size: 24, color: Color(0xFF0F172A)),
+                      icon: const Icon(
+                        Icons.add_circle_rounded,
+                        size: 24,
+                        color: Color(0xFF0F172A),
+                      ),
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                     ),
@@ -247,15 +252,40 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
           ),
-          padding: EdgeInsets.fromLTRB(24, 12, 24, MediaQuery.of(context).viewInsets.bottom + 24),
+          padding: EdgeInsets.fromLTRB(
+            24,
+            12,
+            24,
+            MediaQuery.of(context).viewInsets.bottom + 24,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
               const SizedBox(height: 24),
-              Text('REQUEST TOP-UP', style: GoogleFonts.plusJakartaSans(fontSize: 18, fontWeight: FontWeight.w900, color: const Color(0xFF0F172A))),
+              Text(
+                'REQUEST TOP-UP',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF0F172A),
+                ),
+              ),
               const SizedBox(height: 8),
-              Text('Request additional advance for this trip', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: const Color(0xFF64748B))),
+              Text(
+                'Request additional advance for this trip',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  color: const Color(0xFF64748B),
+                ),
+              ),
               const SizedBox(height: 24),
               TextField(
                 controller: amountController,
@@ -263,7 +293,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 decoration: InputDecoration(
                   labelText: 'Amount (₹)',
                   prefixIcon: const Icon(Icons.currency_rupee_rounded),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                 ),
@@ -274,7 +306,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 decoration: InputDecoration(
                   labelText: 'Payment Mode',
                   prefixIcon: const Icon(Icons.payment_rounded),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                 ),
@@ -289,7 +323,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 decoration: InputDecoration(
                   labelText: 'Reason for Top-up',
                   prefixIcon: const Icon(Icons.description_outlined),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   filled: true,
                   fillColor: const Color(0xFFF8FAFC),
                 ),
@@ -298,38 +334,65 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: isSubmitting ? null : () async {
-                    if (amountController.text.isEmpty || purposeController.text.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill all fields')));
-                      return;
-                    }
-                    setModalState(() => isSubmitting = true);
-                    try {
-                      await _tripService.requestAdvance(
-                        widget.tripId,
-                        double.parse(amountController.text),
-                        purposeController.text,
-                        paymentMode: paymentMode,
-                      );
-                      if (mounted) {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Top-up request submitted'), backgroundColor: Colors.green));
-                        _fetchDetails();
-                      }
-                    } catch (e) {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
-                    } finally {
-                      setModalState(() => isSubmitting = false);
-                    }
-                  },
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          if (amountController.text.isEmpty ||
+                              purposeController.text.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Please fill all fields'),
+                              ),
+                            );
+                            return;
+                          }
+                          setModalState(() => isSubmitting = true);
+                          try {
+                            await _tripService.requestAdvance(
+                              widget.tripId,
+                              double.parse(amountController.text),
+                              purposeController.text,
+                              paymentMode: paymentMode,
+                            );
+                            if (mounted) {
+                              Navigator.pop(context);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Top-up request submitted'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              _fetchDetails();
+                            }
+                          } catch (e) {
+                            if (mounted)
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                          } finally {
+                            setModalState(() => isSubmitting = false);
+                          }
+                        },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFBB0633),
+                    backgroundColor: const Color(0xFF0D9488),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                   ),
                   child: isSubmitting
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
                       : const Text('SUBMIT REQUEST'),
                 ),
               ),
@@ -502,14 +565,14 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                     ),
                     label: const Text('FINAL APPROVE'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0F172A),
+                      backgroundColor: const Color(0xFF0D9488),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
                       elevation: 4,
-                      shadowColor: const Color(0xFF0F172A).withOpacity(0.3),
+                      shadowColor: const Color(0xFF0D9488).withOpacity(0.3),
                     ),
                   ),
                 ),
@@ -620,7 +683,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                           errorBuilder: (c, e, s) => const Icon(
                             Icons.business_rounded,
                             size: 16,
-                            color: Color(0xFFBB0633),
+                            color: Color(0xFF0D9488),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -719,11 +782,11 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: const Color(0xFF0F766E),
         borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.2),
+            color: const Color(0xFF0F766E).withOpacity(0.2),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -1318,13 +1381,12 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
 
     final filteredExpenses = _selectedCategory == 'All'
         ? expenses
-        : expenses
-              .where(
-                (e) =>
-                    e['nature'].toString().toLowerCase() ==
-                    _selectedCategory.toLowerCase(),
-              )
-              .toList();
+        : expenses.where((e) {
+            final nature = (e['nature'] ?? e['category'])?.toString().toLowerCase();
+            if (_selectedCategory == 'Local Travel') return nature == 'fuel' || nature == 'local travel';
+            if (_selectedCategory == 'Incidental') return nature == 'others' || nature == 'incidental' || nature == 'miscellaneous';
+            return nature == _selectedCategory.toLowerCase();
+          }).toList();
 
     return Column(
       children: [
@@ -1387,7 +1449,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _isActionLoading ? null : () => _handleAction('Submit'),
+              onPressed: _isActionLoading
+                  ? null
+                  : () => _handleAction('Submit'),
               icon: const Icon(Icons.send_rounded, size: 18),
               label: Text(
                 'SUBMIT FOR CLAIM',
@@ -1415,7 +1479,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
   }
 
   Widget _buildExpenseCard(dynamic exp) {
-    var nature = exp['nature']?.toString() ?? 'Other';
+    var nature = (exp['nature'] ?? exp['category'])?.toString() ?? 'Other';
     final amount = exp['amount'] ?? '0';
     final date = exp['date'] ?? '';
     final remarks = exp['remarks'];
@@ -1483,6 +1547,12 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
           : (remarks ?? 'Outstation Voyage');
       mainDisplay = mode;
       subDisplay = route;
+    } else if (nature.toLowerCase() == 'food') {
+      mainDisplay = details['restaurant'] ?? nature;
+      subDisplay = date;
+    } else if (nature.toLowerCase() == 'accommodation') {
+      mainDisplay = details['hotelName'] ?? nature;
+      subDisplay = date;
     } else {
       mainDisplay = nature;
       subDisplay = date;
@@ -1906,7 +1976,8 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
               'Timing',
               '${details['time']?['boardingTime'] ?? details['boardingTime'] ?? ''} - ${details['time']?['actualTime'] ?? details['actualTime'] ?? ''}',
             ),
-            if (details['selfies'] != null && (details['selfies'] as List).isNotEmpty) ...[
+            if (details['selfies'] != null &&
+                (details['selfies'] as List).isNotEmpty) ...[
               _buildDetailRow(
                 'Selfie Proofs',
                 '${(details['selfies'] as List).length} Captured',
@@ -2319,6 +2390,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
       ),
     );
   }
+
   Widget _miniImageThumbnail(String? imagePath, String label) {
     if (imagePath == null || imagePath.isEmpty) return const SizedBox.shrink();
 
@@ -2340,14 +2412,18 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
         .replaceFirst(RegExp(r"^\[u'"), '')
         .replaceFirst(RegExp(r"^u'"), '')
         .replaceFirst(RegExp(r"^'"), '');
-    path = path.replaceFirst(RegExp(r"'\]$"), '').replaceFirst(RegExp(r"'$"), '');
+    path = path
+        .replaceFirst(RegExp(r"'\]$"), '')
+        .replaceFirst(RegExp(r"'$"), '');
 
     Widget imageWidget;
     try {
       if (path.startsWith('data:image')) {
         final base64String = path.split(',').last;
-        imageWidget =
-            Image.memory(base64Decode(base64String), fit: BoxFit.cover);
+        imageWidget = Image.memory(
+          base64Decode(base64String),
+          fit: BoxFit.cover,
+        );
       } else if (path.startsWith('/9j/') ||
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
         imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
@@ -2364,7 +2440,11 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
         );
       }
     } catch (e) {
-      imageWidget = const Icon(Icons.error_outline, size: 20, color: Colors.red);
+      imageWidget = const Icon(
+        Icons.error_outline,
+        size: 20,
+        color: Colors.red,
+      );
     }
 
     return Container(
@@ -2390,7 +2470,11 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 child: Text(
                   label,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),

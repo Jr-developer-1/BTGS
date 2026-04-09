@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
 import '../components/forensic_camera.dart';
+import '../services/master_service.dart';
 import '../services/trip_service.dart';
 
 class ExpenseFormScreen extends StatefulWidget {
@@ -35,6 +36,14 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   String? _existingEndOdoUrl;
   final picker = ImagePicker();
   final TripService _tripService = TripService();
+  final MasterService _masterService = MasterService();
+
+  // Master Data Lists
+  List<String> _masterTravelModes = [];
+  List<String> _masterMealCategories = [];
+  List<String> _masterMealTypes = [];
+  List<String> _masterIncidentalTypes = [];
+  List<String> _masterAccomTypes = [];
 
   // Controllers and State
   final _formKey = GlobalKey<FormState>();
@@ -50,7 +59,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
   String? _incidentalCategory;
   File? _incidentalImage;
-  double _fuelRate = 10.0;
+  double _fuelRate = 0.0; // Will be fetched from backend
 
   // Time and Date state
   DateTime _startDate = DateTime.now();
@@ -423,6 +432,20 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     }
   }
 
+  Future<void> _fetchAndSetFuelRate() async {
+    // Determine vehicle type from travel mode or default to 2 Wheeler
+    final vehicleType = (_travelMode == 'Car / Cab')
+        ? '4 Wheeler'
+        : '2 Wheeler';
+    final rate = await _tripService.fetchFuelRate(vehicleType);
+    if (mounted && rate != null) {
+      setState(() {
+        _fuelRate = rate;
+      });
+      _calculateTotal();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -430,6 +453,13 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     _odoEndController.addListener(() => _calculateTotal());
     _incidentalAmountController.addListener(() => _calculateTotal());
     _originController.addListener(() => setState(() {}));
+
+    // Fetch fuel rate from backend for Local Travel / Fuel categories
+    final bool isLocal =
+        widget.category == 'Local Travel' || widget.category == 'Fuel';
+    if (isLocal) {
+      _fetchAndSetFuelRate();
+    }
 
     if (widget.expenseData != null) {
       final data = widget.expenseData;
@@ -552,6 +582,31 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       }
     }
     _calculateTotal();
+    _loadMasters();
+  }
+
+  Future<void> _loadMasters() async {
+    try {
+      final results = await Future.wait([
+        _masterService.fetchMasterList('/api/travel-mode-masters/', 'mode_name', 'results'),
+        _masterService.fetchMasterList('/api/meal-category-masters/', 'category_name', 'results'),
+        _masterService.fetchMasterList('/api/meal-type-masters/', 'meal_type', 'results'),
+        _masterService.fetchMasterList('/api/incidental-type-masters/', 'expense_type', 'results'),
+        _masterService.fetchMasterList('/api/stay-type-masters/', 'stay_type', 'results'),
+      ]);
+
+      if (mounted) {
+        setState(() {
+          _masterTravelModes = results[0];
+          _masterMealCategories = results[1];
+          _masterMealTypes = results[2];
+          _masterIncidentalTypes = results[3];
+          _masterAccomTypes = results[4];
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading master data: $e');
+    }
   }
 
   void _calculateTotal() {
@@ -579,20 +634,28 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             (_existingStartOdoUrl != null && _existingStartOdoUrl!.isNotEmpty));
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         title: Text(
           widget.expenseData != null
               ? 'Edit ${widget.category}'
               : 'Add ${widget.category}',
           style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w800,
-            fontSize: 16,
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: const Color(0xFF134E4A),
+            letterSpacing: -0.5,
           ),
         ),
         backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF0F172A),
+        foregroundColor: const Color(0xFF134E4A),
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shadowColor: Colors.transparent,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: const Color(0xFFCCFBF1)),
+        ),
         actions: [
           if (widget.expenseData != null)
             IconButton(
@@ -617,7 +680,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                   subtitle: widget.tripId.toUpperCase().startsWith('TRP-')
                       ? 'Trip Local Conveyance'
                       : 'Local Conveyance Entry',
-                  color: const Color(0xFF4F46E5),
+                  color: const Color(0xFF0D9488),
                   children: [
                     if (widget.tripId.toUpperCase().startsWith('TRP-')) ...[
                       Row(
@@ -626,7 +689,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                             child: _buildDropdownMini(
                               'MODE',
                               _travelMode,
-                              ['Car / Cab', 'Bike', 'Public Transport', 'Walk'],
+                              _masterTravelModes,
                               (v) => setState(() => _travelMode = v),
                             ),
                           ),
@@ -645,8 +708,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                     ],
                     _buildLogBlock(
                       label: 'START',
-                      color: const Color(0xFF4F46E5),
-                      bgColor: const Color(0xFFF0F2FF),
+                      color: const Color(0xFF0D9488),
+                      bgColor: const Color(0xFFF0FDFA),
                       children: [
                         Row(
                           children: [
@@ -680,6 +743,10 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                           _startOdoImage,
                           () => _getImage(type: 'startOdo'),
                           existingUrl: _existingStartOdoUrl,
+                          enabled:
+                              (_startDate.day == DateTime.now().day &&
+                              _startDate.month == DateTime.now().month &&
+                              _startDate.year == DateTime.now().year),
                         ),
                       ],
                     ),
@@ -725,6 +792,10 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                               _endOdoImage,
                               () => _getImage(type: 'endOdo'),
                               existingUrl: _existingEndOdoUrl,
+                              enabled:
+                                  (_endDate.day == DateTime.now().day &&
+                                  _endDate.month == DateTime.now().month &&
+                                  _endDate.year == DateTime.now().year),
                             ),
                           ],
                         ),
@@ -737,8 +808,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
+                        color: const Color(0xFFF0FDFA),
                         borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFCCFBF1)),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -748,7 +820,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 10,
                               fontWeight: FontWeight.w800,
-                              color: const Color(0xFF4F46E5),
+                              color: const Color(0xFF0D9488),
                             ),
                           ),
                           TextButton.icon(
@@ -790,7 +862,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                         ),
                       ),
                       style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFFF59E0B),
+                        foregroundColor: const Color(0xFF0D9488),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 24,
                           vertical: 12,
@@ -798,7 +870,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                           side: const BorderSide(
-                            color: Color(0xFFF59E0B),
+                            color: Color(0xFF0D9488),
                             width: 1.5,
                           ),
                         ),
@@ -808,7 +880,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                 else
                   _buildWebCard(
                     title: 'INCIDENTAL EXPENSES (OPTIONAL)',
-                    color: const Color(0xFFF59E0B),
+                    color: const Color(0xFF0F766E),
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -898,12 +970,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                     ),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+                        colors: [Color(0xFF134E4A), Color(0xFF0D9488)],
                       ),
                       borderRadius: BorderRadius.circular(30),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF4F46E5).withOpacity(0.3),
+                          color: const Color(0xFF134E4A).withOpacity(0.25),
                           blurRadius: 12,
                           offset: const Offset(0, 4),
                         ),
@@ -936,7 +1008,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
               ] else if (widget.category == 'Food') ...[
                 _buildWebCard(
                   title: 'MEAL TRANSACTION DETAILS',
-                  color: const Color(0xFFEC4899),
+                  color: const Color(0xFF0D9488),
                   children: [
                     Row(
                       children: [
@@ -964,16 +1036,15 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                           child: _buildDropdownMini(
                             'CATEGORY',
                             _mealCategory,
-                            ['Breakfast', 'Lunch', 'Dinner', 'Teas/Snacks'],
+                            _masterMealCategories,
                             (v) => setState(() => _mealCategory = v),
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: _buildDropdownMini('TYPE', _mealType, [
-                            'Veg',
-                            'Non-Veg',
-                          ], (v) => setState(() => _mealType = v)),
+                          child: _buildDropdownMini('TYPE', _mealType, 
+                            _masterMealTypes, 
+                            (v) => setState(() => _mealType = v)),
                         ),
                       ],
                     ),
@@ -1021,12 +1092,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
               ] else if (widget.category == 'Accommodation') ...[
                 _buildWebCard(
                   title: 'STAY & LODGING LOGS',
-                  color: const Color(0xFF0EA5E9),
+                color: const Color(0xFF0EA5E9),
                   children: [
                     _buildDropdownMini(
                       'ACCOMMODATION TYPE',
                       _accomType,
-                      ['Hotel', 'Guest House', 'Self / Relations'],
+                      _masterAccomTypes,
                       (v) => setState(() => _accomType = v),
                     ),
                     const SizedBox(height: 16),
@@ -1095,12 +1166,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                   widget.category == 'Travel') ...[
                 _buildWebCard(
                   title: 'TRAVEL BOOKING DETAILS',
-                  color: const Color(0xFF8B5CF6),
+                  color: const Color(0xFF0F766E),
                   children: [
                     _buildLogBlock(
                       label: 'BOOKING INFO',
-                      color: const Color(0xFF8B5CF6),
-                      bgColor: const Color(0xFFF5F3FF),
+                      color: const Color(0xFF0F766E),
+                      bgColor: const Color(0xFFF0FDFA),
                       children: [
                         Row(
                           children: [
@@ -1108,13 +1179,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                               child: _buildDropdownMini(
                                 'MODE',
                                 _travelMode,
-                                [
-                                  'Flight',
-                                  'Train',
-                                  'Intercity Bus',
-                                  'Intercity Cab',
-                                  'Others',
-                                ],
+                                _masterTravelModes,
                                 (v) => setState(() => _travelMode = v),
                               ),
                             ),
@@ -1275,13 +1340,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                     _buildDropdownMini(
                       'EXPENSE TYPE',
                       _incidentalCategory,
-                      [
-                        'Parking Charges',
-                        'Toll',
-                        'Repairs',
-                        'Porter Charges',
-                        'Other',
-                      ],
+                      _masterIncidentalTypes,
                       (v) => setState(() => _incidentalCategory = v),
                     ),
                     const SizedBox(height: 16),
@@ -1360,7 +1419,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                 child: ElevatedButton(
                   onPressed: _isProcessing ? null : _submitEntry,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFBB0633),
+                    backgroundColor: const Color(0xFF134E4A),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
@@ -1399,12 +1458,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFCCFBF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 10,
+            color: const Color(0xFF0D9488).withOpacity(0.04),
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1568,6 +1627,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     String? prefix,
     int maxLines = 1,
     TextInputType? keyboardType,
+    bool enabled = true,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1583,17 +1643,19 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         const SizedBox(height: 4),
         Container(
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
+            color: enabled ? const Color(0xFFF0FDFA) : const Color(0xFFCCFBF1),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: enabled ? const Color(0xFFCCFBF1) : const Color(0xFFE2E8F0)),
           ),
           child: TextField(
             controller: controller,
             maxLines: maxLines,
             keyboardType: keyboardType,
+            enabled: enabled,
             style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
               fontWeight: FontWeight.w600,
+              color: enabled ? Colors.black : const Color(0xFF94A3B8),
             ),
             decoration: InputDecoration(
               hintText: hint,
@@ -1640,9 +1702,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: const Color(0xFFF0FDFA),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1743,9 +1805,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
+            color: const Color(0xFFF0FDFA),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: const Color(0xFFCCFBF1)),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
@@ -1778,6 +1840,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     File? image,
     VoidCallback onCapture, {
     String? existingUrl,
+    bool enabled = true,
   }) {
     bool hasImage =
         image != null || (existingUrl != null && existingUrl.isNotEmpty);
@@ -1800,17 +1863,23 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
               child: Container(
                 height: 38,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: enabled ? Colors.white : const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(
+                    color: enabled
+                        ? const Color(0xFFE2E8F0)
+                        : const Color(0xFFCBD5E1),
+                  ),
                 ),
                 child: TextField(
                   controller: controller,
                   keyboardType: TextInputType.number,
+                  enabled: enabled,
                   onChanged: (v) => _calculateTotal(),
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
+                    color: enabled ? Colors.black : const Color(0xFF94A3B8),
                   ),
                   decoration: const InputDecoration(
                     hintText: '0',
@@ -1825,18 +1894,22 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             ),
             const SizedBox(width: 8),
             InkWell(
-              onTap: hasImage ? null : onCapture,
+              onTap: (hasImage || !enabled) ? null : onCapture,
               child: Container(
                 height: 38,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
                   color: hasImage
                       ? const Color(0xFFDCFCE7)
-                      : const Color(0xFFF1F5F9),
+                      : !enabled
+                      ? const Color(0xFFF1F5F9)
+                      : const Color(0xFFF8FAFC),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: hasImage
-                        ? const Color(0xFFBBF7D0)
+                        ? const Color(0xFF16A34A).withOpacity(0.3)
+                        : !enabled
+                        ? const Color(0xFFCBD5E1)
                         : const Color(0xFFE2E8F0),
                   ),
                 ),
@@ -1899,9 +1972,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
+              color: const Color(0xFFF0FDFA),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
             child: image != null
                 ? Row(
@@ -1969,26 +2042,32 @@ class SelectCategoryScreen extends StatelessWidget {
         : ['Local Travel', 'Incidental', 'Others'];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         leading: IconButton(
           icon: const Icon(
             Icons.arrow_back_ios_new_rounded,
-            color: Colors.black,
+            color: Color(0xFF0D9488),
           ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           'Select Category',
           style: GoogleFonts.plusJakartaSans(
-            color: Colors.black,
-            fontWeight: FontWeight.w800,
-            fontSize: 16,
+            color: const Color(0xFF134E4A),
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            letterSpacing: -0.5,
           ),
         ),
         centerTitle: true,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: const Color(0xFFCCFBF1)),
+        ),
       ),
       body: GridView.builder(
         padding: const EdgeInsets.all(20),
@@ -2066,14 +2145,14 @@ class SelectCategoryScreen extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 40, color: const Color(0xFF0F172A)),
+            Icon(icon, size: 40, color: const Color(0xFF0D9488)),
             const SizedBox(height: 12),
             Text(
               title,
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF0F172A),
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF134E4A),
               ),
             ),
           ],

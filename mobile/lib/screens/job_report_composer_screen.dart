@@ -301,7 +301,11 @@ class _JobReportComposerScreenState extends State<JobReportComposerScreen> {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
                   image: DecorationImage(
-                    image: MemoryImage(base64Decode(_attachments[index])),
+                    image: MemoryImage(
+                      base64Decode(_attachments[index].contains(',')
+                          ? _attachments[index].split(',').last
+                          : _attachments[index]),
+                    ),
                     fit: BoxFit.cover,
                   ),
                   border: Border.all(color: const Color(0xFFE2E8F0)),

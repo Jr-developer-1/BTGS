@@ -274,9 +274,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(
-          0xFFF3F4F6,
-        ), // Slightly darker background to make white cards POP
+        backgroundColor: const Color(0xFFF0FDFA),
         body: IndexedStack(
           index: _currentIndex,
           children: [
@@ -327,7 +325,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                           color:
                               (_frsVerifiedThisSession
                                       ? const Color(0xFF10B981)
-                                      : const Color(0xFFBB0633))
+                                      : const Color(0xFF0D9488))
                                   .withOpacity(0.1),
                           shape: BoxShape.circle,
                         ),
@@ -337,7 +335,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                               : Icons.face_unlock_rounded,
                           color: _frsVerifiedThisSession
                               ? const Color(0xFF10B981)
-                              : const Color(0xFFBB0633),
+                              : const Color(0xFF0D9488),
                           size: 24,
                         ),
                       ),
@@ -373,7 +371,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                         ElevatedButton(
                           onPressed: _performFRS,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFBB0633),
+                            backgroundColor: const Color(0xFF0D9488),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(
                               horizontal: 16,
@@ -414,6 +412,18 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
       color: const Color(0xFFBB0633),
       child: Stack(
         children: [
+          // Ambient background gradient for a "Designed" light feel
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [const Color(0xFFFFFFFF), const Color(0xFFF0FDFA)],
+                ),
+              ),
+            ),
+          ),
           // Executive Mesh Blobs (Ultra-soft atmospheric layers)
           Positioned(
             top: -150,
@@ -424,7 +434,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFFA9052E).withOpacity(0.04),
+                    const Color(0xFF0D9488).withOpacity(0.04),
                     Colors.transparent,
                   ],
                 ),
@@ -541,7 +551,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Hello, ${widget.username}!', // Full username
+                  'Hello.., ${widget.username}!', // Full username
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 28,
                     fontWeight: FontWeight.w900,
@@ -574,12 +584,12 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFBB0633).withOpacity(0.1),
+                      color: const Color(0xFF0D9488).withOpacity(0.1),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.face_retouching_natural,
-                      color: Color(0xFFBB0633),
+                      color: Color(0xFF0D9488),
                       size: 28,
                     ),
                   ),
@@ -615,7 +625,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               child: _buildHeaderBtn(
                 'Manage Guest Houses',
                 Icons.hotel,
-                const Color(0xFFBB0633),
+                const Color(0xFF0D9488),
                 () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const GuestHouseScreen()),
@@ -627,7 +637,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               child: _buildHeaderBtn(
                 'Manage Fleet',
                 Icons.directions_car,
-                const Color(0xFFBB0633),
+                const Color(0xFF0D9488),
                 () {}, // Fleet screen coming soon
               ),
             )
@@ -658,7 +668,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               child: _buildHeaderBtn(
                 'New Request',
                 Icons.add_circle_outline,
-                const Color(0xFFBB0633),
+                const Color(0xFF0D9488),
                 () => Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const MyTripsScreen()),
@@ -685,11 +695,11 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
           decoration: BoxDecoration(
-            color: const Color(0xFF0F1E2A), // Match web's primary action color
+            color: const Color(0xFF134E4A), // Deep Teal
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF0F1E2A).withOpacity(0.2),
+                color: const Color(0xFF134E4A).withOpacity(0.2),
                 blurRadius: 12,
                 offset: const Offset(0, 6),
               ),
@@ -754,7 +764,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               crossAxisCount: 2,
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
-              childAspectRatio: 1.4, // Making cards taller to prevent overflow
+              childAspectRatio: 1.15, // Increased height to prevent overflow
             ),
             itemCount: kpis.length,
             itemBuilder: (context, index) {
@@ -768,9 +778,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                     end: Alignment.bottomRight,
                     colors: [
                       color,
-                      color
-                          .withBlue(color.blue + 20)
-                          .withRed(color.red - 20), // Subtle gradient shift
+                      color.withBlue(color.blue + 20).withRed(color.red - 20),
                     ],
                   ),
                   borderRadius: BorderRadius.circular(24),
@@ -785,7 +793,6 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                 child: Stack(
                   clipBehavior: Clip.antiAlias,
                   children: [
-                    // Subtle light overlay for glass effect
                     Positioned(
                       top: -20,
                       left: -20,
@@ -799,10 +806,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18.0,
-                        vertical: 14.0,
-                      ), // Reduced vertical padding
+                      padding: const EdgeInsets.all(16.0),
                       child: Row(
                         children: [
                           Expanded(
@@ -821,15 +825,18 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 6),
                                 Text(
                                   (kpi['value'] ?? '').toString(),
                                   style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 24,
+                                    fontSize:
+                                        22, // Slightly smaller to fit better
                                     fontWeight: FontWeight.w900,
                                     color: Colors.white,
                                     letterSpacing: -1.0,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
@@ -839,6 +846,8 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                                     fontWeight: FontWeight.w700,
                                     color: Colors.white.withOpacity(0.95),
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ],
                             ),
@@ -901,7 +910,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                   style: GoogleFonts.inter(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFFBB0633),
+                    color: const Color(0xFF0D9488),
                   ),
                 ),
               ),
@@ -1023,19 +1032,18 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   }
 
   Widget _buildWalletDisplay() {
-    // show only the advance balance (wallet removed per request)
     final advance = _dashboardStats?['advance_balance'] ?? 0.0;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
+        color: Colors.white.withOpacity(0.12),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
+        border: Border.all(color: Colors.white.withOpacity(0.15)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1043,17 +1051,30 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.account_balance_wallet_rounded,
-              color: Colors.white,
-              size: 16,
-            ),
+          Stack(
+            children: [
+              const Icon(
+                Icons.account_balance_wallet_rounded,
+                color: Colors.white,
+                size: 18,
+              ),
+              Positioned(
+                right: 0,
+                top: 0,
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: Colors.amber,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFF0D9488),
+                      width: 1,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 10),
           Column(
@@ -1062,19 +1083,20 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
             children: [
               Text(
                 'ADVANCE',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white.withOpacity(0.9),
-                  letterSpacing: 0.5,
+                style: GoogleFonts.inter(
+                  fontSize: 7,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white.withOpacity(0.7),
+                  letterSpacing: 0.8,
                 ),
               ),
               Text(
                 "₹${NumberFormat('#,###').format(advance)}",
                 style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
+                  fontSize: 15,
                   fontWeight: FontWeight.w900,
                   color: Colors.white,
+                  letterSpacing: -0.2,
                 ),
               ),
             ],
@@ -1088,26 +1110,68 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFFA9052E),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF134E4A), // Deep Teal
+            Color(0xFF0F766E), // Teal Dark
+            Color(0xFF0D9488), // Modern Teal
+          ],
+          stops: [0.0, 0.5, 1.0],
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: const Color(0xFF0D9488).withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
+          // Decorative Orbits
           Positioned(
-            right: 0,
-            top: 0,
-            bottom: 0,
+            top: -50,
+            right: -50,
             child: Container(
-              width: 240,
+              width: 200,
+              height: 200,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.05),
+                  width: 1,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: -80,
+            right: -80,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.03),
+                  width: 1,
+                ),
+              ),
+            ),
+          ),
+
+          // Original Mesh Element (Polished)
+          Positioned(
+            right: -40,
+            top: -20,
+            bottom: -20,
+            child: Container(
+              width: 220,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(160),
                   bottomLeft: Radius.circular(160),
@@ -1115,37 +1179,44 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               ),
             ),
           ),
+
           Padding(
             padding: EdgeInsets.fromLTRB(
               20,
-              24 + MediaQuery.of(context).padding.top,
+              16 + MediaQuery.of(context).padding.top,
               20,
               24,
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
+                // Premium Logo Container
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(3),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 15,
-                        offset: const Offset(0, 5),
-                      ),
-                    ],
+                    // gradient: LinearGradient(
+                    //   colors: [
+                    //     Colors.white.withOpacity(0.5),
+                    //     Colors.white.withOpacity(0.1),
+                    //   ],
+                    // ),
+                    shape: BoxShape.circle,
                   ),
-                  child: Image.asset(
-                    'assets/logo.png',
-                    height: 42,
-                    width: 42,
-                    errorBuilder: (context, error, stackTrace) => const Icon(
-                      Icons.public_rounded,
-                      color: Color(0xFFBB0633),
-                      size: 32,
+                  child: Container(
+                    // padding: const EdgeInsets.all(10),
+                    // decoration: const BoxDecoration(
+                    //   color: Colors.white,
+                    //   shape: BoxShape.circle,
+                    // ),
+                    child: Image.asset(
+                      'assets/header-icon.png',
+                      height: 54,
+                      width: 54,
+                      errorBuilder: (context, error, stackTrace) => const Icon(
+                        Icons.insights_rounded,
+                        color: Colors.white,
+                        size: 24,
+                      ),
                     ),
                   ),
                 ),
@@ -1155,21 +1226,35 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        'BTGS',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: -1.0,
-                        ),
+                      Row(
+                        children: [
+                          Text(
+                            'BTGS',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF4ADE80), // Pulse Green
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ],
                       ),
                       Text(
-                        'Governance Hub',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12,
+                        'Governance Systems',
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: Colors.white.withOpacity(0.8),
+                          color: Colors.white.withOpacity(0.7),
+                          letterSpacing: 1.0,
                         ),
                       ),
                     ],
@@ -1199,13 +1284,13 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
       ),
       child: NavigationBarTheme(
         data: NavigationBarThemeData(
-          indicatorColor: const Color(0xFFBB0633).withOpacity(0.1),
+          indicatorColor: const Color(0xFF0D9488).withOpacity(0.1),
           labelTextStyle: MaterialStateProperty.resolveWith((states) {
             if (states.contains(MaterialState.selected)) {
               return GoogleFonts.inter(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFFBB0633),
+                color: const Color(0xFF0D9488),
               );
             }
             return GoogleFonts.inter(
@@ -1216,7 +1301,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
           }),
           iconTheme: MaterialStateProperty.resolveWith((states) {
             if (states.contains(MaterialState.selected)) {
-              return const IconThemeData(color: Color(0xFFBB0633), size: 26);
+              return const IconThemeData(color: Color(0xFF0D9488), size: 26);
             }
             return const IconThemeData(color: Color(0xFF64748B), size: 24);
           }),
@@ -1247,7 +1332,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFBB0633),
+                          color: const Color(0xFF0D9488),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 2),
                         ),
@@ -1278,7 +1363,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFBB0633),
+                          color: const Color(0xFF0D9488),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.white, width: 2),
                         ),
@@ -1342,12 +1427,12 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFBB0633).withOpacity(0.1),
+                    color: const Color(0xFF0D9488).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: const Icon(
                     Icons.person_rounded,
-                    color: Color(0xFFBB0633),
+                    color: Color(0xFF0D9488),
                     size: 18,
                   ),
                 ),
@@ -1429,13 +1514,13 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   Color _getKpiColor(String colorName) {
     switch (colorName) {
       case 'orange':
-        return const Color(0xFF8B5CF6); // Requested Purple
+        return const Color(0xFF6D28D9); // Requested Purple
       case 'red':
         return const Color(0xFF1E3A8A); // Requested Navy Blue
       case 'magenta':
-        return const Color(0xFFDC2626); // Requested Red
+        return const Color(0xFFB91C1C); // Requested Red
       case 'yellow':
-        return const Color(0xFFF97316); // Requested Orange
+        return const Color(0xFFD97706); // Requested Orange
       // Fallbacks
       case 'purple':
         return const Color(0xFF8B5CF6);

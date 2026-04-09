@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/trip_model.dart';
 import '../services/trip_service.dart';
+import '../services/master_data_service.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart';
@@ -41,6 +42,8 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
   bool _isLocating = false;
   late Trip _tripData;
   final TripService _tripService = TripService();
+  final MasterDataService _masterDataService = MasterDataService();
+  Map<String, dynamic> _masters = {};
 
   // Edit Mode State
   bool _isEditing = false;
@@ -109,16 +112,6 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
   String _tollType = 'Toll';
   String _bookingType = 'Self Booked';
 
-  final List<String> _mealCategories = [
-    'Self Meal',
-    'Working Meal',
-    'Client Hosted',
-  ];
-  final Map<String, List<String>> _mealSubTypes = {
-    'Self Meal': ['Breakfast', 'Lunch', 'Dinner', 'Snacks', 'Coffee', 'Tea'],
-    'Working Meal': ['Working Breakfast', 'Working Lunch', 'Official Dinner'],
-    'Client Hosted': ['Hosted by Employee', 'Hosted by Client'],
-  };
   String _selectedClass = 'Economy';
   bool _mealIncluded = false;
   bool _excessBaggage = false;
@@ -145,31 +138,14 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
   final _ticketNoController = TextEditingController();
   final _rentalChargeController = TextEditingController();
 
-  final List<String> _travelModes = [
-    'Flight',
-    'Train',
-    'Intercity Bus',
-    'Intercity Cab',
-    'Intercity Car',
-  ];
-  final List<String> _bookedByOptions = ['Self Booked', 'Company Booked'];
-  final List<String> _localTravelModes = [
-    'Car / Cab',
-    'Bike',
-    'Public Transport',
-  ];
-  final Map<String, List<String>> _localSubTypes = {
-    'Car / Cab': [
-      'Own Car',
-      'Company Car',
-      'Rented Car (With Driver)',
-      'Self Drive Rental',
-      'Ride Hailing',
-      'Pool Vehicle',
-    ],
-    'Bike': ['Own Bike', 'Rental Bike', 'Ride Bike'],
-    'Public Transport': ['Auto', 'Metro', 'Local Bus'],
-  };
+  final List<String> _travelModes = [];
+  final List<String> _bookedByOptions = [];
+  final List<String> _localTravelModes = [];
+  Map<String, List<String>> _localSubTypes = {};
+  final List<String> _stayTypes = [];
+  final List<String> _roomTypes = [];
+  final List<String> _mealCategories = [];
+  final Map<String, List<String>> _mealSubTypes = {};
 
   final List<Map<String, String>> _categories = [
     {'id': 'Travel', 'label': 'Long Distance Travel'},
@@ -201,6 +177,7 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
     } else {
       _selectedCategory = _mapInitialCategory(widget.initialCategory) ?? 'Food';
     }
+    _loadMasterData();
     _refreshTripData();
     _cleanupExpiredDrafts();
 
@@ -210,6 +187,55 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
         _editExpense(widget.initialExpense!);
       });
     }
+  }
+
+  Future<void> _loadMasterData() async {
+    try {
+      final masters = await _masterDataService.fetchMasters();
+      if (mounted) {
+        setState(() {
+          _masters = masters;
+          
+          // Populate lists from fetched masters
+          _travelModes.clear();
+          _travelModes.addAll((masters['travelModes'] as List<dynamic>? ?? []).cast<String>());
+          
+          _bookedByOptions.clear();
+          _bookedByOptions.addAll((masters['bookingTypes'] as List<dynamic>? ?? []).cast<String>());
+          
+          _localTravelModes.clear();
+          _localTravelModes.addAll((masters['localTravelModes'] as List<dynamic>? ?? []).cast<String>());
+          
+          _stayTypes.clear();
+          _stayTypes.addAll((masters['stayTypes'] as List<dynamic>? ?? []).cast<String>());
+          
+          _roomTypes.clear();
+          _roomTypes.addAll((masters['roomTypes'] as List<dynamic>? ?? []).cast<String>());
+          
+          _mealCategories.clear();
+          _mealCategories.addAll((masters['mealCategories'] as List<dynamic>? ?? []).cast<String>());
+          
+          // Initialize meal subtypes
+          _initializeMealSubTypes();
+        });
+      }
+    } catch (e) {
+      LoggerService.log('Error loading master data: $e', isError: true);
+      // Fallback to defaults already set
+    }
+  }
+
+  void _initializeMealSubTypes() {
+    _mealSubTypes.clear();
+    _mealSubTypes['Self Meal'] = (
+      _masters['mealTypes'] as List<dynamic>? ?? []
+    ).cast<String>().toList();
+    _mealSubTypes['Working Meal'] = [
+      'Working Breakfast', 'Working Lunch', 'Official Dinner'
+    ];
+    _mealSubTypes['Client Hosted'] = [
+      'Hosted by Employee', 'Hosted by Client'
+    ];
   }
 
   String? _mapInitialCategory(String? cat) {
@@ -3477,20 +3503,10 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
                       flex: 3,
                       child: DropdownButtonFormField<String>(
                         isExpanded: true,
-                        value:
-                            [
-                              'Parking Charges',
-                              'Toll Charges',
-                              'Fuel (Own Vehicle)',
-                              'Luggage Charges',
-                              'Porter Charges',
-                              'Internet / WiFi',
-                              'Others',
-                            ].contains(_tollType)
+                        value: (_masters['incidentalTypes'] as List<dynamic>? ?? []).contains(_tollType)
                             ? _tollType
-                            : 'Parking Charges',
-                        items:
-                            [
+                            : null,
+                        items: (_masters['incidentalTypes'] as List<dynamic>? ?? [
                                   'Parking Charges',
                                   'Toll Charges',
                                   'Fuel (Own Vehicle)',
@@ -3498,12 +3514,11 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
                                   'Porter Charges',
                                   'Internet / WiFi',
                                   'Others',
-                                ]
-                                .map(
+                                ]).map(
                                   (m) => DropdownMenuItem(
-                                    value: m,
+                                    value: m.toString(),
                                     child: Text(
-                                      m,
+                                      m.toString(),
                                       style: GoogleFonts.inter(
                                         fontWeight: FontWeight.w700,
                                         fontSize: 13,

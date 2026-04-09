@@ -41,80 +41,194 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
   void _buildDynamicTimelineSteps() {
     if (trip == null) return;
 
-    final List<dynamic> recordedEvents = trip!.lifecycleEvents;
+    final recordedEvents = trip!.lifecycleEvents;
+    final isClosed = ['Approved', 'Settled', 'Rejected', 'Completed'].contains(trip!.status);
+    final approvalChain = trip!.approvalChain ?? [];
+    
     List<Map<String, dynamic>> builtSteps = [];
-    String extractedForwardTo = '';
 
-    final colors = [
-      const Color(0xFFF59E0B), // Orange
-      const Color(0xFFEF4444), // Red
-      const Color(0xFFEC4899), // Pink
-      const Color(0xFF84CC16), // Lime
-      const Color(0xFF3B82F6), // Blue
-    ];
+    // 1. Request Sent
+    final dynamic initEvent = recordedEvents.isNotEmpty ? recordedEvents[0] : null;
+    String requestDate = 'Unknown';
+    if (initEvent != null && initEvent['date'] != null) {
+      try {
+        requestDate = initEvent['date'].toString().split(' ').first;
+      } catch (e) {
+        requestDate = initEvent['date'].toString();
+      }
+    }
 
-    for (int i = 0; i < recordedEvents.length; i++) {
-        final event = recordedEvents[i] as Map<String, dynamic>;
-        final String desc = (event['description'] ?? '').trim();
-        String smallLabel = event['title'] ?? 'Action';
-        String capsuleText = event['date'] ?? 'Mar 24, 2026';
+    builtSteps.add({
+      'smallLabel': 'Request Sent',
+      'capsuleText': requestDate,
+      'status': 'completed',
+      'icon': Icons.description_rounded,
+      'color': const Color(0xFFF59E0B),
+      'role': 'Request Initiator',
+      'title': 'Request Sent',
+    });
+
+    // 2. Approval Chain
+    if (approvalChain.isNotEmpty) {
+      for (int i = 0; i < approvalChain.length; i++) {
+        var person = approvalChain[i];
+        final name = (person['name'] ?? '').toString();
+        final nameLower = name.toLowerCase();
         
-        if (i == 0) {
-            smallLabel = 'Request Sent';
-        } else {
-            if (desc.toLowerCase().contains('approved by')) {
-                smallLabel = desc; // "approved by Demo SPM"
-            } else if (desc.toLowerCase().contains('forwarded to')) {
-                final parts = desc.split(RegExp(r'forwarded to', caseSensitive: false));
-                smallLabel = 'Forwarded to ${parts[1].trim()}';
-                extractedForwardTo = parts[1].trim();
-            } else if (desc.toLowerCase().contains('management')) {
-                smallLabel = 'Management Approved';
-            }
+        dynamic approvalEvent;
+        for (var e in recordedEvents) {
+          final tLower = (e['title'] ?? '').toString().toLowerCase();
+          final dLower = (e['description'] ?? '').toString().toLowerCase();
+          if (tLower.contains('approved by $nameLower') || dLower.contains('approved by $nameLower')) {
+            approvalEvent = e;
+            break;
+          }
+        }
+
+        final isCurrentApprover = (trip!.currentApproverName ?? '').toString().toLowerCase() == nameLower;
+
+        String status = 'pending';
+        String date = 'Pending';
+
+        if (approvalEvent != null) {
+          status = 'completed';
+          try {
+             date = approvalEvent['date'].toString().split(' ').first;
+          } catch(e) {
+             date = approvalEvent['date'] ?? 'Completed';
+          }
+        } else if (isCurrentApprover && !isClosed) {
+          status = 'current';
+          date = 'Action Required';
         }
 
         builtSteps.add({
-            'smallLabel': smallLabel,
-            'capsuleText': capsuleText,
-            'status': 'completed',
-            'icon': _getIconForTitle(smallLabel),
-            'color': colors[i % colors.length],
+          'smallLabel': name,
+          'capsuleText': date,
+          'status': status,
+          'icon': person['role'] == 'HR' ? Icons.security_rounded : Icons.how_to_reg_rounded,
+          'color': _getNodeColor(i + 1),
+          'role': person['role'] == 'HR' ? 'HR Verification' : 'Manager Approval',
+          'title': name,
         });
+      }
+    } else {
+      // Legacy Fallback
+      for (int i = 1; i < recordedEvents.length; i++) {
+        final event = recordedEvents[i];
+        final title = (event['title'] ?? '').toString();
+        final titleLower = title.toLowerCase();
+
+        String role = 'Manager Approval';
+        String eventStatus = 'completed';
+        String displayTitle = title.isEmpty ? 'Approved' : title;
+
+        if (titleLower.contains('rejected') || (event['description']?.toString().toLowerCase().contains('rejected by') ?? false)) {
+          role = 'Rejected';
+          eventStatus = 'rejected';
+        } else if (titleLower.startsWith('hr approved by') || titleLower.contains('hr verification') || titleLower.contains('ticket booking')) {
+          role = 'HR Verification';
+          final hrMatch = RegExp(r'hr approved by (.+)', caseSensitive: false).firstMatch(titleLower);
+          displayTitle = hrMatch != null ? 'HR Approved by ${hrMatch.group(1)!.trim()}' : 'HR Verified';
+        } else if (titleLower.startsWith('forwarded to')) {
+          role = 'Escalated';
+          displayTitle = title;
+        } else if (titleLower.startsWith('approved by')) {
+          role = 'Manager Approval';
+          displayTitle = title;
+        } else if (titleLower.contains('management approval')) {
+          final nameMatch = RegExp(r'approved by ([A-Za-z\s.]+?)(?:\.|,|and|$)', caseSensitive: false).firstMatch(event['description']?.toString() ?? '');
+          final approverName = nameMatch != null ? nameMatch.group(1)!.trim() : '';
+          role = 'Manager Approval';
+          displayTitle = approverName.isNotEmpty ? 'Approved by $approverName' : 'Manager Approved';
+        }
+
+        String dt = 'Completed';
+        if (event['date'] != null) {
+          dt = event['date'].split(' ').first;
+        }
+
+        builtSteps.add({
+          'smallLabel': displayTitle,
+          'capsuleText': dt,
+          'status': eventStatus,
+          'icon': _getIconForRole(role),
+          'color': _getNodeColor(i),
+          'role': role,
+          'title': displayTitle,
+        });
+      }
+
+      if (!isClosed) {
+        builtSteps.add({
+          'smallLabel': trip!.currentApproverName ?? 'Approving Manager',
+          'capsuleText': 'Action Required',
+          'status': 'current',
+          'icon': Icons.access_time_rounded,
+          'color': const Color(0xFF94A3B8),
+          'role': 'Manager Approval',
+          'title': trip!.currentApproverName ?? 'Approving Manager',
+        });
+      }
     }
 
-    final bool isClosed = ['Approved', 'Settled', 'Rejected', 'Success'].contains(trip!.status);
-    if (!isClosed) {
-        final String approverName = extractedForwardTo.isNotEmpty 
-            ? extractedForwardTo 
-            : (trip!.currentApproverName ?? 'Approving Manager');
-            
-        builtSteps.add({
-            'smallLabel': 'Pending Action',
-            'capsuleText': approverName,
-            'status': 'current',
-            'icon': Icons.access_time_rounded,
-            'color': const Color(0xFF94A3B8),
-        });
-    } else if (trip!.status == 'Approved' || trip!.status == 'Success') {
-         builtSteps.add({
-            'smallLabel': 'Approved by Everyone',
-            'capsuleText': 'Success',
-            'status': 'completed',
-            'icon': Icons.check_circle_rounded,
-            'color': const Color(0xFF3B82F6),
-        });
+    // Final Step
+    if (trip!.status == 'Approved' || trip!.status == 'Settled' || trip!.status == 'Completed') {
+      builtSteps.add({
+        'smallLabel': 'Final Approval',
+        'capsuleText': 'Success',
+        'status': 'completed',
+        'icon': Icons.check_circle_rounded,
+        'color': const Color(0xFF3B82F6),
+        'role': 'Success',
+        'title': 'Final Approval',
+      });
+    } else if (trip!.status == 'Rejected') {
+      builtSteps.add({
+        'smallLabel': 'Rejected',
+        'capsuleText': 'Rejected',
+        'status': 'rejected',
+        'icon': Icons.cancel_rounded,
+        'color': Colors.red,
+        'role': 'Rejected',
+        'title': 'Rejected',
+      });
+    } else {
+      builtSteps.add({
+        'smallLabel': 'Final Approval',
+        'capsuleText': 'Endpoint',
+        'status': 'pending',
+        'icon': Icons.check_circle_rounded,
+        'color': Colors.grey,
+        'role': 'Endpoint',
+        'title': 'Final Approval',
+      });
     }
 
     setState(() => timelineSteps = builtSteps);
   }
 
-  IconData _getIconForTitle(String title) {
-    final lower = title.toLowerCase();
-    if (lower.contains('request')) return Icons.description_rounded;
-    if (lower.contains('management')) return Icons.verified_user_rounded;
-    if (lower.contains('everyone')) return Icons.stars_rounded;
-    return Icons.check_circle_rounded;
+  Color _getNodeColor(int index) {
+    final colors = [
+      const Color(0xFFF59E0B),
+      const Color(0xFF4F46E5),
+      const Color(0xFFEC4899),
+      const Color(0xFF10B981),
+      const Color(0xFF3B82F6),
+      const Color(0xFF14B8A6),
+      const Color(0xFF8B5CF6),
+      const Color(0xFFF97316),
+    ];
+    return colors[index % colors.length];
   }
+
+  IconData _getIconForRole(String role) {
+    if (role == 'HR Verification') return Icons.security_rounded;
+    if (role == 'Rejected') return Icons.cancel_rounded;
+    return Icons.how_to_reg_rounded;
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -139,8 +253,36 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           children: [
             _buildProfessionalHeader(),
             const SizedBox(height: 20),
-            if (trip!.status != 'Approved' && trip!.status != 'Success' && trip!.status != 'Settled')
+            if (trip!.status != 'Approved' && trip!.status != 'Success' && trip!.status != 'Settled' && trip!.status != 'Rejected' && trip!.status != 'Completed')
                 _buildActionBox(),
+            
+            if (trip!.status == 'Rejected' && trip!.rejectionReason != null && trip!.rejectionReason!.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Rejection Reason', style: GoogleFonts.plusJakartaSans(color: const Color(0xFFDC2626), fontWeight: FontWeight.w700, fontSize: 13)),
+                          const SizedBox(height: 4),
+                          Text(trip!.rejectionReason!, style: GoogleFonts.plusJakartaSans(color: const Color(0xFF7F1D1D), fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             
             const SizedBox(height: 32),
 
@@ -301,7 +443,6 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
     return Column(
       crossAxisAlignment: crossAlign,
       children: [
-        // Colored capsule (date / status)
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
@@ -309,13 +450,26 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
             borderRadius: BorderRadius.circular(10),
             boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
           ),
-          child: Text(
-            step['capsuleText'],
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-            ),
+          child: Column(
+            children: [
+              Text(
+                step['role'] ?? '',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 8,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white.withOpacity(0.9),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                step['capsuleText'],
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 8),

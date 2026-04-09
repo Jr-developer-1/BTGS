@@ -151,6 +151,35 @@ class LocationTrackingService {
     }
   }
 
+  static Future<bool> ensureLocationAccess() async {
+    bool enabled = await Geolocator.isLocationServiceEnabled();
+
+    if (!enabled) {
+      await Geolocator.openLocationSettings();
+      await Future.delayed(const Duration(seconds: 2));
+      enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        return false;
+      }
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied) {
+      return false;
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      await Geolocator.openAppSettings();
+      return false;
+    }
+
+    return true;
+  }
+
   static Future<void> syncCurrentLocation(String tripId) async {
     try {
       bool enabled = await Geolocator.isLocationServiceEnabled();

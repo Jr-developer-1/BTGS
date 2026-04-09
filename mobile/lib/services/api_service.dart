@@ -417,7 +417,7 @@ class ApiService {
           final Map<String, dynamic> errorMap = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{'detail': data.toString()};
           throw BadRequestException(_extractMessage(errorMap, 'Bad request'));
         case 401:
-          clearToken(); // clear persisted session on auth failure
+          // Removed clearToken() to prevent auto-logout
           final Map<String, dynamic> errorMap = (data is Map) ? Map<String, dynamic>.from(data) : <String, dynamic>{'detail': data.toString()};
           throw UnauthorizedException(_extractMessage(errorMap, 'Unauthorized. Please login again.'));
         case 403:

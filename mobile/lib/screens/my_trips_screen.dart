@@ -1,26 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'trip_timeline_screen.dart';
-import 'local_travel_timeline_screen.dart';
 import 'travel_story_screen.dart';
 import 'trip_story_screen.dart';
 import 'trip_summary_screen.dart';
-
-import 'trip_planner_screen.dart';
 import '../models/trip_model.dart';
 import '../services/trip_service.dart';
-import '../components/trip_wallet_sheet.dart';
 import 'create_trip_screen.dart';
 import 'local_travel_screen.dart';
-import '../components/claim_sheet.dart';
-import '../services/expense_reminder_service.dart';
-import '../components/forensic_camera.dart';
-import 'dart:io';
-import 'package:intl/intl.dart';
-import 'package:geolocator/geolocator.dart';
-import 'dart:ui' as ui;
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 class MyTripsScreen extends StatefulWidget {
   const MyTripsScreen({super.key});
@@ -38,28 +25,62 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   String _searchTerm = '';
   bool _isLoading = true;
 
+  // PAGINATION CONTROLS
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 1;
+  bool _hasMore = true;
+  bool _isFetchingMore = false;
+
   @override
   void initState() {
     super.initState();
     _fetchTrips();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.9 &&
+        _hasMore &&
+        !_isFetchingMore &&
+        !_isLoading) {
+      _fetchMoreTrips();
+    }
   }
 
   Future<void> _fetchTrips() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _currentPage = 1;
+      _hasMore = true;
+    });
     try {
-      final trips = await _tripService.fetchTrips(search: _searchTerm);
-      if (_searchTerm.trim().isEmpty) {
-        try {
-          await ExpenseReminderService.syncTripExpenseReminders(trips);
-        } catch (notifErr) {
-          debugPrint('Notification sync failed (non-critical): $notifErr');
-        }
+      final trips = await _tripService.fetchTrips(
+        search: _searchTerm,
+        page: _currentPage,
+      );
+      
+      if (trips.length < 5) {
+        _hasMore = false;
       }
+
       setState(() {
         _allTrips = trips;
         _applyFilters();
         _isLoading = false;
       });
+
+      // AUTO-FETCH NEXT PAGE for seamless loading
+      if (_hasMore) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _fetchMoreTrips(isAuto: true);
+        });
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -70,25 +91,49 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     }
   }
 
-  String _formatCurrency(dynamic amount) {
-    if (amount == null) return '₹0';
-    double? numAmount;
-    if (amount is num) {
-      numAmount = amount.toDouble();
-    } else if (amount is String) {
-      // Remove any existing currency symbols or commas before parsing
-      final cleanString = amount.replaceAll(RegExp(r'[^\d.]'), '');
-      numAmount = double.tryParse(cleanString);
+  Future<void> _fetchMoreTrips({bool isAuto = false}) async {
+    if (_isFetchingMore || !_hasMore) return;
+    
+    if (mounted) setState(() => _isFetchingMore = true);
+    
+    // Add a slight delay for "auto" loading to show the loader at the bottom
+    if (isAuto) await Future.delayed(const Duration(milliseconds: 100));
+    try {
+      _currentPage++;
+      final more = await _tripService.fetchTrips(
+        search: _searchTerm,
+        page: _currentPage,
+      );
+
+      if (more.isEmpty || more.length < 5) {
+        _hasMore = false;
+      }
+
+      setState(() {
+        _allTrips.addAll(more);
+        _applyFilters();
+        _isFetchingMore = false;
+      });
+
+      // CONTINUE AUTO-FETCHING until all records are loaded
+      if (_hasMore) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _fetchMoreTrips(isAuto: true);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingMore = false;
+          // If we hit an "Invalid page" error, it means we've reached the end
+          if (e.toString().contains('Invalid page') || e.toString().contains('404')) {
+            _hasMore = false;
+          }
+        });
+        if (!_hasMore) return; // Silent stop for end of pages
+        debugPrint('Error fetching more trips: $e');
+      }
     }
-
-    if (numAmount == null) return '₹$amount';
-
-    final formatter = NumberFormat.currency(
-      locale: 'en_IN',
-      symbol: '₹',
-      decimalDigits: 0,
-    );
-    return formatter.format(numAmount);
   }
 
   void _applyFilters() {
@@ -147,110 +192,38 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     _fetchTrips();
   }
 
-  void _onFilterChanged(String? v) {
-    if (v == null) return;
-    setState(() {
-      _filter = v;
-      _applyFilters();
-    });
-  }
-
-  Future<File?> _processOdometerImage(File imageFile, Position position) async {
-    try {
-      final String currentTime = DateFormat(
-        'yyyy-MM-dd HH:mm',
-      ).format(DateTime.now());
-      final String gpsLocation =
-          "Lat: ${position.latitude.toStringAsFixed(4)}, Long: ${position.longitude.toStringAsFixed(4)}";
-
-      final bytes = await imageFile.readAsBytes();
-      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
-      final ui.FrameInfo frame = await codec.getNextFrame();
-      final ui.Image image = frame.image;
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      final paint = Paint();
-
-      canvas.drawImage(image, Offset.zero, paint);
-      final rectPaint = Paint()..color = Colors.black.withOpacity(0.5);
-      canvas.drawRect(
-        Rect.fromLTWH(
-          0,
-          image.height.toDouble() - 180,
-          image.width.toDouble(),
-          180,
-        ),
-        rectPaint,
-      );
-
-      final textStyle = TextStyle(
-        color: Colors.white,
-        fontSize: (image.width / 30).clamp(24, 80),
-        fontWeight: FontWeight.bold,
-      );
-      final textPainterLoc = TextPainter(
-        text: TextSpan(text: 'Location: $gpsLocation', style: textStyle),
-        textDirection: ui.TextDirection.ltr,
-      );
-      textPainterLoc.layout();
-      textPainterLoc.paint(canvas, Offset(40, image.height.toDouble() - 140));
-
-      final textPainterTime = TextPainter(
-        text: TextSpan(text: 'Time: $currentTime', style: textStyle),
-        textDirection: ui.TextDirection.ltr,
-      );
-      textPainterTime.layout();
-      textPainterTime.paint(canvas, Offset(40, image.height.toDouble() - 70));
-
-      final picture = recorder.endRecording();
-      final img = await picture.toImage(image.width, image.height);
-      final data = await img.toByteData(format: ui.ImageByteFormat.png);
-
-      if (data != null) {
-        final directory = await getTemporaryDirectory();
-        final String filePath = p.join(
-          directory.path,
-          'watermarked_odo_${DateTime.now().millisecondsSinceEpoch}.png',
-        );
-        final File watermarkedFile = File(filePath)
-          ..writeAsBytesSync(data.buffer.asUint8List());
-        return watermarkedFile;
-      }
-    } catch (e) {
-      debugPrint('Error processing image: $e');
-    }
-    return null;
-  }
-
-  Future<Position?> _determinePosition() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return null;
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return null;
-    }
-    return await Geolocator.getCurrentPosition();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       body: Stack(
         children: [
-          // Executive Mesh Blobs (Ultra-soft atmospheric layers)
+          // Premium ambient background (Matches Dashboard's new teal airy feel)
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    const Color(0xFFFFFFFF),
+                    const Color(0xFFF0FDFA),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Executive Mesh Blobs (Atmospheric layers matching Dashboard)
           Positioned(
-            top: 200,
-            right: -100,
+            top: -100,
+            right: -80,
             child: Container(
               width: 400,
               height: 400,
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFFA9052E).withOpacity(0.03),
+                    const Color(0xFF0D9488).withOpacity(0.04),
                     Colors.transparent,
                   ],
                 ),
@@ -267,7 +240,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               decoration: BoxDecoration(
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF3B82F6).withOpacity(0.02),
+                    const Color(0xFF0D9488).withOpacity(0.03),
                     Colors.transparent,
                   ],
                 ),
@@ -275,7 +248,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               ),
             ),
           ),
-
+          
           Column(
             children: [
               _buildCustomHeader(),
@@ -284,111 +257,57 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                 child: _isLoading
                     ? const Center(
                         child: CircularProgressIndicator(
-                          color: Color(0xFFBB0633),
+                          color: Color(0xFF0D9488),
+                          strokeWidth: 3,
                         ),
                       )
-                    : _visibleTrips.isEmpty
-                    ? _buildEmptyState()
-                    : ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
-                        itemCount: _visibleTrips.length,
-                        itemBuilder: (context, index) =>
-                            _buildTripCard(_visibleTrips[index]),
+                    : RefreshIndicator(
+                        onRefresh: _fetchTrips,
+                        color: const Color(0xFF0D9488),
+                        child: _visibleTrips.isEmpty
+                            ? _buildEmptyState()
+                            : ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
+                                itemCount: _visibleTrips.length + (_hasMore ? 1 : 0),
+                                itemBuilder: (context, index) {
+                                  if (index == _visibleTrips.length) {
+                                    return _isFetchingMore
+                                        ? const Padding(
+                                            padding: EdgeInsets.symmetric(vertical: 20),
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                color: Color(0xFF0D9488),
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        : const SizedBox.shrink();
+                                  }
+                                  return _buildTripCard(_visibleTrips[index]);
+                                },
+                              ),
                       ),
               ),
             ],
           ),
-
-          // FAB positioned manually if needed, or use Scaffold's
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          showModalBottomSheet(
-            context: context,
-            backgroundColor: Colors.transparent,
-            builder: (context) => Container(
-              padding: const EdgeInsets.all(24),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(32),
-                  topRight: Radius.circular(32),
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'INITIATE NEW REQUEST',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF64748B),
-                      letterSpacing: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  _buildRequestOption(
-                    icon: Icons.flight_takeoff_rounded,
-                    title: 'New Trip Request',
-                    subtitle: 'Long distance travel with multiple stops',
-                    color: const Color(0xFFA9052E),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const CreateTripScreen(),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  _buildRequestOption(
-                    icon: Icons.local_taxi_rounded,
-                    title: 'New Travel Request',
-                    subtitle: 'Monthly local conveyance and site visits',
-                    color: const Color(0xFF0F1E2A),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => LocalTravelScreen(onUploadComplete: _fetchTrips),
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 32),
-                ],
-              ),
-            ),
-          );
-        },
-        backgroundColor: const Color(0xFF0F1E2A),
-        elevation: 12,
-        highlightElevation: 4,
-        icon: const Icon(Icons.add_rounded, color: Colors.white, size: 24),
+        onPressed: _showNewRequestBottomSheet,
+        backgroundColor: const Color(0xFF134E4A), // Deep Teal FAB
+        elevation: 8,
+        icon: const Icon(Icons.add_rounded, color: Colors.white),
         label: Text(
           'NEW REQUEST',
           style: GoogleFonts.plusJakartaSans(
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
+            fontWeight: FontWeight.w900,
             fontSize: 13,
-            letterSpacing: 0.5,
+            letterSpacing: 1,
+            color: Colors.white,
           ),
         ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
   }
@@ -396,301 +315,551 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   Widget _buildCustomHeader() {
     return Container(
       width: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFFA9052E),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(36),
-          bottomRight: Radius.circular(36),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(32),
+          bottomRight: Radius.circular(32),
         ),
       ),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned(
-            right: -20,
-            top: -20,
-            child: Container(
-              width: 140,
-              height: 140,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.06),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          Positioned(
-            left: -30,
-            bottom: -30,
-            child: Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.04),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 15, 25, 30),
-              child: Row(
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
-                          blurRadius: 15,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.airplane_ticket_rounded,
-                      color: Color(0xFFBB0633),
-                      size: 24,
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFCCFBF1), // Light Teal background
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.chevron_left, color: Color(0xFF0D9488)),
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'MY JOURNEYS',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white.withOpacity(0.7),
-                            letterSpacing: 1.5,
-                          ),
-                        ),
-                        Text(
-                          'Trip Directory',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.white,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      'My Trips & Travel',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF0D9488),
+                        fontSize: 25,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1, // Reduced slightly for better fit
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
-            ),
+              // Removed SizedBox(height: 24)
+              // Text(
+              //   'Professional\nTravel Logs',
+              //   style: GoogleFonts.plusJakartaSans(
+              //     color: const Color(0xFF134E4A),
+              //     fontSize: 32,
+              //     fontWeight: FontWeight.w900,
+              //     letterSpacing: -1.0,
+              //     height: 1.1,
+              //   ),
+              // ),
+              // const SizedBox(height: 8),
+              // Text(
+              //   'Track and manage your mobility requests',
+              //   style: GoogleFonts.inter(
+              //     color: const Color(0xFF64748B),
+              //     fontSize: 14,
+              //     fontWeight: FontWeight.w500,
+              //   ),
+              // ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildToolbar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+    return Padding(
+      padding: const EdgeInsets.all(20),
       child: Column(
         children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFF1F5F9)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.02),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: TextField(
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Search trips...',
+                hintStyle: GoogleFonts.plusJakartaSans(
+                  color: const Color(0xFF94A3B8),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF0D9488), size: 22),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: const Color(0xFFF1F5F9)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: TextField(
-                    onChanged: _onSearchChanged,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFF0F172A),
-                    ),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        size: 22,
-                        color: Color(0xFFBB0633),
-                      ),
-                      hintText: 'Search destinations, IDs...',
-                      hintStyle: GoogleFonts.plusJakartaSans(
-                        color: const Color(0xFF94A3B8),
-                        fontWeight: FontWeight.w500,
-                      ),
-                      border: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 20),
-                    ),
+                child: _buildFilterDropdown(
+                  label: _typeFilter,
+                  icon: Icons.category_rounded,
+                  onTap: () => _showFilterBottomSheet(
+                    'Type',
+                    ['All Types', 'Trip', 'Travel'],
+                    _typeFilter,
+                    (v) {
+                      setState(() {
+                        _typeFilter = v;
+                        _applyFilters();
+                      });
+                    },
                   ),
                 ),
               ),
               const SizedBox(width: 12),
-              Container(
-                height: 60,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFFF1F5F9)),
-                ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: _typeFilter,
-                    icon: const Icon(
-                      Icons.filter_list_rounded,
-                      color: Color(0xFFBB0633),
-                      size: 20,
-                    ),
-                    style: GoogleFonts.plusJakartaSans(
-                      color: const Color(0xFF0F172A),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                    items: ['All Types', 'Trip', 'Travel']
-                        .map(
-                          (v) => DropdownMenuItem(
-                            value: v,
-                            child: Text(v.toUpperCase()),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null)
-                        setState(() {
-                          _typeFilter = v;
-                          _applyFilters();
-                        });
+              Expanded(
+                child: _buildFilterDropdown(
+                  label: _filter,
+                  icon: Icons.tune_rounded,
+                  onTap: () => _showFilterBottomSheet(
+                    'Status',
+                    ['All Status', 'Approved', 'Settled', 'Rejected'],
+                    _filter,
+                    (v) {
+                      setState(() {
+                        _filter = v;
+                        _applyFilters();
+                      });
                     },
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _filter,
-                isExpanded: true,
-                icon: const Icon(
-                  Icons.keyboard_arrow_down_rounded,
-                  color: Color(0xFFBB0633),
-                  size: 20,
-                ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterDropdown({required String label, required IconData icon, required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFCCFBF1)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: const Color(0xFF0D9488)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
                 style: GoogleFonts.plusJakartaSans(
-                  color: const Color(0xFF0F172A),
-                  fontWeight: FontWeight.w700,
                   fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF134E4A),
                 ),
-                items: [
-                  'All Status',
-                  'Approved',
-                  'On-Going',
-                  'Completed',
-                  'Settled',
-                  'Cancelled',
-                  'Rejected',
-                ]
-                    .map(
-                      (v) => DropdownMenuItem(
-                        value: v,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              margin: const EdgeInsets.only(right: 10),
-                              decoration: BoxDecoration(
-                                color: v == 'All Status'
-                                    ? Colors.grey.shade300
-                                    : _getStatusColor(v),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            Text(v),
-                          ],
-                        ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: _onFilterChanged,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
+            const Icon(Icons.keyboard_arrow_down, size: 18, color: Color(0xFF94A3B8)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTripCard(Trip t) {
+    final statusColor = _getStatusColor(t.status);
+    final isLocal = t.considerAsLocal;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFF1F5F9)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: InkWell(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => TripSummaryScreen(trip: t)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isLocal ? const Color(0xFFEEF2FF) : const Color(0xFFF0FDFA),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            isLocal ? 'LOCAL TRAVEL' : 'BUSINESS TRIP',
+                            style: GoogleFonts.plusJakartaSans(
+                              color: isLocal ? const Color(0xFF4F46E5) : const Color(0xFF0D9488),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            t.status.toUpperCase(),
+                            style: GoogleFonts.inter(
+                              color: statusColor,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      t.purpose,
+                      style: GoogleFonts.outfit(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF134E4A),
+                        letterSpacing: -0.5,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'ID: ${t.id}',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    if (!isLocal) ...[
+                      _buildInfoBlock(Icons.location_on_rounded, 'DESTINATION', t.destination),
+                      const SizedBox(width: 12),
+                      Container(width: 1, height: 30, color: const Color(0xFFCCFBF1)),
+                      const SizedBox(width: 12),
+                    ],
+                    _buildInfoBlock(Icons.calendar_month_rounded, isLocal ? 'MONTH' : 'DATES', t.dates),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    if (!isLocal) ...[
+                      Expanded(
+                        child: _buildSecondaryButton(
+                          'Timeline',
+                          Icons.history_toggle_off_rounded,
+                          () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => TripTimelineScreen(tripId: t.id),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: _buildPrimaryButton(
+                        'View Story',
+                        Icons.auto_awesome_rounded,
+                        () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => isLocal
+                                ? TravelStoryScreen(tripId: t.id)
+                                : TripStoryScreen(tripId: t.id),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoBlock(IconData icon, String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: const Color(0xFF0D9488)),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.plusJakartaSans(
+                  color: const Color(0xFF94A3B8),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              color: const Color(0xFF134E4A),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.airplane_ticket_rounded,
-            size: 80,
-            color: Colors.grey.shade200,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No Trips Found',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-              color: const Color(0xFF0F172A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'You haven\'t created any trips yet.',
-            style: GoogleFonts.plusJakartaSans(
-              color: Colors.black38,
-              fontWeight: FontWeight.w600,
-            ),
+  Widget _buildPrimaryButton(String label, IconData icon, VoidCallback onTap) {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D9488),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D9488).withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSecondaryButton(String label, IconData icon, VoidCallback onTap) {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: const Color(0xFF134E4A),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0D9488).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.explore_off_rounded, size: 64, color: Color(0xFF0D9488)),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'No Journeys Found',
+              style: GoogleFonts.outfit(
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF134E4A),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Your travel history is currently empty. Start a new request to begin your adventure.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                color: const Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showNewRequestBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(32),
+            topRight: Radius.circular(32),
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'INITIATE REQUEST',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF94A3B8),
+                letterSpacing: 1.5,
+              ),
+            ),
+            const SizedBox(height: 32),
+            _buildRequestOption(
+              icon: Icons.business_center_rounded,
+              title: 'Business Trip',
+              subtitle: 'Inter-city travel & planning',
+              color: const Color(0xFF0D9488),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateTripScreen()));
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildRequestOption(
+              icon: Icons.local_taxi_rounded,
+              title: 'Local Travel',
+              subtitle: 'Monthly site visits & conveyance',
+              color: const Color(0xFF134E4A),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => LocalTravelScreen(onUploadComplete: _fetchTrips)),
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -702,623 +871,111 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFF1F5F9)),
-          ),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(icon, color: color, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF0F1E2A),
-                        letterSpacing: -0.3,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: const Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 14,
-                color: Colors.grey.withOpacity(0.5),
-              ),
-            ],
-          ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFF1F5F9)),
         ),
-      ),
-    );
-  }
-
-  Widget _summaryTile(
-    String label,
-    String value, {
-    bool badge = false,
-    bool isBudget = false,
-    IconData? icon,
-  }) {
-    String displayValue = value.trim();
-    // Improved double symbol check: handle both literal and variant characters
-    bool hasCurrency =
-        displayValue.contains('₹') ||
-        displayValue.contains('Rs') ||
-        displayValue.contains('\u20B9');
-
-    if (isBudget && !hasCurrency) {
-      displayValue = '₹$displayValue';
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 12, color: Colors.black26),
-                const SizedBox(width: 4),
-              ],
-              Text(
-                label.toUpperCase(),
-                style: GoogleFonts.inter(
-                  fontSize: 8,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black26,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          if (badge)
+        child: Row(
+          children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: _getStatusColor(displayValue).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(6),
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
               ),
-              child: Text(
-                displayValue,
-                style: GoogleFonts.inter(
-                  color: _getStatusColor(displayValue),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            )
-          else
-            Text(
-              displayValue,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-                color: isBudget
-                    ? const Color(0xFFBB0633)
-                    : const Color(0xFF0F172A),
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              child: Icon(icon, color: color, size: 28),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTripCard(Trip t) {
-    final statusColor = _getStatusColor(t.status);
-    final bool canShowStory =
-        t.status.toLowerCase() != 'draft' &&
-        t.status.toLowerCase() != 'cancelled';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.04),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(28),
-        child: InkWell(
-          onTap: t.status.toLowerCase() == 'settled'
-              ? null
-              : () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => TripSummaryScreen(trip: t)),
-                ),
-          borderRadius: BorderRadius.circular(28),
-          child: Stack(
-            children: [
-              Column(
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Top Bar with decorative status indicator
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 6,
-                                height: 6,
-                                decoration: BoxDecoration(
-                                  color: statusColor,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                t.status.toUpperCase(),
-                                style: GoogleFonts.plusJakartaSans(
-                                  color: statusColor,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.0,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          t.id,
-                          style: GoogleFonts.plusJakartaSans(
-                            color: const Color(0xFF94A3B8),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
+                  Text(
+                    title,
+                    style: GoogleFonts.outfit(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFF134E4A),
                     ),
                   ),
-                  // Body
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          t.purpose,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            color: const Color(0xFF0F1E2A),
-                            letterSpacing: -0.3,
-                            height: 1.2,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        if (!t.considerAsLocal) ...[
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8FAFC),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: const Color(0xFFF1F5F9),
-                              ),
-                            ),
-                            child: Column(
-                              children: [
-                                Row(
-                                  children: [
-                                    _cardDetailIcon(
-                                      Icons.person_outline_rounded,
-                                      const Color(0xFF8B5CF6),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        t.employee,
-                                        style: GoogleFonts.plusJakartaSans(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
-                                          color: const Color(0xFF475569),
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 10),
-                                  child: Divider(height: 1, color: Color(0xFFE2E8F0)),
-                                ),
-                                Row(
-                                  children: [
-                                    _cardDetailIcon(
-                                      Icons.location_on_rounded,
-                                      const Color(0xFFBB0633),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        '${t.source} → ${t.destination}',
-                                        style: GoogleFonts.plusJakartaSans(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                          color: const Color(0xFF475569),
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 12),
-                                  child: Divider(
-                                    height: 1,
-                                    color: Color(0xFFE2E8F0),
-                                  ),
-                                ),
-                                Row(
-                                  children: [
-                                    _cardDetailIcon(
-                                      Icons.calendar_month_rounded,
-                                      const Color(0xFF3B82F6),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      t.dates,
-                                      style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: const Color(0xFF475569),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                        ] else ...[
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8FAFC),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: const Color(0xFFF1F5F9)),
-                            ),
-                            child: Row(
-                              children: [
-                                _cardDetailIcon(Icons.calendar_month_rounded, const Color(0xFF3B82F6)),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    t.dates,
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: const Color(0xFF475569),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                        ],
-                        Row(
-                          children: [
-                            if (!t.considerAsLocal) ...[
-                              Expanded(
-                                child: _actionBtn(
-                                  'DETAILS',
-                                  Icons.east_rounded,
-                                  const Color(0xFF0F1E2A),
-                                  Colors.white,
-                                  () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          TripSummaryScreen(trip: t),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _actionBtn(
-                                  'TIMELINE',
-                                  Icons.history_rounded,
-                                  const Color(0xFFF1F5F9),
-                                  const Color(0xFF475569),
-                                  () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => t.considerAsLocal
-                                          ? LocalTravelTimelineScreen(tripId: t.id)
-                                          : TripTimelineScreen(tripId: t.id),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                            Expanded(
-                              child: _actionBtn(
-                                t.considerAsLocal ? 'TRAVEL GRID' : 'TRIP GRID',
-                                Icons.auto_awesome_rounded,
-                                const Color(0xFFFDF2F4),
-                                const Color(0xFFBB0633),
-                                () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => t.considerAsLocal
-                                        ? TravelStoryScreen(tripId: t.id)
-                                        : TripStoryScreen(tripId: t.id),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF64748B),
                     ),
                   ),
                 ],
               ),
-              if (t.status.toLowerCase() == 'settled')
-                Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F1E2A),
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.check_circle_rounded,
-                              color: Colors.white,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'SETTLED',
-                              style: GoogleFonts.plusJakartaSans(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1.0,
-                              ),
-                            ),
-                          ],
+            ),
+            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFFCBD5E1)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFilterBottomSheet(String title, List<String> options, String current, Function(String) onSelect) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Filter by $title',
+              style: GoogleFonts.outfit(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF134E4A),
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 20),
+            ...options.map((option) {
+              final isSelected = option == current;
+              return InkWell(
+                onTap: () {
+                  onSelect(option);
+                  Navigator.pop(context);
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? const Color(0xFF0D9488).withOpacity(0.05) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: isSelected ? const Color(0xFF0D9488).withOpacity(0.3) : Colors.transparent),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        option,
+                        style: GoogleFonts.inter(
+                          fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                          color: isSelected ? const Color(0xFF0D9488) : const Color(0xFF64748B),
                         ),
                       ),
-                    ),
+                      if (isSelected) const Icon(Icons.check_circle_rounded, size: 20, color: Color(0xFF0D9488)),
+                    ],
                   ),
                 ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _cardDetailIcon(IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(icon, size: 14, color: color),
-    );
-  }
-
-  Widget _actionBtn(
-    String label,
-    IconData icon,
-    Color bg,
-    Color text,
-    VoidCallback onTap,
-  ) {
-    // Determine if it's a secondary button to apply a subtle border
-    final bool isPrimary = bg == const Color(0xFF0F1E2A);
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(100),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(100),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(100),
-            border: isPrimary
-                ? null
-                : Border.all(color: text.withOpacity(0.12), width: 1.2),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 16, color: text),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w800,
-                  color: text,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _modalActionButton(String label, IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: const Color(0xFFBB0633)),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF0F172A),
-              ),
-            ),
+              );
+            }).toList(),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _cardActionButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
-    bool isSecondary = false,
-    Color? textColor,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: TextButton(
-        onPressed: onPressed,
-        style: TextButton.styleFrom(
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: Color(0xFFF1F5F9)),
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              label,
-              style: GoogleFonts.plusJakartaSans(
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-                color: textColor ?? const Color(0xFF0F172A),
-              ),
-            ),
-            Icon(icon, size: 18, color: textColor ?? const Color(0xFF0F172A)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  PopupMenuItem<String> _menuItem(String value, IconData icon) {
-    return PopupMenuItem(
-      value: value,
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: const Color(0xFF64748B)),
-          const SizedBox(width: 12),
-          Text(
-            value,
-            style: GoogleFonts.plusJakartaSans(
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-              color: const Color(0xFF0F172A),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1326,18 +983,17 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
       case 'approved':
-        return const Color(0xFF10B981);
       case 'completed':
-        return const Color(0xFF3B82F6);
+      case 'settled':
+        return const Color(0xFF10B981);
       case 'on-going':
       case 'ongoing':
-        return const Color(0xFFF59E0B);
+        return Colors.orange;
+      case 'rejected':
       case 'cancelled':
         return const Color(0xFFEF4444);
-      case 'pending':
-        return const Color(0xFF6366F1);
       default:
-        return const Color(0xFF64748B);
+        return const Color(0xFF0D9488);
     }
   }
 }

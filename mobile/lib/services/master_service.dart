@@ -12,13 +12,19 @@ class MasterService {
   Map<String, List<String>> _masterCache = {};
   Map<String, dynamic> _rawMasterCache = {};
 
-  Future<List<String>> fetchMasterList(String endpoint, String listKey, String displayKey) async {
+  Future<List<String>> fetchMasterList(
+    String endpoint,
+    String listKey,
+    String displayKey,
+  ) async {
     if (_masterCache.containsKey(endpoint)) return _masterCache[endpoint]!;
 
     try {
       final response = await _apiService.get(endpoint);
       // Log for user diagnosis
-      print('MASTER_FETCH: $endpoint -> Response Type: ${response.runtimeType}');
+      print(
+        'MASTER_FETCH: $endpoint -> Response Type: ${response.runtimeType}',
+      );
 
       List<dynamic> rawList = [];
 
@@ -26,7 +32,12 @@ class MasterService {
         rawList = response;
       } else if (response is Map) {
         // Try various common keys used in DRF/Axios
-        rawList = response[listKey] ?? response['results'] ?? response['data'] ?? response['items'] ?? [];
+        rawList =
+            response[listKey] ??
+            response['results'] ??
+            response['data'] ??
+            response['items'] ??
+            [];
       }
 
       final list = rawList
@@ -69,17 +80,29 @@ class MasterService {
 
   String _toTitleCase(String text) {
     if (text.isEmpty) return text;
-    return text.split(' ').map((word) {
-      if (word.isEmpty) return word;
-      return word[0].toUpperCase() + word.substring(1).toLowerCase();
-    }).join(' ');
+    return text
+        .split(' ')
+        .map((word) {
+          if (word.isEmpty) return word;
+          return word[0].toUpperCase() + word.substring(1).toLowerCase();
+        })
+        .join(' ');
   }
 
   // Specific Helpers
-  Future<List<String>> getTravelModes() => fetchMasterList(ApiConstants.masterTravelModes, 'results', 'mode_name');
-  Future<List<String>> getBookingTypes() => fetchMasterList(ApiConstants.masterBookingTypes, 'results', 'booking_type');
-  Future<List<String>> getLocalTravelModes() => fetchMasterList(ApiConstants.masterLocalTravelModes, 'results', 'mode_name');
-  
+  Future<List<String>> getTravelModes() =>
+      fetchMasterList(ApiConstants.masterTravelModes, 'results', 'mode_name');
+  Future<List<String>> getBookingTypes() => fetchMasterList(
+    ApiConstants.masterBookingTypes,
+    'results',
+    'booking_type',
+  );
+  Future<List<String>> getLocalTravelModes() => fetchMasterList(
+    ApiConstants.masterLocalTravelModes,
+    'results',
+    'mode_name',
+  );
+
   Future<List<String>> getTravelClasses(String mode) async {
     final response = await _apiService.get(ApiConstants.masterTravelClasses);
     if (response is List) {
@@ -101,10 +124,14 @@ class MasterService {
 
   Future<List<Map<String, dynamic>>> searchLocations(String search) async {
     try {
-      final response = await _apiService.get('/api/masters/locations/live_query/?search=${Uri.encodeComponent(search)}');
+      final response = await _apiService.get(
+        '/api/masters/locations/live_query/?search=${Uri.encodeComponent(search)}',
+      );
       if (response is List) return List<Map<String, dynamic>>.from(response);
-      if (response is Map && response['results'] != null) return List<Map<String, dynamic>>.from(response['results']);
-      if (response is Map && response['data'] != null) return List<Map<String, dynamic>>.from(response['data']);
+      if (response is Map && response['results'] != null)
+        return List<Map<String, dynamic>>.from(response['results']);
+      if (response is Map && response['data'] != null)
+        return List<Map<String, dynamic>>.from(response['data']);
     } catch (e) {
       print('Error searching locations: $e');
     }
@@ -114,7 +141,8 @@ class MasterService {
   Future<List<Map<String, dynamic>>> getGeoHierarchy() async {
     try {
       final response = await _apiService.get(ApiConstants.geoHierarchy);
-      if (response is Map && (response['results'] != null || response['data'] != null)) {
+      if (response is Map &&
+          (response['results'] != null || response['data'] != null)) {
         final data = response['results'] ?? response['data'];
         return List<Map<String, dynamic>>.from(data is List ? data : []);
       }
@@ -124,4 +152,10 @@ class MasterService {
     }
     return [];
   }
+
+  Future<List<String>> getIncidentalTypes() => fetchMasterList(
+    ApiConstants.masterIncidentalTypes,
+    'results',
+    'expense_type',
+  );
 }

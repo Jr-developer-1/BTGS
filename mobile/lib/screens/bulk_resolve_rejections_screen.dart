@@ -43,11 +43,10 @@ class _BulkResolveRejectionsScreenState
 
     for (int i = 0; i < widget.allRows.length; i++) {
       final row = Map<String, dynamic>.from(widget.allRows[i]);
-      final rowStatus = (row['_status'] ?? row['status'] ?? 'Pending')
-          .toString()
-          .toLowerCase();
+      final raw = (row['_status'] ?? row['status'] ?? 'Pending').toString().toLowerCase().trim();
+      final isRejected = raw == 'rejected' || raw == 'fix required' || raw.contains('rejected');
 
-      if (rowStatus == 'rejected') {
+      if (isRejected) {
         _rejectedRows.add({...row, '_original_index': i});
         _controllers[i] = RowControllers(row);
       } else {
@@ -74,10 +73,10 @@ class _BulkResolveRejectionsScreenState
       final List<Map<String, dynamic>> finalPayload = [];
 
       for (int i = 0; i < widget.allRows.length; i++) {
-        final originalRow = Map<String, dynamic>.from(widget.allRows[i]);
-
         if (_controllers.containsKey(i)) {
+          final originalRow = Map<String, dynamic>.from(widget.allRows[i]);
           final c = _controllers[i]!;
+          
           final Map<String, dynamic> updatedRow = {
             ...originalRow,
             'date': DateFormat('yyyy-MM-dd').format(c.date),
@@ -99,9 +98,6 @@ class _BulkResolveRejectionsScreenState
           updatedRow.remove('remarks');
 
           finalPayload.add(updatedRow);
-        } else {
-          // Send already-approved rows exactly as they are
-          finalPayload.add(originalRow);
         }
       }
 
@@ -427,7 +423,7 @@ class _BulkResolveRejectionsScreenState
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        row['_remark'] ?? 'No reason provided',
+                        row['remarks'] ?? row['_remarks'] ?? row['_remark'] ?? 'No reason provided',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -620,55 +616,95 @@ class _BulkResolveRejectionsScreenState
 }
 
 class RowControllers {
-  final TextEditingController from;
-  final TextEditingController to;
-  final TextEditingController purpose;
-  final TextEditingController mode;
-  final TextEditingController subType;
-  final TextEditingController odoStart;
-  final TextEditingController odoEnd;
-  DateTime date;
-  TimeOfDay startTime;
-  TimeOfDay reachTime;
+  late TextEditingController from;
+  late TextEditingController to;
+  late TextEditingController purpose;
+  late TextEditingController mode;
+  late TextEditingController subType;
+  late TextEditingController odoStart;
+  late TextEditingController odoEnd;
+  late DateTime date;
+  late TimeOfDay startTime;
+  late TimeOfDay reachTime;
 
-  RowControllers(Map<String, dynamic> row)
-    : from = TextEditingController(
-        text: (row['origin_route'] ?? row['from_location'] ?? '').toString(),
-      ),
-      to = TextEditingController(
-        text: (row['destination_route'] ?? row['to_location'] ?? '').toString(),
-      ),
-      purpose = TextEditingController(
-        text: (row['visit_intent'] ?? row['purpose'] ?? '').toString(),
-      ),
-      mode = TextEditingController(text: (row['mode'] ?? '').toString()),
-      subType = TextEditingController(
-        text: (row['subType'] ?? row['vehicle_type'] ?? '').toString(),
-      ),
-      odoStart = TextEditingController(
-        text: (row['odo_start'] ?? '').toString(),
-      ),
-      odoEnd = TextEditingController(text: (row['odo_end'] ?? '').toString()),
-      date = _parseDate(row['date']),
-      startTime = _parseTime(row['start_time'] ?? row['time'] ?? '09:00'),
-      reachTime = _parseTime(row['reach_time'] ?? row['end_time'] ?? '10:00');
-
-  static DateTime _parseDate(dynamic date) {
-    if (date == null || date == 'N/A') return DateTime.now();
-    try {
-      return DateFormat('yyyy-MM-dd').parse(date.toString());
-    } catch (_) {
-      return DateTime.now();
-    }
+  RowControllers(Map<String, dynamic> row) {
+    final details = row['details'] ?? {};
+    from = TextEditingController(
+      text: (row['origin_route'] ?? row['from_location'] ?? details['origin'] ?? '').toString(),
+    );
+    to = TextEditingController(
+      text: (row['destination_route'] ?? row['to_location'] ?? details['destination'] ?? '').toString(),
+    );
+    purpose = TextEditingController(
+      text: (row['visit_intent'] ?? row['purpose'] ?? details['purpose'] ?? '').toString(),
+    );
+    mode = TextEditingController(
+      text: (row['mode'] ?? details['mode'] ?? '').toString(),
+    );
+    subType = TextEditingController(
+      text: (row['subType'] ?? row['vehicle_type'] ?? details['subType'] ?? '').toString(),
+    );
+    odoStart = TextEditingController(
+      text: (row['odo_start'] ?? details['odoStart'] ?? '').toString(),
+    );
+    odoEnd = TextEditingController(
+      text: (row['odo_end'] ?? details['odoEnd'] ?? '').toString(),
+    );
+    date = _parseDate(row['date']);
+    startTime = _parseTime(row['start_time'] ?? row['time'] ?? '09:00');
+    reachTime = _parseTime(row['reach_time'] ?? row['end_time'] ?? '10:00');
   }
 
-  static TimeOfDay _parseTime(String time) {
+  static DateTime _parseDate(dynamic date) {
+    if (date == null || date == 'N/A' || date == '') return DateTime.now();
+    final dStr = date.toString();
+
+    // Try ISO format
+    DateTime? dt = DateTime.tryParse(dStr);
+    if (dt != null) return dt;
+
+    // Try DD-MM-YYYY
     try {
-      final parts = time.split(':');
-      return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-    } catch (_) {
-      return const TimeOfDay(hour: 9, minute: 0);
-    }
+      return DateFormat('dd-MM-yyyy').parse(dStr);
+    } catch (_) {}
+
+    // Try YYYY-MM-DD
+    try {
+      return DateFormat('yyyy-MM-dd').parse(dStr);
+    } catch (_) {}
+
+    return DateTime.now();
+  }
+
+  static TimeOfDay _parseTime(String timeStr) {
+    try {
+      // Handle full ISO timestamps
+      if (timeStr.contains('T')) {
+        final dt = DateTime.tryParse(timeStr);
+        if (dt != null) return TimeOfDay.fromDateTime(dt);
+      }
+
+      String workingTime = timeStr.trim();
+      if (workingTime.contains(' ')) {
+        final parts = workingTime.split(' ');
+        // If first part looks like date (YYYY-MM-DD or DD-MM-YYYY)
+        if (parts[0].contains('-') || parts[0].contains('/')) {
+          workingTime = parts.last;
+        }
+      }
+
+      final parts = workingTime.split(':');
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0].replaceAll(RegExp(r'[^0-9]'), ''));
+        int minute = int.parse(parts[1].replaceAll(RegExp(r'[^0-9]'), ''));
+
+        if (workingTime.toLowerCase().contains('pm') && hour < 12) hour += 12;
+        if (workingTime.toLowerCase().contains('am') && hour == 12) hour = 0;
+
+        return TimeOfDay(hour: hour.clamp(0, 23), minute: minute.clamp(0, 59));
+      }
+    } catch (_) {}
+    return const TimeOfDay(hour: 9, minute: 0);
   }
 
   void dispose() {

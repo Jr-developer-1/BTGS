@@ -4,6 +4,7 @@ import 'travel_story_screen.dart';
 import 'trip_story_screen.dart';
 import '../models/trip_model.dart';
 import '../services/trip_service.dart';
+import 'package:intl/intl.dart';
 
 class TravelTimelineScreen extends StatefulWidget {
   final String tripId;
@@ -18,6 +19,17 @@ class _TravelTimelineScreenState extends State<TravelTimelineScreen> {
   bool _isLoading = true;
   Trip? _trip;
   List<Map<String, dynamic>> _lifecycleSteps = [];
+
+  final List<Color> _nodeColors = const [
+    Color(0xFFF59E0B),
+    Color(0xFF4F46E5),
+    Color(0xFFEC4899),
+    Color(0xFF10B981),
+    Color(0xFF3B82F6),
+    Color(0xFF14B8A6),
+    Color(0xFF8B5CF6),
+    Color(0xFFF97316),
+  ];
 
   @override
   void initState() {
@@ -46,86 +58,169 @@ class _TravelTimelineScreenState extends State<TravelTimelineScreen> {
     if (_trip == null) return;
 
     final recordedEvents = _trip!.lifecycleEvents;
-    final standardSteps = [
-      {'title': 'Trip Requested', 'required': true, 'icon': Icons.description_rounded, 'color': Colors.red},
-      {'title': 'Level 1 Approval', 'required': true, 'icon': Icons.fact_check_rounded, 'color': Colors.amber},
-      {'title': 'Level 2 Approval', 'required': false, 'icon': Icons.assignment_ind_rounded, 'color': Colors.blue},
-      {'title': 'Level 3 Approval', 'required': false, 'icon': Icons.verified_user_rounded, 'color': Colors.orange},
-      {'title': 'Ticket Booking', 'required': true, 'icon': Icons.airplane_ticket_rounded, 'color': Colors.green},
-      {'title': 'Journey Started', 'required': true, 'icon': Icons.play_circle_fill_rounded, 'color': Colors.pink},
-      {'title': 'Journey Ended', 'required': true, 'icon': Icons.stop_circle_rounded, 'color': Colors.purple},
-      {'title': 'Settlement', 'required': true, 'icon': Icons.account_balance_wallet_rounded, 'color': Colors.blueGrey},
-    ];
-
-    bool sequenceBroken = false;
+    final isClosed = ['Approved', 'Settled', 'Rejected'].contains(_trip!.status);
+    final approvalChain = _trip!.approvalChain ?? [];
+    
     _lifecycleSteps = [];
 
-    for (var s in standardSteps) {
-      final title = s['title'] as String;
-      
-      // Hidden logic for optional steps
-      if (s['required'] == false) {
-        final hasEvent = recordedEvents.any((e) => e['title'] == title);
-        if (!hasEvent && _trip!.hierarchyLevel < (title.contains('2') ? 2 : 3)) {
-           continue; 
-        }
+    // 1. Request Sent
+    final dynamic initEvent = recordedEvents.isNotEmpty ? recordedEvents[0] : null;
+    String requestDate = 'Unknown';
+    if (initEvent != null && initEvent['date'] != null) {
+      try {
+        DateTime parsed = DateTime.parse(initEvent['date']);
+        requestDate = DateFormat('d MMM yyyy').format(parsed);
+      } catch (e) {
+        requestDate = initEvent['date'].toString().split(' ').first;
       }
+    }
 
-      final matchingEvent = recordedEvents.firstWhere(
-        (e) => e['title'] == title,
-        orElse: () => null,
-      );
+    _lifecycleSteps.add({
+      'title': 'Request Sent',
+      'subtitle': _trip!.employee.toString().isEmpty ? 'Requester' : _trip!.employee,
+      'role': 'Request Initiator',
+      'status': 'completed',
+      'date': requestDate,
+      'description': 'Travel request submitted for ${_trip!.destination}.',
+      'icon': Icons.description_rounded,
+    });
 
-      if (matchingEvent != null && matchingEvent['status'] == 'completed' && !sequenceBroken) {
-        _lifecycleSteps.add({
-          'title': title,
-          'status': 'completed',
-          'date': matchingEvent['date'] ?? 'N/A',
-          'description': matchingEvent['description'] ?? 'Completed successfully.',
-          'icon': s['icon'],
-          'color': s['color'],
-        });
-        continue;
-      }
-
-      if (matchingEvent != null && matchingEvent['status'] == 'in-progress' && !sequenceBroken) {
-        sequenceBroken = true;
-        _lifecycleSteps.add({
-          'title': title,
-          'status': 'current',
-          'date': 'In Progress',
-          'description': matchingEvent['description'] ?? 'Currently being processed.',
-          'icon': s['icon'],
-          'color': s['color'],
-        });
-        continue;
-      }
-
-      if (!sequenceBroken && s['required'] == true) {
-        sequenceBroken = true;
-        String desc = 'Pending action.';
-        if (title == 'Journey Started') desc = 'Ready to start. Please record start odometer.';
-        else if (title == 'Journey Ended') desc = 'Journey in progress. Please record end odometer.';
-        else if (title == 'Settlement') desc = 'Trip completed. Please submit expenses.';
+    // 2. Approval Chain
+    if (approvalChain.isNotEmpty) {
+      for (var person in approvalChain) {
+        final name = (person['name'] ?? '').toString();
+        final nameLower = name.toLowerCase();
         
+        dynamic approvalEvent;
+        for (var e in recordedEvents) {
+          final tLower = (e['title'] ?? '').toString().toLowerCase();
+          final dLower = (e['description'] ?? '').toString().toLowerCase();
+          if (tLower.contains('approved by $nameLower') || dLower.contains('approved by $nameLower')) {
+            approvalEvent = e;
+            break;
+          }
+        }
+
+        final isCurrentApprover = (_trip!.currentApproverName ?? '').toString().toLowerCase() == nameLower;
+
+        String status = 'pending';
+        String date = 'Pending';
+
+        if (approvalEvent != null) {
+          status = 'completed';
+          try {
+             DateTime d = DateTime.parse(approvalEvent['date']);
+             date = DateFormat('d MMM yyyy').format(d);
+          } catch(e) {
+             date = approvalEvent['date'] ?? 'Completed';
+          }
+        } else if (isCurrentApprover && !isClosed) {
+          status = 'current';
+          date = 'Action Required';
+        }
+
         _lifecycleSteps.add({
-          'title': title,
+          'title': name,
+          'subtitle': person['designation'] ?? '',
+          'role': person['role'] == 'HR' ? 'HR Verification' : 'Manager Approval',
+          'status': status,
+          'date': date,
+          'icon': person['role'] == 'HR' ? Icons.security_rounded : Icons.how_to_reg_rounded,
+        });
+      }
+    } else {
+      // Legacy Fallback
+      for (int i = 1; i < recordedEvents.length; i++) {
+        final event = recordedEvents[i];
+        final title = (event['title'] ?? '').toString();
+        final titleLower = title.toLowerCase();
+
+        IconData icon = Icons.check_circle_rounded;
+        String role = 'Manager Approval';
+        String eventStatus = 'completed';
+        String displayTitle = title.isEmpty ? 'Approved' : title;
+
+        if (titleLower.contains('rejected') || (event['description']?.toString().toLowerCase().contains('rejected by') ?? false)) {
+          icon = Icons.cancel_rounded;
+          role = 'Rejected';
+          eventStatus = 'rejected';
+        } else if (titleLower.startsWith('hr approved by') || titleLower.contains('hr verification') || titleLower.contains('ticket booking')) {
+          icon = Icons.security_rounded;
+          role = 'HR Verification';
+          final hrMatch = RegExp(r'hr approved by (.+)', caseSensitive: false).firstMatch(titleLower);
+          displayTitle = hrMatch != null ? 'HR Approved by ${hrMatch.group(1)!.trim()}' : 'HR Verified';
+        } else if (titleLower.startsWith('forwarded to')) {
+          icon = Icons.groups_rounded;
+          role = 'Escalated';
+          displayTitle = title;
+        } else if (titleLower.startsWith('approved by')) {
+          icon = Icons.how_to_reg_rounded;
+          role = 'Manager Approval';
+          displayTitle = title;
+        } else if (titleLower.contains('management approval')) {
+          final nameMatch = RegExp(r'approved by ([A-Za-z\s.]+?)(?:\.|,|and|$)', caseSensitive: false).firstMatch(event['description']?.toString() ?? '');
+          final approverName = nameMatch != null ? nameMatch.group(1)!.trim() : '';
+          icon = Icons.how_to_reg_rounded;
+          role = 'Manager Approval';
+          displayTitle = approverName.isNotEmpty ? 'Approved by $approverName' : 'Manager Approved';
+        }
+
+        String dt = 'Completed';
+        if (event['date'] != null) {
+          try {
+            DateTime d = DateTime.parse(event['date']);
+            dt = DateFormat('d MMM yyyy').format(d);
+          } catch (e) {
+            dt = event['date'].split(' ').first;
+          }
+        }
+
+        _lifecycleSteps.add({
+          'title': displayTitle,
+          'subtitle': '',
+          'role': role,
+          'status': eventStatus,
+          'date': dt,
+          'icon': icon,
+        });
+      }
+
+      if (!isClosed) {
+        _lifecycleSteps.add({
+          'title': _trip!.currentApproverName ?? 'Approving Manager',
+          'role': 'Manager Approval',
           'status': 'current',
           'date': 'Action Required',
-          'description': desc,
-          'icon': s['icon'],
-          'color': s['color'],
+          'icon': Icons.access_time_rounded,
         });
-        continue;
       }
+    }
 
+    // 3. Final Step
+    if (_trip!.status == 'Approved' || _trip!.status == 'Settled' || _trip!.status == 'Completed') {
       _lifecycleSteps.add({
-        'title': title,
+        'title': 'Final Approval',
+        'role': 'Success',
+        'status': 'completed',
+        'date': 'Success',
+        'icon': Icons.check_circle_rounded,
+      });
+    } else if (_trip!.status == 'Rejected') {
+      _lifecycleSteps.add({
+        'title': 'Rejected',
+        'subtitle': _trip!.rejectedBy ?? '',
+        'role': 'Rejected',
+        'status': 'rejected',
+        'date': 'Rejected',
+        'icon': Icons.cancel_rounded,
+      });
+    } else {
+      _lifecycleSteps.add({
+        'title': 'Final Approval',
+        'role': 'Endpoint',
         'status': 'pending',
-        'date': 'Waiting...',
-        'description': 'Awaiting previous steps.',
-        'icon': s['icon'],
-        'color': s['color'],
+        'date': 'Endpoint',
+        'icon': Icons.check_circle_rounded,
       });
     }
   }
@@ -133,7 +228,7 @@ class _TravelTimelineScreenState extends State<TravelTimelineScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -144,80 +239,293 @@ class _TravelTimelineScreenState extends State<TravelTimelineScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('JOURNEY TIMELINE', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.grey, letterSpacing: 1.5)),
-            Text(_trip?.id ?? 'Loading...', style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.black)),
+            Text('APPROVAL TIMELINE', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.grey, letterSpacing: 1.5)),
+            Text(_trip?.tripId ?? 'Loading...', style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.w900, color: Colors.black)),
           ],
         ),
+        actions: [
+           if (_trip != null)
+           Padding(
+             padding: const EdgeInsets.only(right: 16, top: 12),
+             child: Text(_trip!.status, style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.bold, color: _trip!.status.contains('Approved') ? Colors.green : Colors.orange)),
+           )
+        ],
         centerTitle: false,
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFFBB0633)))
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFFBE123C)))
           : _trip == null
               ? const Center(child: Text('Trip not found'))
-              : _buildWindingTimeline(),
+              : _buildProfessionalTimeline(),
     );
   }
 
-  Widget _buildWindingTimeline() {
-    final nextAction = _getNextAction();
+  Widget _buildProfessionalTimeline() {
+    final hasCurrentAction = _lifecycleSteps.any((s) => s['status'] == 'current');
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 20),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.only(bottom: 40),
       child: Column(
         children: [
+          const SizedBox(height: 20),
           _buildTripSummaryHeader(),
-          if (nextAction != null) _buildNextActionCard(nextAction),
           const SizedBox(height: 30),
-          Stack(
-            alignment: Alignment.topCenter,
-            children: [
-              // The curvy line background
-              Positioned.fill(
-                child: CustomPaint(
-                  painter: WindingLinePainter(stepsCount: _lifecycleSteps.length),
+          // Horizontal timeline wrapper
+          SizedBox(
+            height: 480,
+            child: Stack(
+              children: [
+                // Line across middle
+                Align(
+                  alignment: Alignment.center,
+                  child: Container(
+                    height: 3,
+                    margin: const EdgeInsets.symmetric(horizontal: 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.grey[200]!, Colors.grey[400]!, Colors.grey[200]!],
+                      )
+                    ),
+                  ),
                 ),
+                // The scrolling nodes
+                ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 40),
+                  itemCount: _lifecycleSteps.length,
+                  itemBuilder: (context, index) {
+                    return _buildTimelineNode(index);
+                  },
+                ),
+              ],
+            ),
+          ),
+          
+          if (hasCurrentAction)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey[200]!),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 15, offset: const Offset(0, 5)),
+                ],
               ),
-              
-              Column(
-                children: List.generate(_lifecycleSteps.length, (index) {
-                  return _buildTimelineStep(index);
-                }),
+              child: Row(
+                children: [
+                  const Icon(Icons.flight_takeoff_rounded, color: Color(0xFF475569)),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      'This is your current stage. Please complete the necessary steps to proceed.',
+                      style: GoogleFonts.plusJakartaSans(
+                        color: const Color(0xFF475569),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      if (_trip!.considerAsLocal) {
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => TravelStoryScreen(tripId: _trip!.tripId)));
+                      } else {
+                        Navigator.push(context, MaterialPageRoute(builder: (context) => TripStoryScreen(tripId: _trip!.tripId)));
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFBE123C),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    child: Text('Go to Actions', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.bold)),
+                  )
+                ],
               ),
-            ],
+            ),
+            
+          if (_trip!.status == 'Rejected' && _trip!.rejectionReason != null && _trip!.rejectionReason!.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Rejection Reason', style: GoogleFonts.plusJakartaSans(color: const Color(0xFFDC2626), fontWeight: FontWeight.w700, fontSize: 13)),
+                        const SizedBox(height: 4),
+                        Text(_trip!.rejectionReason!, style: GoogleFonts.plusJakartaSans(color: const Color(0xFF7F1D1D), fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimelineNode(int index) {
+    final step = _lifecycleSteps[index];
+    final bool isEven = index % 2 == 0;
+    
+    Color themeColor = _nodeColors[index % _nodeColors.length];
+    if (step['status'] == 'rejected') themeColor = Colors.red;
+    if (step['status'] == 'pending') themeColor = Colors.grey[400]!;
+
+    bool isCurrent = step['status'] == 'current';
+    bool isPending = step['status'] == 'pending';
+    bool isCompleted = step['status'] == 'completed';
+
+    Widget textContent = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isEven && step['date'] != 'Unknown') ...[
+          _badgeDate(step['date'], themeColor, isPending),
+          const SizedBox(height: 6),
+        ],
+        
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: isCompleted ? themeColor.withOpacity(0.08) : isCurrent ? Colors.red[50] : Colors.grey[100],
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            step['role'].toString().toUpperCase(),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              color: isCompleted ? themeColor : isCurrent ? Colors.red[600] : Colors.grey[600],
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        
+        SizedBox(
+          width: 140,
+          child: Text(
+            step['title'],
+            textAlign: TextAlign.center,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: isPending ? Colors.grey[400] : Colors.blueGrey[900],
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        
+        if (step['subtitle'] != null && step['subtitle'].toString().isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            step['subtitle'],
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[600],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        
+        if (!isEven && step['date'] != 'Unknown') ...[
+          const SizedBox(height: 6),
+          _badgeDate(step['date'], themeColor, isPending),
+        ],
+      ],
+    );
+
+    Widget iconCircle = Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: isPending ? Colors.grey[200] : Colors.white,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: isCurrent 
+            ? [BoxShadow(color: Colors.red.withOpacity(0.3), blurRadius: 15, spreadRadius: 4)]
+            : [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Center(
+        child: Icon(step['icon'], size: 20, color: isPending ? Colors.grey[500] : themeColor),
+      ),
+    );
+
+    return Container(
+      width: 180,
+      margin: const EdgeInsets.symmetric(horizontal: 5),
+      child: Column(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: isEven ? Padding(padding: const EdgeInsets.only(bottom: 10), child: textContent) : const SizedBox(),
+            ),
+          ),
+          
+          SizedBox(
+            height: 60,
+            child: Center(child: iconCircle),
+          ),
+          
+          Expanded(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: !isEven ? Padding(padding: const EdgeInsets.only(top: 10), child: textContent) : const SizedBox(),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Map<String, dynamic>? _getNextAction() {
-    try {
-      final currentStep = _lifecycleSteps.firstWhere((s) => s['status'] == 'current');
-      
-      final actions = {
-        'Trip Requested': {'text': 'Awaiting L1 Approval', 'icon': Icons.hourglass_empty_rounded, 'color': Colors.amber},
-        'Level 1 Approval': {'text': 'Awaiting L2 Approval', 'icon': Icons.hourglass_empty_rounded, 'color': Colors.amber},
-        'Level 2 Approval': {'text': 'Awaiting L3 Approval', 'icon': Icons.hourglass_empty_rounded, 'color': Colors.amber},
-        'Level 3 Approval': {'text': 'Awaiting Ticket Booking', 'icon': Icons.airplane_ticket_rounded, 'color': Colors.blue},
-        'Ticket Booking': {'text': 'Finalizing Bookings', 'icon': Icons.confirmation_number_rounded, 'color': Colors.green},
-        'Journey Started': {'text': 'Record start odometer reading', 'icon': Icons.speed_rounded, 'color': const Color(0xFFBB0633)},
-        'Journey Ended': {'text': 'Record arrival odometer reading', 'icon': Icons.flag_rounded, 'color': const Color(0xFFBB0633)},
-        'Settlement': {'text': 'Submit final expense claim', 'icon': Icons.account_balance_wallet_rounded, 'color': const Color(0xFFBB0633)},
-      };
-
-      return actions[currentStep['title']];
-    } catch (e) {
-      return null;
-    }
+  Widget _badgeDate(String date, Color themeColor, bool isPending) {
+    if (date.isEmpty) return const SizedBox();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+      ),
+      child: Text(
+        date,
+        style: GoogleFonts.plusJakartaSans(
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          color: Colors.grey[600],
+        ),
+      ),
+    );
   }
 
   Widget _buildTripSummaryHeader() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 20),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, 10)),
         ],
@@ -273,248 +581,4 @@ class _TravelTimelineScreenState extends State<TravelTimelineScreen> {
       ],
     );
   }
-
-  Widget _buildNextActionCard(Map<String, dynamic> action) {
-    return InkWell(
-      onTap: () {
-        if (_trip == null) return;
-        if (_trip!.considerAsLocal) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => TravelStoryScreen(tripId: _trip!.tripId),
-            ),
-          );
-        } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => TripStoryScreen(tripId: _trip!.tripId),
-            ),
-          );
-        }
-      },
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: (action['color'] as Color).withOpacity(0.2)),
-          boxShadow: [
-            BoxShadow(
-              color: (action['color'] as Color).withOpacity(0.05),
-              blurRadius: 20,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: (action['color'] as Color).withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(action['icon'], color: action['color'], size: 24),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'CURRENT ACTION REQUIRED',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black26,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    action['text'],
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 16,
-              color: Colors.black26,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineStep(int index) {
-    final step = _lifecycleSteps[index];
-    final bool isRight = index % 2 == 0;
-    final color = step['color'] as Color;
-
-    return Container(
-      height: 180, // Fixed height for alignment with the curvy line
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        children: [
-          // Left side
-          Expanded(
-            child: !isRight 
-              ? _buildContentBox(step, isRight, color) 
-              : const SizedBox(),
-          ),
-          
-          // Center Node (Curvy part)
-          Container(
-            width: 80,
-            alignment: Alignment.center,
-            child: Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(color: color.withOpacity(0.3), blurRadius: 10, spreadRadius: 2),
-                ],
-                border: Border.all(color: color, width: 4),
-              ),
-              child: Center(
-                child: Icon(step['icon'], size: 18, color: color),
-              ),
-            ),
-          ),
-          
-          // Right side
-          Expanded(
-            child: isRight 
-              ? _buildContentBox(step, isRight, color) 
-              : const SizedBox(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildContentBox(Map<String, dynamic> step, bool isRight, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 8)),
-        ],
-        border: Border.all(color: color.withOpacity(0.1), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: isRight ? CrossAxisAlignment.start : CrossAxisAlignment.end,
-        children: [
-          Text(
-            step['title'],
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            step['date'],
-            style: GoogleFonts.inter(
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              color: Colors.grey,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            step['description'],
-            textAlign: isRight ? TextAlign.left : TextAlign.right,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 11,
-              color: Colors.black54,
-              fontWeight: FontWeight.w500,
-              height: 1.4,
-            ),
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class WindingLinePainter extends CustomPainter {
-  final int stepsCount;
-  WindingLinePainter({required this.stepsCount});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
-      ..strokeCap = StrokeCap.round;
-
-    final double stepHeight = 180.0;
-    final double centerX = size.width / 2;
-    final double curveWidth = 70.0;
-
-    for (int i = 0; i < stepsCount - 1; i++) {
-      final colors = [
-        const Color(0xFFEF4444), // Red
-        const Color(0xFFFBBF24), // Amber
-        const Color(0xFF3B82F6), // Blue
-        const Color(0xFFF97316), // Orange
-        const Color(0xFF10B981), // Green
-        const Color(0xFFDB2777), // Pink
-        const Color(0xFF7C3AED), // Purple
-        const Color(0xFF475569), // Slate
-      ];
-      paint.color = colors[i % colors.length];
-
-      Path segmentPath = Path();
-      double startY = i * stepHeight + (stepHeight / 2);
-      double endY = (i + 1) * stepHeight + (stepHeight / 2);
-      bool curveToRight = i % 2 == 0;
-
-      segmentPath.moveTo(centerX, startY);
-
-      if (curveToRight) {
-        segmentPath.cubicTo(
-          centerX + curveWidth,
-          startY + stepHeight * 0.25,
-          centerX + curveWidth,
-          endY - stepHeight * 0.25,
-          centerX,
-          endY,
-        );
-      } else {
-        segmentPath.cubicTo(
-          centerX - curveWidth,
-          startY + stepHeight * 0.25,
-          centerX - curveWidth,
-          endY - stepHeight * 0.25,
-          centerX,
-          endY,
-        );
-      }
-
-      canvas.drawPath(segmentPath, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

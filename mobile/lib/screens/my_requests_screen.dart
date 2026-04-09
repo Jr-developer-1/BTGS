@@ -27,6 +27,12 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
   List<Map<String, dynamic>> _advances = [];
   List<Map<String, dynamic>> _claims = [];
   List<Map<String, dynamic>> _bulkBatches = [];
+  
+  // PAGINATION
+  int _currentTripPage = 1;
+  bool _hasMoreTrips = true;
+  bool _isFetchingMoreTrips = false;
+  final ScrollController _tripScrollController = ScrollController();
 
   String _viewMode = 'active';
   bool _isLoading = true;
@@ -40,91 +46,39 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
       _viewMode = widget.enforceTab == 0 ? 'active' : 'historical';
     }
     _fetchData();
+    _tripScrollController.addListener(_onTripScroll);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _tripScrollController.dispose();
+    super.dispose();
+  }
+
+  void _onTripScroll() {
+    if (_tripScrollController.position.pixels >= _tripScrollController.position.maxScrollExtent * 0.9 &&
+        _hasMoreTrips &&
+        !_isFetchingMoreTrips &&
+        !_isLoading) {
+      _loadMoreTrips();
+    }
   }
 
   Future<void> _fetchData() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _currentTripPage = 1;
+      _hasMoreTrips = true;
+    });
     try {
-      // 1. Fetch Trips
-      final tripsData = await _tripService.fetchTrips();
-      _trips = tripsData.map((t) => {
-        'id': t.id,
-        'title': t.purpose.isEmpty ? 'Travel Request' : t.purpose,
-        'date': '${t.startDate} - ${t.endDate}',
-        'amount': double.tryParse(t.costEstimate.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0,
-        'status': t.status,
-        'type': 'trip',
-        'consider_as_local': t.considerAsLocal,
-        'rawObject': t,
-      }).toList();
-
-      // 2. Fetch Advances
-      final advancesData = await _tripService.fetchUserAdvances();
-      _advances = advancesData.map((adv) => {
-        'id': 'ADV-${adv['id'] ?? (adv['trip']?.toString().substring(4) ?? 'REQ')}',
-        'title': 'Advance for ${adv['trip'] ?? 'Trip'}',
-        'date': DateFormat('dd-MM-yyyy').format(DateTime.tryParse(adv['created_at'] ?? '') ?? DateTime.now()),
-        'amount': double.tryParse(adv['requested_amount']?.toString() ?? '0') ?? 0.0,
-        'status': adv['status'] ?? 'Pending',
-        'type': 'advance',
-      }).toList();
-
-      // 3. Synthesize Claims from Trips (Match web logic)
-      final claimsList = <Map<String, dynamic>>[];
-      for (var t in tripsData) {
-        final expenses = t.totalExpenses ?? 0.0;
-        if (expenses > 0) {
-          String claimStatus = 'Submitted';
-          if (t.status == 'Settled') {
-            claimStatus = 'Settled';
-          } else if (['Pending Settlement', 'Finance Review'].contains(t.status)) {
-            claimStatus = 'Processing';
-          }
-          
-          claimsList.add({
-            'id': 'CLM-${t.id.substring(4)}',
-            'title': 'Claim for ${t.purpose}',
-            'date': t.startDate,
-            'amount': expenses,
-            'status': claimStatus,
-            'type': 'claim',
-          });
-        }
-      }
+      // modular loading
+      await Future.wait([
+        _loadTrips(reset: true),
+        _loadAdvances(),
+        _loadBulkBatches(),
+      ]);
       
-      // Fallback mocks if empty (match web's demonstration logic)
-      if (claimsList.isEmpty) {
-        claimsList.addAll([
-          {'id': 'CLM-2024-001', 'title': 'Client Visit to Mumbai', 'date': '21-02-2024', 'amount': 15400.0, 'status': 'Settled', 'type': 'claim'},
-          {'id': 'CLM-2024-002', 'title': 'Audit in Delhi Office', 'date': '25-02-2024', 'amount': 8200.0, 'status': 'Submitted', 'type': 'claim'},
-        ]);
-      }
-      _claims = claimsList;
-
-      // 4. Fetch Monthly Tour Plan (Bulk Batches)
-      try {
-        final batchesData = await _tripService.fetchBulkActivities();
-        _bulkBatches = batchesData.map((b) {
-          final rows = (b['data_json'] as List?) ?? [];
-          final entryCount = rows.where((r) {
-            final d = r['date']?.toString() ?? '';
-            return !d.toLowerCase().contains('instruc');
-          }).length;
-          return {
-            'id': b['id']?.toString() ?? '',
-            'title': b['file_name']?.toString() ?? 'Monthly Tour Plan',
-            'date': b['created_at']?.toString().split('T').first ?? '',
-            'amount': 0.0,
-            'status': b['status']?.toString() ?? 'Submitted',
-            'type': 'bulk',
-            'entry_count': entryCount,
-            'data_json': rows,
-          };
-        }).toList();
-      } catch (_) {
-        _bulkBatches = [];
-      }
-
       setState(() => _isLoading = false);
     } catch (e) {
       debugPrint('Error fetching requests: $e');
@@ -135,9 +89,144 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
     }
   }
 
+  Future<void> _loadTrips({bool reset = false}) async {
+    final tripsData = await _tripService.fetchTrips(page: _currentTripPage, all: true);
+    
+    if (tripsData.length < 5) _hasMoreTrips = false;
+
+    final mappedTrips = tripsData.map((t) => {
+      'id': t.id,
+      'title': t.purpose.isEmpty ? 'Travel Request' : t.purpose,
+      'date': '${t.startDate} - ${t.endDate}',
+      'amount': double.tryParse(t.costEstimate.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0,
+      'status': t.status,
+      'type': 'trip',
+      'consider_as_local': t.considerAsLocal,
+      'rawObject': t,
+    }).toList();
+
+    if (reset) {
+      _trips = mappedTrips;
+      // Also synthesize claims from page 1 trips
+      _generateClaims(tripsData);
+      
+      // AUTO-FETCH NEXT PAGE for seamless loading
+      if (_hasMoreTrips) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _loadMoreTrips(isAuto: true);
+        });
+      }
+    } else {
+      _trips.addAll(mappedTrips);
+    }
+  }
+
+  void _generateClaims(List<Trip> tripsData) {
+    final claimsList = <Map<String, dynamic>>[];
+    for (var t in tripsData) {
+      final expenses = t.totalExpenses ?? 0.0;
+      if (expenses > 0) {
+        String claimStatus = 'Submitted';
+        if (t.status == 'Settled') {
+          claimStatus = 'Settled';
+        } else if (['Pending Settlement', 'Finance Review'].contains(t.status)) {
+          claimStatus = 'Processing';
+        }
+        
+        claimsList.add({
+          'id': 'CLM-${t.id.substring(4)}',
+          'title': 'Claim for ${t.purpose}',
+          'date': t.startDate,
+          'amount': expenses,
+          'status': claimStatus,
+          'type': 'claim',
+        });
+      }
+    }
+    
+    if (claimsList.isEmpty) {
+      claimsList.addAll([
+        {'id': 'CLM-2024-001', 'title': 'Client Visit to Mumbai', 'date': '21-02-2024', 'amount': 15400.0, 'status': 'Settled', 'type': 'claim'},
+        {'id': 'CLM-2024-002', 'title': 'Audit in Delhi Office', 'date': '25-02-2024', 'amount': 8200.0, 'status': 'Submitted', 'type': 'claim'},
+      ]);
+    }
+    _claims = claimsList;
+  }
+
+  Future<void> _loadMoreTrips({bool isAuto = false}) async {
+    if (_isFetchingMoreTrips || !_hasMoreTrips) return;
+    
+    if (mounted) setState(() => _isFetchingMoreTrips = true);
+    
+    // Add a slight delay for "auto" loading to show the loader at the bottom
+    if (isAuto) await Future.delayed(const Duration(milliseconds: 100));
+    try {
+      _currentTripPage++;
+      await _loadTrips();
+      if (mounted) {
+        setState(() => _isFetchingMoreTrips = false);
+        
+        // CONTINUE AUTO-FETCHING until all trips are loaded
+        if (_hasMoreTrips) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _loadMoreTrips(isAuto: true);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading more trips: $e');
+      if (mounted) {
+        setState(() {
+          _isFetchingMoreTrips = false;
+          // If we hit an "Invalid page" error, it means we've reached the end
+          if (e.toString().contains('Invalid page') || e.toString().contains('404')) {
+            _hasMoreTrips = false;
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> _loadAdvances() async {
+    final advancesData = await _tripService.fetchUserAdvances();
+    _advances = advancesData.map((adv) => {
+      'id': 'ADV-${adv['id'] ?? (adv['trip']?.toString().substring(4) ?? 'REQ')}',
+      'title': 'Advance for ${adv['trip'] ?? 'Trip'}',
+      'date': DateFormat('dd-MM-yyyy').format(DateTime.tryParse(adv['created_at'] ?? '') ?? DateTime.now()),
+      'amount': double.tryParse(adv['requested_amount']?.toString() ?? '0') ?? 0.0,
+      'status': adv['status'] ?? 'Pending',
+      'type': 'advance',
+    }).toList();
+  }
+
+  Future<void> _loadBulkBatches() async {
+    try {
+      final batchesData = await _tripService.fetchBulkActivities();
+      _bulkBatches = batchesData.map((b) {
+        final rows = (b['data_json'] as List?) ?? [];
+        final entryCount = rows.where((r) {
+          final d = r['date']?.toString() ?? '';
+          return !d.toLowerCase().contains('instruc');
+        }).length;
+        return {
+          'id': b['id']?.toString() ?? '',
+          'title': b['file_name']?.toString() ?? 'Monthly Tour Plan',
+          'date': b['created_at']?.toString().split('T').first ?? '',
+          'amount': 0.0,
+          'status': b['status']?.toString() ?? 'Submitted',
+          'type': 'bulk',
+          'entry_count': entryCount,
+          'data_json': rows,
+        };
+      }).toList();
+    } catch (_) {
+      _bulkBatches = [];
+    }
+  }
+
   bool _isActiveStatus(String status) {
     final s = status.toLowerCase();
-    return !['settled', 'rejected', 'cancelled'].contains(s);
+    return !['settled', 'rejected', 'cancelled', 'approved'].contains(s);
   }
 
   List<Map<String, dynamic>> _filterData(List<Map<String, dynamic>> data) {
@@ -198,7 +287,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
                   : TabBarView(
                       controller: _tabController,
                       children: [
-                        _buildColumn(activeTrips),
+                        _buildColumn(activeTrips, controller: _tripScrollController, isTrip: true),
                         _buildColumn(activeAdvances),
                         _buildColumn(activeClaims),
                         _buildBulkBatchColumn(activeBatches),
@@ -337,7 +426,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
     );
   }
 
-  Widget _buildColumn(List<Map<String, dynamic>> items) {
+  Widget _buildColumn(List<Map<String, dynamic>> items, {ScrollController? controller, bool isTrip = false}) {
     if (items.isEmpty) {
       return Center(
         child: Column(
@@ -366,9 +455,20 @@ class _MyRequestsScreenState extends State<MyRequestsScreen> with SingleTickerPr
       onRefresh: _fetchData,
       color: const Color(0xFFBB0633),
       child: ListView.builder(
+        controller: controller,
         padding: const EdgeInsets.all(20),
-        itemCount: items.length,
-        itemBuilder: (context, index) => _buildCard(items[index]),
+        itemCount: items.length + (isTrip && _hasMoreTrips ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (isTrip && index == items.length) {
+             return _isFetchingMoreTrips 
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: CircularProgressIndicator(color: Color(0xFFBB0633), strokeWidth: 2)),
+                )
+              : const SizedBox.shrink();
+          }
+          return _buildCard(items[index]);
+        },
       ),
     );
   }

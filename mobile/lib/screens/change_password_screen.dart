@@ -7,37 +7,38 @@ class ChangePasswordScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: const Color(0xFFF0FDFA),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.black),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF134E4A)),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           'Change Password',
-          style: GoogleFonts.interTight(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
+          style: GoogleFonts.plusJakartaSans(
+            color: const Color(0xFF134E4A),
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
           ),
         ),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(24),
         child: Column(
           children: [
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(28),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.03),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+                    color: const Color(0xFF0D9488).withOpacity(0.06),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
                   ),
                 ],
               ),
@@ -45,32 +46,34 @@ class ChangePasswordScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildPasswordField('Current Password'),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
                   _buildPasswordField('New Password'),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 24),
                   _buildPasswordField('Confirm New Password'),
                 ],
               ),
             ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 48),
             SizedBox(
               width: double.infinity,
-              height: 55,
+              height: 58,
               child: ElevatedButton(
                 onPressed: () {},
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF7C1D1D),
+                  backgroundColor: const Color(0xFF134E4A),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(18),
                   ),
-                  elevation: 0,
+                  elevation: 8,
+                  shadowColor: const Color(0xFF134E4A).withOpacity(0.3),
                 ),
                 child: Text(
-                  'Update Password',
-                  style: GoogleFonts.interTight(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                  'UPDATE PASSWORD',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
                   ),
                 ),
               ),
@@ -86,26 +89,38 @@ class ChangePasswordScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          label,
-          style: GoogleFonts.inter(
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            color: Colors.black87,
+          label.toUpperCase(),
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w800,
+            fontSize: 11,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.black12),
+            color: const Color(0xFFF0FDFA),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFCCFBF1)),
           ),
           child: TextField(
             obscureText: true,
+            style: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF134E4A),
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+            ),
             decoration: InputDecoration(
+              hintText: '••••••••',
+              hintStyle: GoogleFonts.inter(
+                color: const Color(0xFF94A3B8),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              suffixIcon: const Icon(Icons.visibility_off_outlined, color: Colors.black26, size: 20),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              suffixIcon: const Icon(Icons.visibility_off_rounded, color: Color(0xFF64748B), size: 20),
             ),
           ),
         ),

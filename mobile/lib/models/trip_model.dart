@@ -45,6 +45,9 @@ class Trip {
   final String? userBaseLocation;
   final String? currentApproverName;
   final List<dynamic>? activityBatches;
+  final List<dynamic>? approvalChain;
+  final String? rejectedBy;
+  final String? rejectionReason;
 
   Trip({
     required this.id,
@@ -91,6 +94,9 @@ class Trip {
     this.userBaseLocation,
     this.currentApproverName,
     this.activityBatches,
+    this.approvalChain,
+    this.rejectedBy,
+    this.rejectionReason,
   });
 
   factory Trip.fromJson(Map<String, dynamic> json) {
@@ -108,7 +114,7 @@ class Trip {
     }
 
     final membersList = parseJsonField(json['members']);
-    String empName = json['creator_name'] ?? 'Employee';
+    String empName = json['user_name'] ?? json['creator_name'] ?? 'Employee';
     String? leaderDesignation;
     String? leaderEmpId;
 
@@ -172,8 +178,13 @@ class Trip {
       hasVehicleBooking: json['has_vehicle_booking'] ?? false,
       considerAsLocal: json['consider_as_local'] ?? false,
       userBaseLocation: json['user_base_location'],
-      currentApproverName: json['current_approver_name']?.toString() ?? json['current_approver']?.toString(),
+      currentApproverName:
+          json['current_approver_name']?.toString() ??
+          json['current_approver']?.toString(),
       activityBatches: parseJsonField(json['activity_batches']),
+      approvalChain: parseJsonField(json['approval_chain']),
+      rejectedBy: json['rejected_by'],
+      rejectionReason: json['rejection_reason'],
     );
   }
 

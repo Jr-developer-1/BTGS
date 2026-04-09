@@ -29,6 +29,10 @@ void main() async {
     LoggerService.log('BOOTSTRAP: Initializing Location Service...');
     await LocationTrackingService.initializeService();
     LoggerService.log('BOOTSTRAP: Location Service Configured.');
+
+    LoggerService.log('BOOTSTRAP: Requesting GPS access on launch...');
+    await LocationTrackingService.ensureLocationAccess();
+    LoggerService.log('BOOTSTRAP: GPS prompt completed.');
   } catch (e) {
     LoggerService.log(
       'BOOTSTRAP: Location Service Init Error: $e',

@@ -356,10 +356,12 @@ class _StartJourneyScreenState extends State<StartJourneyScreen> {
 class CaptureOdometerScreen extends StatefulWidget {
   final bool isStart;
   final Trip trip;
+  final String? startReading; // Added to carry over start reading to summary
   const CaptureOdometerScreen({
     super.key,
     required this.isStart,
     required this.trip,
+    this.startReading,
   });
 
   @override
@@ -632,7 +634,11 @@ class _CaptureOdometerScreenState extends State<CaptureOdometerScreen> {
                     context,
                     MaterialPageRoute(
                       builder: (context) =>
-                          MileageSummaryScreen(trip: widget.trip),
+                          MileageSummaryScreen(
+                            trip: widget.trip,
+                            startReading: widget.startReading ?? '0',
+                            endReading: _odoController.text,
+                          ),
                     ),
                   );
                 }
@@ -746,7 +752,11 @@ class MileageOngoingScreen extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (context) =>
-                        CaptureOdometerScreen(isStart: false, trip: trip),
+                        CaptureOdometerScreen(
+                          isStart: false, 
+                          trip: trip,
+                          startReading: startReading,
+                        ),
                   ),
                 ),
                 style: ElevatedButton.styleFrom(
@@ -798,12 +808,51 @@ class MileageOngoingScreen extends StatelessWidget {
   }
 }
 
-class MileageSummaryScreen extends StatelessWidget {
+class MileageSummaryScreen extends StatefulWidget {
   final Trip trip;
-  const MileageSummaryScreen({super.key, required this.trip});
+  final String startReading;
+  final String endReading;
+
+  const MileageSummaryScreen({
+    super.key,
+    required this.trip,
+    required this.startReading,
+    required this.endReading,
+  });
+
+  @override
+  State<MileageSummaryScreen> createState() => _MileageSummaryScreenState();
+}
+
+class _MileageSummaryScreenState extends State<MileageSummaryScreen> {
+  final TripService _tripService = TripService();
+  double _fuelRate = 0.0;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchRate();
+  }
+
+  Future<void> _fetchRate() async {
+    final vehicleType = widget.trip.vehicleType.contains('2') ? '2 Wheeler' : '4 Wheeler';
+    final rate = await _tripService.fetchFuelRate(vehicleType);
+    if (mounted) {
+      setState(() {
+        _fuelRate = rate ?? 0.0;
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final double start = double.tryParse(widget.startReading) ?? 0.0;
+    final double end = double.tryParse(widget.endReading) ?? 0.0;
+    final double distance = (end - start).clamp(0.0, double.infinity);
+    final double totalAmount = distance * _fuelRate;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
@@ -818,7 +867,9 @@ class MileageSummaryScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: Padding(
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF7C1D1D)))
+        : Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
@@ -837,10 +888,10 @@ class MileageSummaryScreen extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  _buildSummaryItem('Total Distance', '45.2 KM'),
-                  _buildSummaryItem('Rate per KM', '₹15.00'),
+                  _buildSummaryItem('Total Distance', '${distance.toStringAsFixed(1)} KM'),
+                  _buildSummaryItem('Rate per KM', '₹${_fuelRate.toStringAsFixed(2)}'),
                   const Divider(height: 40, color: Color(0xFFF1F5F9)),
-                  _buildSummaryItem('Total Amount', '₹678.00', isBold: true),
+                  _buildSummaryItem('Total Amount', '₹${totalAmount.toStringAsFixed(2)}', isBold: true),
                 ],
               ),
             ),
@@ -855,10 +906,12 @@ class MileageSummaryScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Expense entry automatically created.',
+                  _fuelRate > 0 
+                  ? 'Calculated using Fuel Management rates.'
+                  : 'Fuel management rate not found for this state.',
                   style: GoogleFonts.inter(
                     fontSize: 12,
-                    color: const Color(0xFF10B981),
+                    color: _fuelRate > 0 ? const Color(0xFF10B981) : Colors.orange,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

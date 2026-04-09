@@ -20,6 +20,9 @@ import '../screens/frs_attendance_screen.dart';
 import '../screens/frs_requests_hub_screen.dart';
 import '../screens/fuel_master_screen.dart';
 import '../screens/route_master_screen.dart';
+import '../screens/admin_master_management_screen.dart';
+import '../screens/admin_masters_screen.dart';
+import '../screens/location_codes_screen.dart';
 
 /// Module constants matching the Header.jsx navigation structure
 class ModuleConstants {
@@ -182,6 +185,33 @@ class ModuleConstants {
       iconColor: const Color(0xFFBB0633),
       allowedRoles: ['admin'],
       destinationScreen: () => const FuelMasterScreen(),
+    ),
+    NavigationModule(
+      title: 'Master Management',
+      description: 'Manage dynamic tables',
+      icon: Icons.settings_applications_rounded,
+      backgroundColor: const Color(0xFFF3E5F5),
+      iconColor: const Color(0xFF7B1FA2),
+      allowedRoles: ['admin'],
+      destinationScreen: () => const AdminMasterManagementScreen(),
+    ),
+    NavigationModule(
+      title: 'Admin Masters',
+      description: 'Rules & Jurisdictions',
+      icon: Icons.policy_rounded,
+      backgroundColor: const Color(0xFFFFF3E0),
+      iconColor: const Color(0xFFE65100),
+      allowedRoles: ['admin'],
+      destinationScreen: () => const AdminMastersScreen(),
+    ),
+    NavigationModule(
+      title: 'Location Codes',
+      description: 'System-wide geo master',
+      icon: Icons.map_rounded,
+      backgroundColor: const Color(0xFFE0F7FA),
+      iconColor: const Color(0xFF006064),
+      allowedRoles: ['admin'],
+      destinationScreen: () => const LocationCodesScreen(),
     ),
     NavigationModule(
       title: 'Route Masters',
