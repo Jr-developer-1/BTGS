@@ -54,7 +54,8 @@ const FinanceDashboard = () => {
         try {
             setLoading(true);
             const resp = await api.get(`/api/approvals/?tab=${activeTab}`);
-            const data = resp.data.map(item => ({
+            const rawData = resp.data.results || resp.data || [];
+            const data = rawData.map(item => ({
                 id: item.id,
                 trip: item.details?.trip_id || 'N/A',
                 employee: item.requester,

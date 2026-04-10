@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../services/trip_service.dart';
 import '../models/trip_model.dart';
 import 'package:intl/intl.dart';
+import 'live_map_screen.dart';
 
 class MyTrackingScreen extends StatefulWidget {
   const MyTrackingScreen({super.key});
@@ -99,6 +100,21 @@ class _MyTrackingScreenState extends State<MyTrackingScreen> {
             fontSize: 18,
           ),
         ),
+        actions: [
+          if (!_isLoading && _currentActiveTrip != null)
+            IconButton(
+              icon: const Icon(Icons.map_rounded, color: Colors.greenAccent),
+              tooltip: 'Live Map Tracking',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => LiveMapScreen(trip: _currentActiveTrip!),
+                  ),
+                );
+              },
+            ),
+        ],
       ),
       body: _isLoading
           ? const Center(

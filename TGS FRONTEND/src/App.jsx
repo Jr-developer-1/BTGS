@@ -46,6 +46,8 @@ import NotificationsPage from './pages/NotificationsPage';
 import Settings from './pages/Settings';
 import SupportBot from './components/SupportBot';
 import AppVersionManagement from './pages/AppVersionManagement';
+import ChangePassword from './pages/ChangePassword';
+import ForgotPassword from './pages/ForgotPassword';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -307,6 +309,8 @@ function App() {
             <SupportBotWrapper />
             <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/change-password" element={<ChangePassword />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/trips" element={<ProtectedRoute><MyTrips /></ProtectedRoute>} />
             <Route path="/my-requests" element={<ProtectedRoute><MyRequests /></ProtectedRoute>} />

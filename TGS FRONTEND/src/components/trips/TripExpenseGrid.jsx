@@ -678,6 +678,17 @@ const TripExpenseGrid = ({
                         } catch (e) { }
                         return exp.receipt_image ? [exp.receipt_image] : [];
                     })(),
+                    jobReportFiles: (() => {
+                        try {
+                            if (exp.jobReportAttachments) {
+                                if (typeof exp.jobReportAttachments === 'string' && exp.jobReportAttachments.startsWith('[')) {
+                                    return JSON.parse(exp.jobReportAttachments);
+                                }
+                                return Array.isArray(exp.jobReportAttachments) ? exp.jobReportAttachments : [exp.jobReportAttachments];
+                            }
+                        } catch (e) { }
+                        return [];
+                    })(),
                     claim: true,
                     isExpanded: true,
                     isSaved: true
@@ -3135,7 +3146,7 @@ const TripExpenseGrid = ({
                                     {(row.bills || []).length > 0 && (
                                         <div className="incidental-upload-list">
                                             {row.bills.map((bill, idx) => (
-                                                <div key={idx} className="incidental-upload-item">
+                                                <div key={`bill-${idx}`} className="incidental-upload-item">
                                                     <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
                                                         <FileText size={14} />
                                                         <span>File {idx + 1}</span>
@@ -3145,6 +3156,20 @@ const TripExpenseGrid = ({
                                                             <X size={12} />
                                                         </button>
                                                     )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {row.jobReportFiles && row.jobReportFiles.length > 0 && (
+                                        <div className="incidental-upload-list mt-2">
+                                            {row.jobReportFiles.map((bill, idx) => (
+                                                <div key={`jr-${idx}`} className="incidental-upload-item" style={{ border: '1px solid #3b82f6', background: '#eff6ff' }}>
+                                                    <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
+                                                        <FileText size={14} color="#3b82f6" />
+                                                        <span style={{ color: '#1d4ed8', fontWeight: '600' }}>JR Proof {idx + 1}</span>
+                                                    </button>
+                                                    <span style={{ fontSize: '10px', background: '#3b82f6', color: 'white', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold', marginLeft: 'auto', marginRight: '4px' }}>JR</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -3499,7 +3524,7 @@ const TripExpenseGrid = ({
                                     {(row.bills || []).length > 0 && (
                                         <div className="incidental-upload-list">
                                             {row.bills.map((bill, idx) => (
-                                                <div key={idx} className="incidental-upload-item">
+                                                <div key={`bill-${idx}`} className="incidental-upload-item">
                                                     <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
                                                         <FileText size={14} />
                                                         <span>Bill {idx + 1}</span>
@@ -3509,6 +3534,20 @@ const TripExpenseGrid = ({
                                                             <X size={12} />
                                                         </button>
                                                     )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {row.jobReportFiles && row.jobReportFiles.length > 0 && (
+                                        <div className="incidental-upload-list mt-2">
+                                            {row.jobReportFiles.map((bill, idx) => (
+                                                <div key={`jr-${idx}`} className="incidental-upload-item" style={{ border: '1px solid #3b82f6', background: '#eff6ff' }}>
+                                                    <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
+                                                        <FileText size={14} color="#3b82f6" />
+                                                        <span style={{ color: '#1d4ed8', fontWeight: '600' }}>JR Proof {idx + 1}</span>
+                                                    </button>
+                                                    <span style={{ fontSize: '10px', background: '#3b82f6', color: 'white', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold', marginLeft: 'auto', marginRight: '4px' }}>JR</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -3719,7 +3758,7 @@ const TripExpenseGrid = ({
                                     {(row.bills || []).length > 0 && (
                                         <div className="incidental-upload-list">
                                             {row.bills.map((bill, idx) => (
-                                                <div key={idx} className="incidental-upload-item">
+                                                <div key={`bill-${idx}`} className="incidental-upload-item">
                                                     <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
                                                         <FileText size={14} />
                                                         <span>Bill {idx + 1}</span>
@@ -3729,6 +3768,20 @@ const TripExpenseGrid = ({
                                                             <X size={12} />
                                                         </button>
                                                     )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {row.jobReportFiles && row.jobReportFiles.length > 0 && (
+                                        <div className="incidental-upload-list mt-2">
+                                            {row.jobReportFiles.map((bill, idx) => (
+                                                <div key={`jr-${idx}`} className="incidental-upload-item" style={{ border: '1px solid #3b82f6', background: '#eff6ff' }}>
+                                                    <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
+                                                        <FileText size={14} color="#3b82f6" />
+                                                        <span style={{ color: '#1d4ed8', fontWeight: '600' }}>JR Proof {idx + 1}</span>
+                                                    </button>
+                                                    <span style={{ fontSize: '10px', background: '#3b82f6', color: 'white', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold', marginLeft: 'auto', marginRight: '4px' }}>JR</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -3992,7 +4045,7 @@ const TripExpenseGrid = ({
                             {(row.bills || []).length > 0 && (
                                 <div className="incidental-upload-list">
                                     {row.bills.map((bill, idx) => (
-                                        <div key={idx} className="incidental-upload-item">
+                                        <div key={`bill-${idx}`} className="incidental-upload-item">
                                             <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
                                                 <FileText size={14} />
                                                 <span>Bill {idx + 1}</span>
@@ -4002,6 +4055,20 @@ const TripExpenseGrid = ({
                                                     <X size={12} />
                                                 </button>
                                             )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {row.jobReportFiles && row.jobReportFiles.length > 0 && (
+                                <div className="incidental-upload-list mt-2">
+                                    {row.jobReportFiles.map((bill, idx) => (
+                                        <div key={`jr-${idx}`} className="incidental-upload-item" style={{ border: '1px solid #3b82f6', background: '#eff6ff' }}>
+                                            <button type="button" className="incidental-upload-preview" onClick={() => previewBill(bill)}>
+                                                <FileText size={14} color="#3b82f6" />
+                                                <span style={{ color: '#1d4ed8', fontWeight: '600' }}>JR Proof {idx + 1}</span>
+                                            </button>
+                                            <span style={{ fontSize: '10px', background: '#3b82f6', color: 'white', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold', marginLeft: 'auto', marginRight: '4px' }}>JR</span>
                                         </div>
                                     ))}
                                 </div>
@@ -5301,15 +5368,26 @@ const TripExpenseGrid = ({
                                                         </div>
                                                     </td>
                                                     <td className="text-center">
-                                                        {r.bills && r.bills.length > 0 ? (
-                                                            <div className="rev-bills-list">
-                                                                {r.bills.map((b, bidx) => (
-                                                                    <button key={bidx} className="rev-bill-preview" title={`View Bill ${bidx + 1}`} onClick={() => previewBill(b)}>
-                                                                        <FileText size={14} />
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        ) : <span className="no-bill-dash">—</span>}
+                                                        <div className="rev-bills-list" style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'center' }}>
+                                                            {r.bills && r.bills.length > 0 && r.bills.map((b, bidx) => (
+                                                                <button key={`bill-${bidx}`} className="rev-bill-preview" title={`View Bill ${bidx + 1}`} onClick={() => previewBill(b)}>
+                                                                    <FileText size={14} />
+                                                                </button>
+                                                            ))}
+                                                            {r.jobReportFiles && r.jobReportFiles.length > 0 && r.jobReportFiles.map((b, bidx) => (
+                                                                <button 
+                                                                    key={`jr-${bidx}`} 
+                                                                    className="rev-bill-preview" 
+                                                                    title={`View Job Report Attachment ${bidx + 1}`} 
+                                                                    onClick={() => previewBill(b)}
+                                                                    style={{ border: '1.5px solid #3b82f6', background: '#eff6ff', position: 'relative' }}
+                                                                >
+                                                                    <FileText size={14} color="#3b82f6" />
+                                                                    <span style={{ position: 'absolute', top: '-11px', right: '-11px', fontSize: '10px', background: '#3b82f6', color: 'white', padding: '1px 4px', borderRadius: '4px', fontWeight: 'bold' }}>JR</span>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                        {(!r.bills || r.bills.length === 0) && (!r.jobReportFiles || r.jobReportFiles.length === 0) && <span className="no-bill-dash">—</span>}
                                                     </td>
                                                     <td className="text-center">
                                                         {(r.isSaved || r.details.travelStatus !== 'Completed') ? (

@@ -201,6 +201,7 @@ const CreateTrip = () => {
     const navigate = useNavigate();
     const { showToast } = useToast();
     const { user } = useAuth();
+
     const [formData, setFormData] = useState({
         logisticsType: 'long',
         from: '',

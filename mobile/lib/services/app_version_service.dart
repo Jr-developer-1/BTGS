@@ -49,8 +49,12 @@ class AppVersionService {
 
   // Returns true if v1 < v2
   static bool _isVersionLessThan(String v1, String v2) {
-    List<int> v1Parts = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    List<int> v2Parts = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    // Strip out the build number (+5, etc.) that breaks the int parser
+    String cleanV1 = v1.split('+')[0];
+    String cleanV2 = v2.split('+')[0];
+
+    List<int> v1Parts = cleanV1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    List<int> v2Parts = cleanV2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 
     for (int i = 0; i < 3; i++) {
       int p1 = i < v1Parts.length ? v1Parts[i] : 0;

@@ -151,15 +151,42 @@ const MyTrips = () => {
         }
     };
 
-    const fetchTrips = async () => {
+    const [pagination, setPagination] = useState({
+        count: 0,
+        next: null,
+        previous: null,
+        currentPage: 1
+    });
+
+    const fetchTrips = async (page = 1) => {
         setIsLoading(true);
         try {
             const [tripsRes, travelsRes] = await Promise.all([
-                api.get('/api/trips/', { params: { search: searchTerm } }),
-                api.get('/api/travels/', { params: { search: searchTerm } })
+                api.get('/api/trips/', { params: { search: searchTerm, page: page } }),
+                api.get('/api/travels/', { params: { search: searchTerm, page: page } })
             ]);
 
-            const allData = [...(tripsRes.data || []), ...(travelsRes.data || [])];
+            // Since we are combining two paginated sources, we normally would need complex logic.
+            // However, most users primarily use one or the other. For now, we'll merge the results
+            // and use the larger pagination count.
+            const tripsData = tripsRes.data.results || tripsRes.data || [];
+            const travelsData = travelsRes.data.results || travelsRes.data || [];
+
+            const allData = [...tripsData, ...travelsData];
+
+            // Update pagination state - calculate next/previous based on merged count
+            const totalCount = Math.max(tripsRes.data.count || 0, travelsRes.data.count || 0);
+            const itemsPerPage = allData.length || 10;
+            const hasMore = (page * itemsPerPage) < totalCount;
+            
+            if (tripsRes.data.count !== undefined) {
+                setPagination({
+                    count: totalCount,
+                    next: hasMore ? `page=${page + 1}` : null,
+                    previous: page > 1 ? `page=${page - 1}` : null,
+                    currentPage: page
+                });
+            }
 
             const parseJsonField = (field) => {
                 if (!field) return [];
@@ -247,7 +274,6 @@ const MyTrips = () => {
             <div className="page-header">
                 <div>
                     <h1>My Trips & Tour Plans</h1>
-                    <p>Track your travel history and upcoming bookings.</p>
                 </div>
                 <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
                     {(typeFilter === 'All' || typeFilter === 'Trip') && (
@@ -256,7 +282,7 @@ const MyTrips = () => {
                             New Trip Request
                         </button>
                     )}
-                    {(user?.role === 'oe' || user?.designation === 'OE') && (typeFilter === 'All' || typeFilter === 'Travel') && (
+                    {(typeFilter === 'All' || typeFilter === 'Travel') && (
                         <button className="btn-primary" style={{ backgroundColor: 'white', color: 'var(--magenta)', border: '1px solid var(--magenta)' }} onClick={() => navigate('/travel-creation')}>
                             <Briefcase size={18} style={{ marginRight: '8px' }} />
                             New Tour Plan
@@ -276,16 +302,14 @@ const MyTrips = () => {
                     />
                 </div>
 
-                {(user?.role === 'oe' || user?.designation === 'OE') && (
-                    <div className="filter-group">
-                        <Briefcase size={18} />
-                        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                            <option>All</option>
-                            <option>Trip</option>
-                            <option>Travel</option>
-                        </select>
-                    </div>
-                )}
+                <div className="filter-group">
+                    <Briefcase size={18} />
+                    <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                        <option>All</option>
+                        <option>Trip</option>
+                        <option>Travel</option>
+                    </select>
+                </div>
             </div>
 
             <div className="trips-grid">
@@ -380,6 +404,32 @@ const MyTrips = () => {
                         </div>
                     )))}
             </div>
+
+            {/* Pagination Controls */}
+            {pagination.count > 10 && (
+                <div className="pagination-footer premium-card">
+                    <div className="pagination-info">
+                        Showing <strong>{trips.length}</strong> of <strong>{pagination.count}</strong> records
+                    </div>
+                    <div className="pagination-actions">
+                        <button
+                            className="page-btn"
+                            disabled={!pagination.previous || isLoading}
+                            onClick={() => fetchTrips(pagination.currentPage - 1)}
+                        >
+                            Previous
+                        </button>
+                        <span className="page-indicator">Page {pagination.currentPage}</span>
+                        <button
+                            className="page-btn"
+                            disabled={!pagination.next || isLoading}
+                            onClick={() => fetchTrips(pagination.currentPage + 1)}
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Sub-Feature Modals */}
             {
@@ -533,6 +583,49 @@ const MyTrips = () => {
                     letter-spacing: 0.5px;
                     box-shadow: 0 10px 20px rgba(0,0,0,0.1);
                     transform: rotate(-5deg);
+                }
+                .pagination-footer {
+                    margin-top: 30px;
+                    padding: 15px 30px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+                }
+                .pagination-info {
+                    color: var(--text-muted);
+                    font-size: 0.9rem;
+                }
+                .pagination-actions {
+                    display: flex;
+                    align-items: center;
+                    gap: 15px;
+                }
+                .page-btn {
+                    padding: 8px 20px;
+                    border-radius: 10px;
+                    border: 1px solid #e2e8f0;
+                    background: white;
+                    color: var(--text-main);
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .page-btn:hover:not(:disabled) {
+                    background: #f8fafc;
+                    border-color: var(--primary);
+                    color: var(--primary);
+                }
+                .page-btn:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+                .page-indicator {
+                    font-weight: 700;
+                    color: var(--text-main);
+                    font-size: 0.9rem;
                 }
             `}</style>
         </div>

@@ -91,6 +91,8 @@ class Trip(SoftDeleteModel):
     rejection_reason = models.TextField(blank=True, null=True)
     rejected_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_trips')
     fuel_rate_snapshot = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Full ordered approval chain, populated at submission time
+    approval_chain = models.JSONField(default=list, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -146,11 +148,12 @@ class Trip(SoftDeleteModel):
                     self.trip_id = f"TRP-{current_year}-{random_number}"
         
         if is_new and not self.lifecycle_events:
+            requester_name = self.user_name or (self.user.name if self.user else 'User')
             self.lifecycle_events = [{
                 "title": "Trip Requested",
                 "status": "completed",
                 "date": datetime.datetime.now().strftime("%b %d, %Y"),
-                "description": "Trip request initiated by user."
+                "description": f"Travel request initiated by {requester_name}."
             }]
         
         super().save(*args, **kwargs)
@@ -360,6 +363,9 @@ class TravelClaim(SoftDeleteModel):
     def hod_director(self):
         return self.user.hod_director if self.user else None
 
+    class Meta:
+        ordering = ['-created_at']
+
     def __str__(self):
         return f"Claim for {self.trip.trip_id} - {self.status}"
 
@@ -442,6 +448,9 @@ class TravelAdvance(SoftDeleteModel):
 
     def __str__(self):
         return f"Advance for {self.trip.trip_id} - {self.status}"
+
+    class Meta:
+        ordering = ['-created_at']
 
 class Dispute(SoftDeleteModel):
     CATEGORY_CHOICES = [

@@ -8,6 +8,7 @@ import '../services/api_service.dart';
 import '../constants/module_constants.dart';
 import 'role_based_dashboard.dart';
 import 'forgot_password_screen.dart';
+import 'change_password_screen.dart';
 import 'frs_enrollment_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -109,17 +110,32 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final userEmail = (userDetails['email'] ?? '').toString();
       final isFaceEnrolled = userDetails['is_face_enrolled'] == true;
+      final bool requiresChange = userDetails['requires_password_change'] == true;
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => RoleBasedDashboard(
-            username: userName,
-            userRole: role,
-            email: userEmail.isNotEmpty ? userEmail : null,
+      if (requiresChange) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ChangePasswordScreen(
+              isForced: true,
+              username: userName,
+              userRole: role,
+              email: userEmail.isNotEmpty ? userEmail : null,
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => RoleBasedDashboard(
+              username: userName,
+              userRole: role,
+              email: userEmail.isNotEmpty ? userEmail : null,
+            ),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {

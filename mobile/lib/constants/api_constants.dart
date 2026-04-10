@@ -8,13 +8,14 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  static const String baseUrl = 'http://10.2.1.13:4567';
+  static const String baseUrl = 'http://10.2.1.120:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
   static const String authLogin = '$baseUrl/api/auth/login';
   static const String authLogout = '$baseUrl/api/auth/logout';
   static const String authRegister = '$baseUrl/api/auth/register';
+  static const String authChangePassword = '$baseUrl/api/auth/change-password';
 
   // Travel/Trip Endpoints
   static const String trips = '$baseUrl/api/trips/';
@@ -27,29 +28,40 @@ class ApiConstants {
   static const String geoHierarchy = '$baseUrl/api/geo/hierarchy/';
   static const String locations = '$baseUrl/api/masters/locations/';
   static const String findPaths = '$baseUrl/api/masters/routes/find_paths/';
-  static const String fuelRates = '$baseUrl/api/masters/fuel-rate-masters/my_rate/';
+  static const String fuelRates =
+      '$baseUrl/api/masters/fuel-rate-masters/my_rate/';
 
   // Master Data Endpoints (Parity with Web)
   static const String masterTravelModes = '$baseUrl/api/travel-mode-masters/';
   static const String masterBookingTypes = '$baseUrl/api/booking-type-masters/';
-  static const String masterTravelClasses = '$baseUrl/api/travel-class-masters/';
+  static const String masterTravelClasses =
+      '$baseUrl/api/travel-class-masters/';
   static const String masterVehicles = '$baseUrl/api/vehicle-masters/';
   static const String masterOperators = '$baseUrl/api/operator-masters/';
   static const String masterProviders = '$baseUrl/api/provider-masters/';
-  static const String masterLocalTravelModes = '$baseUrl/api/local-travel-mode-masters/';
-  static const String masterLocalSubTypes = '$baseUrl/api/local-sub-type-masters/';
-  static const String masterLocalProviders = '$baseUrl/api/local-provider-masters/';
+  static const String masterLocalTravelModes =
+      '$baseUrl/api/local-travel-mode-masters/';
+  static const String masterLocalSubTypes =
+      '$baseUrl/api/local-sub-type-masters/';
+  static const String masterLocalProviders =
+      '$baseUrl/api/local-provider-masters/';
   static const String masterStayTypes = '$baseUrl/api/stay-type-masters/';
   static const String masterRoomTypes = '$baseUrl/api/room-type-masters/';
-  static const String masterMealCategories = '$baseUrl/api/meal-category-masters/';
+  static const String masterMealCategories =
+      '$baseUrl/api/meal-category-masters/';
   static const String masterMealTypes = '$baseUrl/api/meal-type-masters/';
-  static const String masterIncidentalTypes = '$baseUrl/api/incidental-type-masters/';
-  static const String masterTicketStatus = '$baseUrl/api/ticket-status-masters/';
+  static const String masterIncidentalTypes =
+      '$baseUrl/api/incidental-type-masters/';
+  static const String masterTicketStatus =
+      '$baseUrl/api/ticket-status-masters/';
   static const String masterQuotaTypes = '$baseUrl/api/quota-type-masters/';
-  static const String masterStayBookingTypes = '$baseUrl/api/stay-booking-type-masters/';
-  static const String masterStayBookingSources = '$baseUrl/api/stay-booking-source-masters/';
+  static const String masterStayBookingTypes =
+      '$baseUrl/api/stay-booking-type-masters/';
+  static const String masterStayBookingSources =
+      '$baseUrl/api/stay-booking-source-masters/';
   static const String masterMealSources = '$baseUrl/api/meal-source-masters/';
-  static const String masterMealProviders = '$baseUrl/api/meal-provider-masters/';
+  static const String masterMealProviders =
+      '$baseUrl/api/meal-provider-masters/';
 
   // Expense Endpoints
   static const String expenses = '$baseUrl/api/expenses/';

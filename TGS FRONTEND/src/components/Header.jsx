@@ -104,15 +104,15 @@ const Header = () => {
         { title: 'Settlements', icon: <Wallet size={18} />, path: '/settlement', roles: ['finance', 'admin'] },
         { title: 'Documents', icon: <FolderOpen size={18} />, path: '/documents', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'] },
         { title: 'System Policy', icon: <BookOpen size={18} />, path: '/policy', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'] },
-        { title: 'CFO Room', icon: <BarChart3 size={18} />, path: '/cfo-war-room', roles: ['cfo', 'admin'] },
+        // { title: 'CFO Room', icon: <BarChart3 size={18} />, path: '/cfo-war-room', roles: ['cfo', 'admin'] },
         { title: 'User Management', icon: <Users size={18} />, path: '/employees', roles: ['admin'] },
-        { title: 'Guest Houses', icon: <Building2 size={18} />, path: '/guesthouse', roles: ['admin', 'cfo', 'guesthousemanager'] },
-        { title: 'Fleet Management', icon: <Car size={18} />, path: '/fleet', roles: ['admin', 'guesthousemanager'] },
+        { title: 'Room Requests', icon: <Building2 size={18} />, path: '/guesthouse', roles: ['admin', 'cfo', 'guesthousemanager'] },
+        { title: 'Vehicle Requests', icon: <Car size={18} />, path: '/fleet', roles: ['admin', 'guesthousemanager'] },
         { title: 'API Management', icon: <Settings size={18} />, path: '/api-management', roles: ['admin'] },
         { title: 'Route Masters', icon: <MapPin size={18} />, path: '/route-management', roles: ['admin'] },
         { title: 'Fuel Master', icon: <Fuel size={18} />, path: '/fuel-master', roles: ['admin'] },
         { title: 'Master Management', icon: <Settings size={18} />, path: '/master-management', roles: ['admin'] },
-        { title: 'Masters', icon: <Settings size={18} />, path: '/AdminMasters', roles: ['admin'] },
+        // { title: 'Masters', icon: <Settings size={18} />, path: '/AdminMasters', roles: ['admin'] },
         { title: 'Help & Support', icon: <HelpCircle size={18} />, path: '/help', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'] },
         { title: 'Login History', icon: <Settings size={18} />, path: '/login-history', roles: ['admin'] },
         { title: 'Audit Logs', icon: <ShieldCheck size={18} />, path: '/audit-logs', roles: ['admin'] },
@@ -126,7 +126,7 @@ const Header = () => {
         <header className="header">
             <div className="header-container">
                 <div className="header-left">
-                    <button 
+                    <button
                         type="button"
                         className="mobile-menu-toggle"
                         onClick={() => setIsMobileMenuOpen(true)}
@@ -202,7 +202,7 @@ const Header = () => {
                                     <div className="notifications-list">
                                         {notifications.length > 0 ? (
                                             notifications.map(n => (
-                                                 <div
+                                                <div
                                                     key={n.id}
                                                     className={`notification-item ${n.unread ? 'unread' : ''}`}
                                                     onClick={() => setShowNotifications(false)}
@@ -214,7 +214,7 @@ const Header = () => {
                                                         </div>
                                                         <p>{n.message}</p>
                                                         {n.link && !n.title.toLowerCase().includes('reminder') && !n.message.toLowerCase().includes('reminder') && (
-                                                            <button 
+                                                            <button
                                                                 className="click-to-view-link"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();

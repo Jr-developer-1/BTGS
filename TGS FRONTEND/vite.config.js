@@ -12,6 +12,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:4567', // Matches the user's backend port
         changeOrigin: true,
         secure: false,
+      },
+      '^/media': {
+        target: 'http://127.0.0.1:4567',
+        changeOrigin: true,
+        secure: false,
       }
     },
     headers: {

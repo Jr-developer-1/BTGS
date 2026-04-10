@@ -9,7 +9,11 @@ from .services import fetch_employee_data, fetch_geo_data
 from core.permissions import IsCustomAuthenticated, IsAdmin
 from .utils import encrypt_key, decrypt_key
 import uuid
+import random
+import string
 from django.db.models import Avg
+from django.core.mail import send_mail
+from django.conf import settings
 
 class EmployeeListView(APIView):
     permission_classes = [IsCustomAuthenticated]
@@ -113,10 +117,9 @@ class SignupView(APIView):
 
     def post(self, request):
         employee_code = request.data.get('employee_code') or request.data.get('employee_id')
-        password = request.data.get('password')
 
-        if not employee_code or not password:
-            return Response({'error': 'Employee code/id and password are required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not employee_code:
+            return Response({'error': 'Employee code/id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         data = fetch_employee_data(employee_id_filter=employee_code)
 
@@ -139,10 +142,21 @@ class SignupView(APIView):
         role_name = 'Employee' 
         role, _ = Role.objects.get_or_create(name=role_name)
 
+        # Generate Password: 8-12 chars, 1 upper, 1 special, 1 number
+        length = random.randint(8, 12)
+        upper = random.choice(string.ascii_uppercase)
+        special = random.choice("!@#$%^&*")
+        number = random.choice(string.digits)
+        others = ''.join(random.choices(string.ascii_letters + string.digits, k=length-3))
+        pwd_list = list(upper + special + number + others)
+        random.shuffle(pwd_list)
+        generated_password = ''.join(pwd_list)
+
         defaults = {
             'role': role,
-            'password_hash': hash_password(password),
+            'password_hash': hash_password(generated_password),
             'is_active': True,
+            'requires_password_change': True
         }
 
         user, created = User.objects.update_or_create(
@@ -150,8 +164,115 @@ class SignupView(APIView):
             defaults=defaults
         )
 
-        message = "User created successfully" if created else "User linked/updated successfully"
-        return Response({'message': message}, status=status.HTTP_201_CREATED)
+        if created:
+            import datetime
+            subject = 'Welcome to BTGS - Your Account is Activated'
+            plain_message = f'Hello {first_name},\n\nWelcome to BTGS.\n\nYour account has been activated. Your temporary password is: {generated_password}\n\nPlease login and change your password.\n\nThank you.'
+            
+            html_message = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        background-color: #f8fafc;
+                        margin: 0;
+                        padding: 0;
+                    }}
+                    .container {{
+                        max-width: 600px;
+                        margin: 40px auto;
+                        background-color: #ffffff;
+                        border-radius: 8px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                        overflow: hidden;
+                        border: 1px solid #e2e8f0;
+                    }}
+                    .header {{
+                        background-color: #1e293b;
+                        padding: 24px 0;
+                        text-align: center;
+                    }}
+                    .header h1 {{
+                        color: #ffffff;
+                        margin: 0;
+                        font-size: 28px;
+                        font-weight: 600;
+                        letter-spacing: 0.5px;
+                    }}
+                    .content {{
+                        padding: 32px;
+                        color: #334155;
+                        line-height: 1.6;
+                        font-size: 15px;
+                    }}
+                    .content h2 {{
+                        color: #0f172a;
+                        font-size: 22px;
+                        margin-top: 0;
+                    }}
+                    .password-box {{
+                        background-color: #f1f5f9;
+                        border: 1px solid #cbd5e1;
+                        padding: 16px;
+                        margin: 24px 0;
+                        font-size: 20px;
+                        font-family: 'Courier New', Courier, monospace;
+                        font-weight: bold;
+                        color: #0284c7;
+                        text-align: center;
+                        letter-spacing: 3px;
+                        border-radius: 6px;
+                    }}
+                    .footer {{
+                        background-color: #f8fafc;
+                        padding: 20px;
+                        text-align: center;
+                        font-size: 12px;
+                        color: #64748b;
+                        border-top: 1px solid #e2e8f0;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h1>BTGS Portal</h1>
+                    </div>
+                    <div class="content">
+                        <h2>Welcome to BTGS, {first_name}!</h2>
+                        <p>Your corporate account has been successfully created and activated. To access the portal, please use the temporary secure password generated for you below.</p>
+                        
+                        <div class="password-box">
+                            {generated_password}
+                        </div>
+                        
+                        <p><strong>Important Security Notice:</strong> You will be required to change this password immediately upon your first login. Your new password must contain at least 8 characters, an uppercase letter, a number, and a special character.</p>
+                        <p>If you encounter any issues or did not request this access, please contact the IT Administration team immediately.</p>
+                        
+                        <p>Best Regards,<br><strong>The BTGS Team</strong></p>
+                    </div>
+                    <div class="footer">
+                        &copy; {datetime.datetime.now().year} BTGS (Bavya-TGS). All rights reserved.<br/>
+                        This is an automated message, please do not reply.
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            send_mail(
+                subject,
+                plain_message,
+                settings.DEFAULT_FROM_EMAIL,
+                [email],
+                fail_silently=False,
+                html_message=html_message
+            )
+
+        message_response = "User created and email sent successfully" if created else "User linked/updated successfully"
+        return Response({'message': message_response}, status=status.HTTP_201_CREATED)
 
 class SyncAllUsersView(APIView):
     permission_classes = [IsAdmin]

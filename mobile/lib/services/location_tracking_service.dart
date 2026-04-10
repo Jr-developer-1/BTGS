@@ -314,26 +314,27 @@ void onStart(ServiceInstance service) async {
     // AndroidSettings allows fallback to standard LocationManager to avoid FusedLocationProvider ANRs on some devices
     locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 100,
-      forceLocationManager: true, 
+      distanceFilter: 10, // High-intensity tracking (every 10 meters)
+      forceLocationManager: true,
+      intervalDuration: const Duration(seconds: 5), // Forced update every 5 seconds
     );
   } else if (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS) {
     locationSettings = AppleSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 100,
+      distanceFilter: 10, // High-intensity tracking
       pauseLocationUpdatesAutomatically: true,
       activityType: ActivityType.automotiveNavigation,
     );
   } else {
     locationSettings = const LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 100,
+      distanceFilter: 10,
     );
   }
 
   positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position? position) async {
     try {
-      debugPrint('BACKGROUND SERVICE: 100m Movement Detected. TripID: $currentTripId');
+      debugPrint('BACKGROUND SERVICE: 10m Movement Detected. TripID: $currentTripId');
       if (position != null && currentTripId != null) {
         try {
           final token = apiService.getToken();
@@ -359,7 +360,7 @@ void onStart(ServiceInstance service) async {
             service.setForegroundNotificationInfo(
               title: "Trip Tracking Active",
               content:
-                  "Last Sync: ${DateFormat('HH:mm').format(DateTime.now())} (Moved 100m)",
+                  "Last Sync: ${DateFormat('HH:mm:ss').format(DateTime.now())} (Moved 10m)",
             );
           }
         } catch (e) {

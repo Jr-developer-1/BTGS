@@ -14,6 +14,9 @@ class User(models.Model):
     role = models.ForeignKey(Role, on_delete=models.PROTECT)
     password_hash = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
+    requires_password_change = models.BooleanField(default=False)
+    reset_otp = models.CharField(max_length=6, blank=True, null=True)
+    reset_otp_expiry = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     theme = models.CharField(max_length=50, default='classic', choices=[
         ('classic', 'Classic Burgundy'),

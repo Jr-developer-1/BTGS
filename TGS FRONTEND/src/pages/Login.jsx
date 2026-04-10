@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../api/api';
@@ -53,6 +53,11 @@ const Login = () => {
         setIsLoading(true);
         try {
             const user = await login(username, password);
+
+            if (user.requires_password_change) {
+                navigate('/change-password');
+                return;
+            }
 
             switch (user.role) {
                 case 'admin':
@@ -167,7 +172,7 @@ const Login = () => {
                         </div>
 
                         <div className="login-options">
-                            <a href="#" className="forgot-pwd">Forgot password?</a>
+                            <Link to="/forgot-password" className="forgot-pwd">Forgot password?</Link>
                         </div>
 
                         <button type="submit" className="login-btn" disabled={isLoading}>

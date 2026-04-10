@@ -1,20 +1,18 @@
 :root {
-    --admin-primary: #257180;
-    --admin-primary-light: #eaf4f5;
-    --admin-bg: #F2E5BF;
-    --admin-card-bg: #ffffff;
+    --admin-primary: var(--primary);
+    --admin-primary-light: var(--primary-light);
+    --admin-card-bg: white;
     --admin-border: #e2e8f0;
-    --admin-text-main: #1e293b;
-    --admin-text-muted: #64748b;
-    --admin-success: #10b981;
+    --admin-text-main: var(--text-main);
+    --admin-text-muted: var(--text-muted);
+    --admin-success: var(--success);
     --admin-error: #CB6040;
     --admin-radius: 12px;
-    --admin-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    --admin-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --admin-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    --admin-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
 }
 
 .admin-mgmt-wrapper {
-    background-color: var(--admin-bg);
     min-height: 100vh;
     padding: 40px 24px;
 }
@@ -75,7 +73,7 @@
 .module-btn.active {
     background: var(--admin-primary);
     color: white;
-    box-shadow: 0 10px 15px -3px rgba(139, 26, 61, 0.3);
+    box-shadow: 0 10px 15px -3px rgba(0, 128, 128, 0.2);
 }
 
 .admin-content-grid {
@@ -173,16 +171,16 @@
     align-items: center;
     gap: 8px;
     transition: all 0.2s;
-    box-shadow: 0 4px 6px -1px rgba(139, 26, 61, 0.2);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     white-space: nowrap;
     width: max-content;
     flex-shrink: 0;
 }
 
 .add-btn:hover {
-    background: #7a1635;
-    transform: translateY(-1px);
-    box-shadow: 0 6px 10px -1px rgba(139, 26, 61, 0.3);
+    background: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 10px -1px rgba(0, 0, 0, 0.15);
 }
 
 .data-table-container {
@@ -391,8 +389,8 @@
 }
 
 .save-btn:hover {
-    background: #7a1635;
-    box-shadow: 0 4px 12px rgba(139, 26, 61, 0.2);
+    background: var(--primary-hover);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .cancel-btn {

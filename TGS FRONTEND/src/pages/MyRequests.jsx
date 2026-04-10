@@ -25,6 +25,12 @@ const MyRequests = ({ enforceView = null }) => {
     const [advances, setAdvances] = useState([]);
     const [claims, setClaims] = useState([]);
 
+    const [paginations, setPaginations] = useState({
+        trips: { count: 0, currentPage: 1, next: null, previous: null },
+        advances: { count: 0, currentPage: 1, next: null, previous: null },
+        claims: { count: 0, currentPage: 1, next: null, previous: null }
+    });
+
     const [viewMode, setViewMode] = useState(enforceView || 'active'); // 'active' or 'historical'
     const [isLoading, setIsLoading] = useState(true);
 
@@ -35,21 +41,22 @@ const MyRequests = ({ enforceView = null }) => {
     }, [enforceView]);
 
     useEffect(() => {
-        fetchData();
+        fetchTrips(1);
+        fetchAdvances(1);
     }, []);
 
-    const fetchData = async () => {
+    const fetchTrips = async (page = 1) => {
         setIsLoading(true);
         try {
-            // Fetch Trips and Travels
             const [tripsRes, travelsRes] = await Promise.all([
-                api.get('/api/trips/'),
-                api.get('/api/travels/')
+                api.get('/api/trips/', { params: { page } }),
+                api.get('/api/travels/', { params: { page } })
             ]);
-            const rawTrips = [...(tripsRes.data || []), ...(travelsRes.data || [])];
-
-            // Map Trips
-            const mappedTrips = (tripsRes.data || []).map(trip => ({
+            
+            const tripsData = tripsRes.data.results || tripsRes.data || [];
+            const travelsData = travelsRes.data.results || travelsRes.data || [];
+            
+            const mappedTrips = tripsData.map(trip => ({
                 id: trip.trip_id,
                 title: trip.purpose || 'Travel Request',
                 date: `${trip.start_date || 'N/A'} - ${trip.end_date || 'N/A'}`,
@@ -59,8 +66,7 @@ const MyRequests = ({ enforceView = null }) => {
                 raw: trip
             }));
 
-            // Map Travels
-            const mappedTravels = (travelsRes.data || []).map(trip => ({
+            const mappedTravels = travelsData.map(trip => ({
                 id: trip.trip_id,
                 title: trip.purpose || 'Travel Request',
                 date: `${trip.start_date || 'N/A'} - ${trip.end_date || 'N/A'}`,
@@ -70,24 +76,20 @@ const MyRequests = ({ enforceView = null }) => {
                 raw: trip
             }));
 
-            const combinedTrips = [...mappedTrips, ...mappedTravels];
-
-            // Fetch Advances
-            const advancesRes = await api.get('/api/advances/').catch(() => ({ data: [] }));
-            const rawAdvances = advancesRes.data || [];
-
-            const mappedAdvances = rawAdvances.map(adv => ({
-                id: `ADV-${adv.id || adv.trip.substring(4)}`,
-                title: `Advance for ${adv.trip || 'Trip'}`,
-                date: new Date(adv.created_at || Date.now()).toLocaleDateString(),
-                amount: parseFloat(adv.requested_amount || 0),
-                status: adv.status || 'Pending',
-                type: 'advance',
-                tripRef: adv.trip
+            setTrips([...mappedTrips, ...mappedTravels]);
+            
+            setPaginations(prev => ({
+                ...prev,
+                trips: {
+                    count: Math.max(tripsRes.data.count || 0, travelsRes.data.count || 0),
+                    currentPage: page,
+                    next: tripsRes.data.next || travelsRes.data.next,
+                    previous: tripsRes.data.previous || travelsRes.data.previous
+                }
             }));
 
-            // Synthesize Expense Claims from Trips 
-            // In a real scenario, this would fetch from /api/claims/
+            // Synthetic Claims logic based on paginated trips
+            const rawTrips = [...tripsData, ...travelsData];
             const claimsList = [];
             rawTrips.forEach(trip => {
                 if (parseFloat(trip.total_expenses) > 0) {
@@ -102,16 +104,42 @@ const MyRequests = ({ enforceView = null }) => {
                     });
                 }
             });
-
-            setTrips(combinedTrips);
-            setAdvances(mappedAdvances);
             setClaims(claimsList);
 
         } catch (error) {
-            console.error("Error fetching requests data:", error);
-            showToast("Failed to load request boards", "error");
+            console.error("Error fetching trips:", error);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const fetchAdvances = async (page = 1) => {
+        try {
+            const resp = await api.get('/api/advances/', { params: { page } });
+            const data = resp.data.results || resp.data || [];
+            
+            const mapped = data.map(adv => ({
+                id: `ADV-${adv.id || adv.trip.substring(4)}`,
+                title: `Advance for ${adv.trip || 'Trip'}`,
+                date: new Date(adv.created_at || Date.now()).toLocaleDateString(),
+                amount: parseFloat(adv.requested_amount || 0),
+                status: adv.status || 'Pending',
+                type: 'advance',
+                tripRef: adv.trip
+            }));
+            
+            setAdvances(mapped);
+            setPaginations(prev => ({
+                ...prev,
+                advances: {
+                    count: resp.data.count || 0,
+                    currentPage: page,
+                    next: resp.data.next,
+                    previous: resp.data.previous
+                }
+            }));
+        } catch (e) {
+            console.error("Error fetching advances:", e);
         }
     };
 
@@ -201,7 +229,6 @@ const MyRequests = ({ enforceView = null }) => {
                 </div>
             ) : (
                 <div className="requests-kanban">
-                    {/* Trips Column */}
                     <div className="kanban-col">
                         <div className="col-header">
                             <div className="col-header-left">
@@ -220,6 +247,13 @@ const MyRequests = ({ enforceView = null }) => {
                                 displayTrips.map(trip => renderCard(trip, <Plane size={14} />))
                             )}
                         </div>
+                        {paginations.trips.count > 10 && (
+                            <div className="col-pagination">
+                                <button disabled={!paginations.trips.previous} onClick={() => fetchTrips(paginations.trips.currentPage - 1)}>Prev</button>
+                                <span>{paginations.trips.currentPage}</span>
+                                <button disabled={!paginations.trips.next} onClick={() => fetchTrips(paginations.trips.currentPage + 1)}>Next</button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Advances Column */}
@@ -229,7 +263,7 @@ const MyRequests = ({ enforceView = null }) => {
                                 <Wallet size={18} style={{ color: '#10b981' }} />
                                 <h3>Advances</h3>
                             </div>
-                            <span className="req-count">{displayAdvances.length}</span>
+                            <span className="req-count">{paginations.advances.count}</span>
                         </div>
                         <div className="col-body">
                             {displayAdvances.length === 0 ? (
@@ -241,6 +275,13 @@ const MyRequests = ({ enforceView = null }) => {
                                 displayAdvances.map(adv => renderCard(adv, <Wallet size={14} />))
                             )}
                         </div>
+                        {paginations.advances.count > 10 && (
+                            <div className="col-pagination">
+                                <button disabled={!paginations.advances.previous} onClick={() => fetchAdvances(paginations.advances.currentPage - 1)}>Prev</button>
+                                <span>{paginations.advances.currentPage}</span>
+                                <button disabled={!paginations.advances.next} onClick={() => fetchAdvances(paginations.advances.currentPage + 1)}>Next</button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Claims Column */}
@@ -265,6 +306,35 @@ const MyRequests = ({ enforceView = null }) => {
                     </div>
                 </div>
             )}
+            <style>{`
+                .col-pagination {
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 12px;
+                    background: #f8fafc;
+                    border-top: 1px solid #e2e8f0;
+                }
+                .col-pagination button {
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    border: 1px solid #cbd5e1;
+                    background: white;
+                    font-size: 0.75rem;
+                    font-weight: 700;
+                    cursor: pointer;
+                }
+                .col-pagination button:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+                .col-pagination span {
+                    font-size: 0.75rem;
+                    font-weight: 800;
+                    color: #475569;
+                }
+            `}</style>
         </div>
     );
 };

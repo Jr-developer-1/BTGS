@@ -11,6 +11,7 @@ from .models import ( # type: ignore
     MealCategoryMaster, MealTypeMaster, MealSourceMaster, MealProviderMaster,
     IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking
 )
+from travel_masters.models import FuelRateMaster
 from .serializers import ( # type: ignore
     TripSerializer, ExpenseSerializer, TravelClaimSerializer, TravelAdvanceSerializer,
     TripOdometerSerializer, DisputeSerializer, PolicyDocumentSerializer, PolicyDocumentDetailSerializer, BulkActivityBatchSerializer, JobReportSerializer,
@@ -138,6 +139,8 @@ def notify_hr(title, message):
         )
 
 
+from .utils import _is_hr, _get_hr_users, get_hr_head, build_approval_chain
+
 def update_trip_lifecycle(trip, title, description):
     """Helper to append events to the Trip's JSON lifecycle field."""
     if not trip:
@@ -160,76 +163,203 @@ def update_trip_lifecycle(trip, title, description):
 
 def _generate_expenses_from_batches(trip):
     """
-    Helper to convert rows from BulkActivityBatch into individual Expense records
-    at any stage of approval.
+    Helper to convert rows from BulkActivityBatch into individual Expense records.
+    Implements strict deduplication to prevent duplicate entries from multiple approval triggers.
     """
-    batches = trip.activity_batches.all()
+    from .models import BulkActivityBatch
+    from travel_masters.models import FuelRateMaster
+    import json
     
+    # 1. Pre-fetch all existing expenses for this trip to avoid repeated DB queries
+    existing_expenses = list(Expense.objects.filter(trip=trip))
+    
+    # Track semantic activities to prevent manual vs bulk duplicates
+    # Key: (date_str, odo_start, odo_end, origin_norm, dest_norm)
+    semantic_map = {}
+    # Track specific batch rows already processed
+    # Key: (batch_id, row_index)
+    processed_rows = set()
+    
+    for e in existing_expenses:
+        try:
+            d = json.loads(e.description)
+            b_id = d.get('batch_id')
+            r_idx = d.get('row_index')
+            if b_id is not None and r_idx is not None:
+                processed_rows.add((int(b_id), int(r_idx)))
+            
+            # Record semantic footprint
+            date_str = str(e.date)
+            o_s = float(e.odo_start or 0)
+            o_e = float(e.odo_end or 0)
+            orig = str(d.get('origin', '')).strip().upper()
+            dest = str(d.get('destination', '')).strip().upper()
+            semantic_map[(date_str, o_s, o_e, orig, dest)] = e.id
+        except:
+            continue
+
+    # 1. Cleanup: Remove any expenses associated with batches that are NOT in an authorized state
+    unauthorized_batches = trip.activity_batches.exclude(status__in=['Approved', 'Manager Approved', 'HR Approved', 'Resolved'])
+    for batch in unauthorized_batches:
+        for e in existing_expenses:
+            try:
+                d = json.loads(e.description)
+                if int(d.get('batch_id', -1)) == batch.id:
+                    e.delete()
+            except: continue
+
+    # 2. Process authorized batches
+    batches = trip.activity_batches.filter(status__in=['Approved', 'Manager Approved', 'HR Approved', 'Resolved'])
     for batch in batches:
         data = batch.data_json
         if not isinstance(data, list):
             continue
             
         created_ids = []
-        for row in data:
-            # ONLY process rows marked as 'Validated', 'OK', or 'Approved'
-            # Skip 'Rejected' rows as they are handled in the corrections UI
+        for idx, row in enumerate(data):
+            # Process only rows that are NOT rejected and NOT instruction rows
             row_status = row.get('_status')
-            if row_status not in ['Validated', 'OK', 'Approved'] or 'instruc' in str(row.get('date', '')).lower():
+            date_val = row.get('date', '')
+            
+            # 2. Skip if explicitly rejected or looks like an instruction row
+            is_rejected = (row_status == 'Rejected')
+            is_instruction = ('instruc' in str(date_val).lower())
+            
+            # If the row is not rejected, we only skip if it's in a state that explicitly says it's NOT ready.
+            # If row_status is None, we assume it's pending/approved by default if the batch itself is active.
+            if is_rejected or is_instruction:
+                for e in existing_expenses:
+                    try:
+                        d = json.loads(e.description)
+                        if int(d.get('batch_id', -1)) == batch.id and int(d.get('row_index', -1)) == idx:
+                            e.delete()
+                    except: continue
                 continue
                 
             try:
-                # Map Excel row fields to Expense fields
-                # Date format in Excel is usually string or date object
-                date_str = row.get('date')
+                date_val = row.get('date', '')
+                date_str = str(date_val).strip()
                 if not date_str: continue
+                if len(date_str) > 10: date_str = date_str[:10]
                 
-                # Default amount for mileage if not provided? 
-                # (Ideally use a rate from settings, but for now we follow the web's lead)
-                amount = row.get('amount') or 0
+                # Robust date parsing for common bulk formats
+                final_date = None
+                from datetime import datetime
+                for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"]:
+                    try:
+                        final_date = datetime.strptime(date_str, fmt).date().isoformat()
+                        break
+                    except: continue
                 
-                desc_dict = {
-                    'origin': row.get('origin_route') or row.get('origin') or '',
-                    'destination': row.get('destination_route') or row.get('destination') or '',
-                    'startTime': row.get('start_time') or '',
-                    'endTime': row.get('reach_time') or row.get('end_time') or '',
-                    'mode': row.get('mode') or 'Bike',
-                    'subType': row.get('vehicle') or 'Own Bike',
-                    'purpose': row.get('visit_intent') or row.get('purpose') or '',
-                    'jobReport': row.get('visit_intent') or row.get('purpose') or '',
-                    'is_bulk': True,
-                    'batch_id': batch.id,
-                    'row_index': data.index(row)
-                }
+                if not final_date:
+                    print(f"DEBUG: Could not parse date '{date_str}' in row {idx}")
+                    continue
+                
+                origin = str(row.get('origin_route', row.get('from_location', ''))).strip()
+                destination = str(row.get('destination_route', row.get('to_location', ''))).strip()
+                purpose = str(row.get('visit_intent', row.get('purpose', ''))).strip()
 
-                # Avoid creating duplicate expenses for the same row
-                pattern = f'"batch_id": {batch.id}, "row_index": {data.index(row)}'
-                if Expense.objects.filter(trip=trip, description__icontains=pattern).exists():
+                odo_s = float(row.get('odo_start', 0) or 0)
+                odo_e = float(row.get('odo_end', 0) or 0)
+                distance = max(0.0, odo_e - odo_s)
+
+                # DEDUPLICATION CHECK 1: Same batch/row already exists
+                if (batch.id, idx) in processed_rows:
                     continue
 
-                # Create the expense record
+                # DEDUPLICATION CHECK 2: Semantic match (Identical activity already logged manually or in other batch)
+                semantic_key = (final_date, odo_s, odo_e, origin.upper(), destination.upper())
+                if semantic_key in semantic_map:
+                    # If it exists but is NOT marked as being from this specific batch/row, 
+                    # we only skip if it's identical enough. 
+                    # If it was from bulk upload, we might want to replace it.
+                    existing_id = semantic_map[semantic_key]
+                    exp_obj = Expense.objects.filter(id=existing_id).first()
+                    if exp_obj:
+                        try:
+                            exp_desc = json.loads(exp_obj.description)
+                            if exp_desc.get('from_bulk_upload'):
+                                # It's a stale/duplicate bulk entry from another batch, delete/replace finding it
+                                exp_obj.delete()
+                                # Continue to create the new one from this batch
+                            else:
+                                # It's likely a manual entry for the same thing, skip creating duplicate
+                                continue
+                        except:
+                            continue
+
+                mapped_mode = str(row.get('mode', 'Bike')) or 'Bike'
+                mapped_subType = str(row.get('vehicle', 'Own Bike')) or 'Own Bike'
+                
+                state = trip.user.base_location or 'Other'
+                rate_obj = FuelRateMaster.objects.filter(state__icontains=state, vehicle_type=mapped_mode).first()
+                if not rate_obj:
+                    rate_obj = FuelRateMaster.objects.filter(vehicle_type=mapped_mode).first()
+                rate_per_km = float(rate_obj.rate_per_km) if rate_obj else 0.0
+                
+                amount = row.get('amount')
+                if amount in [None, '', 0, '0']:
+                    amount = distance * rate_per_km
+                else:
+                    try: amount = float(amount)
+                    except: amount = 0.0
+
+                desc_dict = {
+                    'origin': origin,
+                    'destination': destination,
+                    'mode': mapped_mode,
+                    'subType': mapped_subType,
+                    'odoStart': odo_s,
+                    'odoEnd': odo_e,
+                    'odoRate': rate_per_km,
+                    'distance': distance,
+                    'purpose': purpose,
+                    'from_bulk_upload': True,
+                    'batch_id': batch.id,
+                    'row_index': idx,
+                    'date': final_date,
+                    'startDate': final_date,
+                    'endDate': final_date,
+                    'startTime': row.get('start_time', '09:00'),
+                    'endTime': row.get('reach_time', '18:00'),
+                }
+                
+                # Carry over all mobile-provided attachment lists and textual reports
+                if 'jobReportAttachments' in row:
+                    desc_dict['jobReportAttachments'] = row['jobReportAttachments']
+                if 'jobReport' in row:
+                    desc_dict['jobReport'] = row['jobReport']
+                if 'selfies' in row:
+                    desc_dict['selfies'] = row['selfies']
+                if 'odoStartImg' in row:
+                    desc_dict['odoStartImg'] = row['odoStartImg']
+                if 'odoEndImg' in row:
+                    desc_dict['odoEndImg'] = row['odoEndImg']
+                if 'incidentals' in row:
+                    desc_dict['incidentals'] = row['incidentals']
+
+
                 exp = Expense.objects.create(
                     trip=trip,
-                    date=date_str,
-                    category='Fuel' if desc_dict['mode'] == 'Bike' else 'Local Travel',
+                    date=final_date,
+                    category='Fuel' if 'bike' in mapped_mode.lower() or 'car' in mapped_mode.lower() else 'Local Travel',
                     amount=amount,
                     description=json.dumps(desc_dict),
                     status='Approved',
-                    remarks=row.get('_remark') or desc_dict['purpose']
+                    rm_remarks=row.get('_remark') or desc_dict['purpose'],
+                    odo_start=odo_s,
+                    odo_end=odo_e,
+                    distance=distance,
+                    travel_mode=mapped_mode,
+                    vehicle_type=mapped_subType
                 )
                 created_ids.append(exp.id)
             except Exception as e:
-                print(f"Error creating expense from batch row: {e}")
+                print(f"Error creating expense from batch row {idx}: {e}")
                 
-        # Update batch to mark it as processed
         if created_ids:
-            batch.created_expenses = created_ids
+            batch.created_expenses = (batch.created_expenses or []) + created_ids
             batch.save(update_fields=['created_expenses'])
-
-
-
-
-
 
 def resolve_approver(user, members_data=None):
     """Helper to resolve the first approver in the management hierarchy."""
@@ -275,6 +405,7 @@ def resolve_approver(user, members_data=None):
     hod = user.hod_director
     return current_approver, h_level, reporting_manager, sm, hod
 
+
 class TripListCreateView(generics.ListCreateAPIView):
     serializer_class = TripSerializer
     permission_classes = [IsCustomAuthenticated]
@@ -288,7 +419,7 @@ class TripListCreateView(generics.ListCreateAPIView):
         user_role = user.role.name.lower() if user.role else ''
         
         if all_trips:
-            if user_roTraveln ['admin', 'guesthousemanager', 'finance', 'cfo']:
+            if user_role in ['admin', 'guesthousemanager', 'finance', 'cfo']:
                 return Trip.objects.all().order_by('-created_at')
             
             return Trip.objects.filter(
@@ -299,7 +430,6 @@ class TripListCreateView(generics.ListCreateAPIView):
         queryset = Trip.objects.filter(user=user, consider_as_local=False)
         search_query = self.request.query_params.get('search')
         if search_query:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(trip_id__icontains=search_query) |
                 Q(purpose__icontains=search_query) |
@@ -308,14 +438,34 @@ class TripListCreateView(generics.ListCreateAPIView):
             )
         return queryset.order_by('-created_at')
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        from rest_framework.exceptions import NotFound
+        try:
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+        except NotFound:
+            # Return a manual paginated response because paginator.page won't be set
+            return Response({
+                'count': queryset.count(),
+                'next': None,
+                'previous': None,
+                'results': []
+            })
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
     def perform_create(self, serializer, is_local=False):
         user = getattr(self.request, 'custom_user', None)
         if not user:
             from rest_framework.exceptions import AuthenticationFailed # type: ignore
             raise AuthenticationFailed("Authentication required.")
         
-        # Admin / Superuser skip approvals
         user_role = user.role.name.lower() if user.role else ''
+
+        # Admin / Superuser skip approvals
         if user_role in ['admin', 'superuser', 'it-admin']:
             trip = serializer.save(
                 user=user,
@@ -332,12 +482,16 @@ class TripListCreateView(generics.ListCreateAPIView):
         current_approver, h_level, rm, sm, hod = resolve_approver(user, members_data)
         
         try:
+            # Pre-calculate the full approval chain snapshot
+            chain = build_approval_chain(user)
+            
             trip = serializer.save(
                 user=user,
                 status='Pending',
                 current_approver=current_approver,
                 hierarchy_level=h_level,
                 consider_as_local=is_local,
+                approval_chain=chain,
                 # Snapshots
                 user_name=user.name,
                 user_designation=user.designation,
@@ -384,7 +538,6 @@ class TravelListCreateView(TripListCreateView):
         queryset = Trip.objects.filter(user=user, consider_as_local=True)
         search_query = self.request.query_params.get('search')
         if search_query:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(trip_id__icontains=search_query) |
                 Q(purpose__icontains=search_query) |
@@ -796,8 +949,16 @@ class ApprovalsView(APIView):
 
         tasks = []
         # Support filtering by type if specified
+        view_type = request.query_params.get('view_type', 'all')
+
         if type_filter in ['all', 'trip']:
             for t in trips.order_by('-created_at'):
+                # Handle view_type filtering for mobile (trips are generally NOT monthly)
+                is_tour_plan = t.consider_as_local
+                if view_type == 'special' and is_tour_plan: continue
+                if view_type == 'monthly' and not is_tour_plan: continue
+
+
                 tasks.append({
                     "id": f"TRIP-{t.trip_id}", "db_id": t.trip_id, "type": "Trip",
                     "requester": t.user.name if t.user else "Unknown", "purpose": t.purpose,
@@ -845,6 +1006,12 @@ class ApprovalsView(APIView):
             
         if type_filter in ['all', 'advance']:
             for a in advances.order_by('-created_at'):
+                # Advances for local trips are monthly, others are special
+                is_tour_plan = a.trip.consider_as_local
+                view_type = request.query_params.get('view_type', 'all')
+                if view_type == 'special' and is_tour_plan: continue
+                if view_type == 'monthly' and not is_tour_plan: continue
+
                 tasks.append({
                     "id": f"ADV-{a.id}", "db_id": a.id, "type": "Money Top-up / Advance",
                     "requester": a.trip.user.name if a.trip.user else "Unknown",
@@ -870,6 +1037,12 @@ class ApprovalsView(APIView):
 
         if type_filter in ['all', 'expense', 'mileage']:
             for c in claims.order_by('-created_at'):
+                # Handle view_type filtering for mobile
+                is_tour_plan = c.trip.consider_as_local
+                view_type = request.query_params.get('view_type', 'all')
+                if view_type == 'special' and is_tour_plan: continue
+                if view_type == 'monthly' and not is_tour_plan: continue
+
                 tasks.append({
                     "id": f"CLAIM-{c.id}", "db_id": c.id, "type": "Expense Claim",
                     "requester": c.trip.user.name if c.trip.user else "Unknown",
@@ -940,6 +1113,104 @@ class ApprovalsView(APIView):
                 "date": d.created_at.strftime("%b %d, %Y")
             })
 
+        # ── NEW: Include BulkActivityBatch items pending approval ──────────────────
+        # These are resubmitted batches that need manager review in the inbox.
+        # Use the batch's OWN current_approver field (set at upload time), NOT trip's
+        
+        if tab == 'pending' and type_filter in ['all', 'mileage']:
+            if is_admin:
+                pending_batches = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved', 'Under Process'])
+            elif is_hr:
+                pending_batches = BulkActivityBatch.objects.filter(
+                    Q(status__in=['Manager Approved', 'HR Approved', 'Under Process']) | Q(status__in=['Pending', 'Submitted', 'Forwarded'], current_approver=user)
+                )
+            else:
+                # Regular manager
+                pending_batches = BulkActivityBatch.objects.filter(
+                    status__in=['Pending', 'Submitted', 'Forwarded'],
+                    current_approver=user
+                )
+
+            for b in pending_batches.order_by('-created_at'):
+                trip_obj = b.trip
+                if not trip_obj and b.trip_id:
+                     trip_obj = Trip.objects.filter(trip_id=b.trip_id).first()
+                     if trip_obj:
+                        # Auto-heal the FK for next time
+                        b.trip = trip_obj
+                        b.save()
+
+                if not trip_obj:
+                    continue
+
+                # Ensure batch is visible in either view for now to guarantee discovery
+                # Managers often find it confusing if resubmissions are hidden in 'special' 
+                # even if the parent trip is technically outstation.
+                
+                rows = b.data_json if isinstance(b.data_json, list) else []
+                pending_row_count = sum(
+                    1 for r in rows
+                    if (r.get('_status') or 'Pending') not in ['Approved', 'Validated', 'OK', 'Rejected']
+                )
+
+                tasks.append({
+                    "id": f"BATCH-{b.id}",
+                    "db_id": b.id,
+                    "type": "Bulk Upload",
+                    "requester": trip_obj.user.name if trip_obj.user else "Unknown",
+                    "purpose": f"Bulk Activity: {b.file_name or b.batch_name or 'Upload'} ({pending_row_count} row(s) pending)",
+                    "status": b.status,
+                    "date": b.created_at.strftime("%b %d, %Y"),
+                    "trip_id": trip_obj.trip_id,
+                    "is_local": True,
+                    "hierarchy_level": 1,
+                    "cost": "—",
+                    "details": {
+                        "batch_id": b.id,
+                        "file_name": b.file_name or b.batch_name,
+                        "source": trip_obj.source,
+                        "destination": trip_obj.destination,
+                        "trip_id": trip_obj.trip_id,
+                        "start_date": trip_obj.start_date.strftime("%b %d, %Y") if trip_obj.start_date else "N/A",
+                        "end_date": trip_obj.end_date.strftime("%b %d, %Y") if trip_obj.end_date else "N/A",
+                        "activity_batches": [
+                            {
+                                "id": b.id,
+                                "file_name": b.file_name,
+                                "status": b.status,
+                                "data_json": b.data_json,
+                                "created_at": b.created_at.strftime("%b %d, %Y")
+                            }
+                        ]
+                    }
+                })
+        # ─────────────────────────────────────────────────────────────────────────────
+
+        # ─────────────────────────────────────────────────────────────────────────────
+        
+        # Paginate results only if 'page' is requested
+        if request.query_params.get('page'):
+            from rest_framework.pagination import PageNumberPagination
+            from django.conf import settings
+            paginator = PageNumberPagination()
+            
+            # Respect settings.PAGE_SIZE if not provided in URL
+            default_page_size = getattr(settings, 'REST_FRAMEWORK', {}).get('PAGE_SIZE', 20)
+            paginator.page_size = int(request.query_params.get('page_size', default_page_size))
+            
+            try:
+                page = paginator.paginate_queryset(tasks, request, view=self)
+                if page is not None:
+                    return paginator.get_paginated_response(page)
+            except Exception:
+                # Handle "Invalid page" gracefully
+                return Response({
+                    'count': len(tasks),
+                    'next': None,
+                    'previous': None,
+                    'results': []
+                })
+
         return Response(tasks)
 
     def post(self, request):
@@ -980,6 +1251,11 @@ class ApprovalsView(APIView):
                 if not batches.exists():
                     return Response({"error": f"No activity batches found for ID: {task_id}"}, status=404)
 
+                # Ensure trip is defined for later use
+                trip = None
+                if batches.exists():
+                    trip = batches.first().trip
+
                 updated_count = 0
                 for batch in batches:
                     data = batch.data_json
@@ -1002,6 +1278,11 @@ class ApprovalsView(APIView):
                         batch.save()
                         updated_count += 1
                 
+                # NEW: Generate actual expense records for rows that were just validated/approved
+                # This ensures the web application ledger shows them immediately.
+                if trip:
+                    _generate_expenses_from_batches(trip)
+
                 print(f"DEBUG: UpdateBatchRow updated {updated_count} row(s)")
                 return Response({"message": f"Row {row_index} updated in {updated_count} batch(es)"})
             except Exception as e:
@@ -1040,6 +1321,10 @@ class ApprovalsView(APIView):
                 obj = TravelClaim.objects.get(id=task_id.replace('CLAIM-', ''))
             elif task_id.startswith('DISPUTE-'):
                 obj = Dispute.objects.get(id=task_id.replace('DISPUTE-', ''))
+            elif task_id.startswith('BATCH-'):
+                from .models import BulkActivityBatch
+                obj = BulkActivityBatch.objects.filter(id=task_id.replace('BATCH-', '')).first()
+                if not obj: return Response({"error": "Batch not found"}, status=404)
             elif any(task_id.startswith(p) for p in ['ITS-', 'TRP-', 'TRV-']):
                 obj = Trip.objects.get(trip_id=task_id)
             else:
@@ -1201,8 +1486,12 @@ class ApprovalsView(APIView):
                             batch.current_approver = next_approver
                             batch.hierarchy_level = obj.hierarchy_level
                             batch.save()
-                        # NEW: Generate expenses for rows VALIDATED by this manager
-                        _generate_expenses_from_batches(obj)
+                    elif isinstance(obj, BulkActivityBatch):
+                        # Sync parent trip if it exists
+                        if obj.trip:
+                            obj.trip.current_approver = next_approver
+                            obj.trip.hierarchy_level = obj.hierarchy_level
+                            obj.trip.save()
                     
                     Notification.objects.create(
                         user=next_approver,
@@ -1229,6 +1518,14 @@ class ApprovalsView(APIView):
                             batch.status = 'Manager Approved'
                             batch.current_approver = hr_head
                             batch.save()
+                        
+                    elif isinstance(obj, BulkActivityBatch):
+                        obj.status = 'Manager Approved'
+                        obj.save()
+                        if obj.trip:
+                            obj.trip.status = 'Manager Approved'
+                            obj.trip.current_approver = hr_head
+                            obj.trip.save()
                     
                     if trip:
                         update_trip_lifecycle(trip, f"Approved by {user.name}", f"Approved by {user.name} and forwarded to HR ({hr_head.name if hr_head else 'Head'}).")
@@ -1267,22 +1564,34 @@ class ApprovalsView(APIView):
                 if trip:
                     update_trip_lifecycle(trip, "Ticket Booking", f"HR ({user.name}) has verified travel logistics.")
                 
-                if isinstance(obj, Trip):
-                    # --- TRIP ENDS AT HR ---
-                    obj.status = 'Approved'
-                    obj.current_approver = None
-                    obj.save()
+                if isinstance(obj, Trip) or isinstance(obj, BulkActivityBatch):
+                    # --- TRIP/BATCH ENDS AT HR ---
+                    trip_obj = obj if isinstance(obj, Trip) else (obj.trip if hasattr(obj, 'trip') else None)
                     
-                    # Sync corresponding batches
-                    for batch in obj.activity_batches.exclude(status='Rejected'):
-                        # If a batch hasn't yet hit final approval, update its state here manually.
-                        if batch.status != 'Approved':
-                            batch.status = 'Approved'
-                            batch.current_approver = None
-                            batch.save()
+                    if isinstance(obj, Trip):
+                        obj.status = 'Approved'
+                        obj.current_approver = None
+                        obj.save()
+                        # Sync corresponding batches
+                        for batch in obj.activity_batches.exclude(status='Rejected'):
+                            if batch.status != 'Approved':
+                                batch.status = 'Approved'
+                                batch.current_approver = None
+                                batch.save()
+                    else:
+                        # This IS a BulkActivityBatch
+                        obj.status = 'Approved'
+                        obj.current_approver = None
+                        obj.save()
+                        # Finalize Trip if this was its primary activity stream
+                        if obj.trip:
+                            obj.trip.status = 'Approved'
+                            obj.trip.current_approver = None
+                            obj.trip.save()
                     
                     # NEW: Generate actual Expense records from the approved batches
-                    _generate_expenses_from_batches(obj)
+                    if trip_obj:
+                        _generate_expenses_from_batches(trip_obj)
                     
                     Notification.objects.create(
                         user=requester,
@@ -2489,40 +2798,68 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
         try:
             if file:
                 file_name = file.name
+                import pandas as pd
+                df = pd.read_excel(file)
                 # drop the instruction row that sits just below the header
-                df = pd.read_excel(file, skiprows=[1])
+                import datetime as dt_mod
+
+                def _extract_excel_time(val, default_time):
+                    if pd.isna(val) or str(val).strip() in ('', 'nan', 'NaT'):
+                        return default_time
+                    
+                    # 1. Handle actual datetime/time objects (most robust)
+                    if isinstance(val, dt_mod.time):
+                        return val.strftime('%H:%M')
+                    if isinstance(val, dt_mod.datetime):
+                        return val.astimezone(timezone.get_current_timezone()).strftime('%H:%M') if timezone.is_aware(val) else val.strftime('%H:%M')
+                    
+                    s = str(val).strip()
+                    if not s: return default_time
+
+                    # 2. Handle numeric/float representation (Excel serial time)
+                    try:
+                        f = float(s)
+                        if 0 <= f < 1:
+                            total_secs = int(f * 86400)
+                            return f"{total_secs // 3600:02d}:{(total_secs % 3600) // 60:02d}"
+                    except (ValueError, TypeError):
+                        pass
+
+                    # 3. Handle string formats (HH:MM, HH:MM:SS, or "YYYY-MM-DD HH:MM:SS")
+                    if ' ' in s: # Common for datetime strings
+                        s = s.split(' ')[-1]
+                    
+                    parts = s.split(':')
+                    if len(parts) >= 2:
+                        # Extract the HH and MM, but ensure we don't pick up the date part if it survived the split
+                        hour_part = parts[0][-2:].zfill(2)
+                        min_part = parts[1][:2].zfill(2)
+                        return f"{hour_part}:{min_part}"
+                    
+                    return default_time
 
                 for index, row in df.iterrows():
                     if row.dropna().empty: continue
+                    
+                    # Date extraction
                     date_raw = row.get('Date', row.get('Date (YYYY-MM-DD)', ''))
                     if pd.isna(date_raw): continue
-                    date_val = str(date_raw).strip()
-                    if 'instruc' in date_val.lower(): continue
-                    if len(str(date_val)) > 10: date_val = str(date_val)[:10] # type: ignore
+                    
+                    if isinstance(date_raw, (dt_mod.date, dt_mod.datetime)):
+                        date_val = date_raw.strftime('%Y-%m-%d')
+                    else:
+                        date_val = str(date_raw).strip()
+                        if 'instruc' in date_val.lower(): continue
+                        # If string contains time, strip it
+                        if ' ' in date_val: date_val = date_val.split(' ')[0]
+                        if len(str(date_val)) > 10: date_val = str(date_val)[:10]
 
+                    # Time extraction
                     start_time_raw = row.get('Start Time', row.get('Time', ''))
-                    start_time_str = '09:00'
-                    if start_time_raw and str(start_time_raw).strip() not in ('', 'nan', 'NaT'):
-                        start_time_str = str(start_time_raw).strip()
-                        try:
-                            frac = float(start_time_str)
-                            if 0 <= frac < 1:
-                                total_secs = int(frac * 86400)
-                                start_time_str = f"{total_secs // 3600:02d}:{(total_secs % 3600) // 60:02d}"
-                        except (ValueError, TypeError): pass
-                        start_time_str = ':'.join(str(start_time_str).split(':')[:2]) # type: ignore
+                    start_time_str = _extract_excel_time(start_time_raw, '09:00')
 
                     reach_time_raw = row.get('Reach Time', row.get('End Time', ''))
-                    reach_time_str = '18:00'
-                    if reach_time_raw and str(reach_time_raw).strip() not in ('', 'nan', 'NaT'):
-                        reach_time_str = str(reach_time_raw).strip()
-                        try:
-                            frac = float(reach_time_str)
-                            if 0 <= frac < 1:
-                                total_secs = int(frac * 86400)
-                                reach_time_str = f"{total_secs // 3600:02d}:{(total_secs % 3600) // 60:02d}"
-                        except (ValueError, TypeError): pass
-                        reach_time_str = ':'.join(str(reach_time_str).split(':')[:2]) # type: ignore
+                    reach_time_str = _extract_excel_time(reach_time_raw, '18:00')
 
                     origin = str(row.get('From Location', row.get('from location', ''))).strip()
                     destination = str(row.get('To Location', row.get('to location', ''))).strip()
@@ -2536,7 +2873,8 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     })
             else:
                 # Direct JSON submission (resubmitting rejected rows)
-                rows = json_data if isinstance(json_data, list) else []
+                raw_rows = json_data if isinstance(json_data, list) else []
+                rows = raw_rows # Preserve all fields including odometer/subtype
                 from datetime import datetime
                 file_name = f"resubmitted_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             
@@ -2545,6 +2883,11 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
 
             if not user:
                 return Response({"error": "User not found in request"}, status=400)
+
+            # Link to trip object if possible
+            trip_obj = None
+            if trip_id:
+                trip_obj = Trip.objects.filter(trip_id=trip_id).first()
 
             rm, sm, hod = user.reporting_manager, user.senior_manager, user.hod_director
             
@@ -2559,7 +2902,7 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                  h_level = 1
 
             batch = BulkActivityBatch.objects.create(
-                user=user, trip_id=trip_id, file_name=file_name,
+                user=user, trip=trip_obj, trip_id=trip_id, file_name=file_name,
                 data_json=rows, status='Submitted',
                 current_approver=current_approver, hierarchy_level=h_level
             )
@@ -2570,7 +2913,7 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     parent_batch = BulkActivityBatch.objects.get(id=parent_batch_id)
                     parent_batch.status = 'Resolved'
                     parent_batch.save()
-                except BulkActivityBatch.DoesNotExist:
+                except (BulkActivityBatch.DoesNotExist, Trip.DoesNotExist):
                     pass
             
             if current_approver:
@@ -2609,25 +2952,23 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
         rejected_rows = [r for r in batch.data_json if r.get('_status') == 'Rejected']
         rejection_note = f" (with {len(rejected_rows)} lines rejected)" if rejected_rows else ""
         
+        # --- STAGE 1: Management Chain Forwarding ---
         # If the approver is not HR, do management chain logic
         if not is_hr:
             next_approver = None
             
-            # Try explicit levels first
-            if batch.hierarchy_level == 1:
-                next_approver = getattr(batch, 'senior_manager', None) or getattr(batch, 'hod_director', None)
-            elif batch.hierarchy_level == 2:
-                next_approver = getattr(batch, 'hod_director', None)
+            # --- Robust Recursive Hierarchy Logic ---
+            # Instead of looking at requester's fixed senior_manager/hod_director fields,
+            # we look at the manager of the person who just approved it (recursive progression).
+            assigned_approver = batch.current_approver or user
+            potential_manager = assigned_approver.reporting_manager
             
-            # DYNAMIC FALLBACK: If no explicit level but current user has a manager
-            if not next_approver:
-                potential_manager = user.reporting_manager
-                # Ensure we don't route back to requester or to a non-existent manager
-                if potential_manager and potential_manager != user and potential_manager != requester:
-                    next_approver = potential_manager
+            # Ensure we don't route back to requester or to the same manager
+            if potential_manager and potential_manager != requester and potential_manager != assigned_approver:
+                next_approver = potential_manager
 
             if next_approver:
-                # Move to next manager in chain
+                # Move to next manager in chain (Clean batch: no rejections)
                 batch.current_approver = next_approver
                 batch.hierarchy_level += 1
                 batch.save()
@@ -2636,19 +2977,18 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     batch.trip.current_approver = next_approver
                     batch.trip.hierarchy_level = batch.hierarchy_level
                     batch.trip.save()
-                    update_trip_lifecycle(batch.trip, f"Level {batch.hierarchy_level - 1} Approval", f"Bulk travel log approved by {user.name} and forwarded to {next_approver.name}.")
                 
                 Notification.objects.create(
                     user=next_approver,
-                    title="Pending Approval: Bulk Travel Log",
-                    message=f"{requester.name}'s bulk travel log requires your review (Forwarded from {user.name}).",
+                    title="Assignment: Bulk Travel Log",
+                    message=f"{requester.name}'s travel log is ready for your review.",
                     type='info'
                 )
                 Notification.objects.create(
                     user=requester,
-                    title=f"Forwarded by {user.name}",
-                    message=f"Your bulk travel log has been reviewed by {user.name}{rejection_note} and forwarded to {next_approver.name}.",
-                    type='warning' if rejected_rows else 'success'
+                    title="Batch Forwarded",
+                    message=f"Your log has been reviewed by {user.name} and forwarded to {next_approver.name}.",
+                    type='success'
                 )
                 return Response({"message": f"Batch approved and forwarded to {next_approver.name}."})
             else:
@@ -2662,20 +3002,19 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     batch.trip.status = 'Manager Approved'
                     batch.trip.current_approver = hr_head
                     batch.trip.save()
-                    update_trip_lifecycle(batch.trip, f"Approved by {user.name}", f"Approved by {user.name} and forwarded to HR ({hr_head.name if hr_head else 'Head'}).")
                 
                 Notification.objects.create(
                     user=requester,
-                    title="Management Reviewed",
-                    message=f"Your bulk travel log has been reviewed by management{rejection_note} and sent to HR for verification.",
-                    type='warning' if rejected_rows else 'success'
+                    title="Management Review Complete",
+                    message=f"Your travel log has been management-approved and sent to HR.",
+                    type='success'
                 )
                 
                 if hr_head:
                     Notification.objects.create(
                         user=hr_head,
-                        title="HR Verification Required",
-                        message=f"{requester.name}'s bulk travel log has been approved by {user.name} and awaits your verification.",
+                        title="Bulk Upload Ready",
+                        message=f"{requester.name}'s travel log is ready for HR verification.",
                         type='info'
                     )
                 return Response({"message": "Sent to HR for verification"})
@@ -2691,101 +3030,17 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
             if batch.trip.consider_as_local:
                 batch.trip.status = 'Approved' # Active for local
                 batch.trip.save()
-        # Create Expenses (Activities) for each row only when the final manager approves
-        created_ids = []
-        for row in (batch.data_json or []):
-            # SKIP REJECTED ROWS during final creation
-            if row.get('_status') == 'Rejected':
-                continue
+        # Create Expenses (Activities) for each row only when the final manager/HR approves
+        if batch.trip:
+            _generate_expenses_from_batches(batch.trip)
+            # Fetch IDs of expenses created from this batch for the response
+            created_ids = list(Expense.objects.filter(trip=batch.trip, description__icontains=f'"batch_id": {batch.id}').values_list('id', flat=True))
 
-            # 1. Get Origin and Destination from JSON
-            origin = str(row.get('origin_route', '')).strip()
-            destination = str(row.get('destination_route', '')).strip()
-
-            # 2. Map mode and subType to match DynamicExpenseGrid's expected options
-            # Since mode is not provided in the bulk template, we default to Car/Own Car
-            excel_mode = str(row.get('mode', '')).lower()
-            excel_vehicle = str(row.get('vehicle', '')).lower()
-            
-            mapped_mode = "Car / Cab"
-            mapped_subType = "Own Car"
-            
-            if 'bike' in excel_mode or '2 wheeler' in excel_mode:
-                mapped_mode = "Bike"
-                mapped_subType = "Own Bike" if 'own' in excel_vehicle else "Ride Bike"
-            elif 'bus' in excel_mode or 'metro' in excel_mode or 'public' in excel_mode:
-                mapped_mode = "Public Transport"
-                if 'metro' in excel_mode: mapped_subType = "Metro"
-                elif 'bus' in excel_mode: mapped_subType = "Local Bus"
-                else: mapped_subType = "Auto" # Default for PT
-            elif excel_mode: # Only if provided
-                if 'own' in excel_vehicle: mapped_subType = "Own Car"
-                elif 'company' in excel_vehicle: mapped_subType = "Company Car"
-                elif 'ride' in excel_vehicle or 'uber' in excel_vehicle or 'ola' in excel_vehicle or 'taxi' in excel_mode: 
-                    mapped_subType = "Ride Hailing"
-
-            # Pull and normalise the date. skip any bogus rows (e.g. the
-            # instruction/sample line that sneaked in from earlier uploads).
-            clean_date = str(row.get('date', '')).strip()
-            if not clean_date or 'instruc' in clean_date.lower():
-                # invalid/empty date – skip this row entirely
-                continue
-            # ensure format is YYYY-MM-DD; try parsing to detect bad values
-            try:
-                # this will raise ValueError for non‑ISO strings like "?  Instruc"
-                datetime.date.fromisoformat(clean_date)
-            except Exception:
-                continue
-
-            if len(str(clean_date)) > 10:
-                clean_date = str(clean_date)[:10] # type: ignore
-
-            desc_json = {
-                "natureOfVisit": row.get('visit_intent'), # Updated to use visit_intent as purpose was removed
-                "remarks": row.get('remarks'),
-                "from_bulk_upload": True,
-                "origin": origin,
-                "destination": destination,
-                "mode": mapped_mode,
-                "subType": mapped_subType,
-                "odoStart": row.get('odo_start', 0),
-                "odoEnd": row.get('odo_end', 0),
-                "time": {
-                    "boardingDate": clean_date,
-                    "boardingTime": row.get('start_time', '09:00'),
-                    "actualTime": row.get('reach_time', '18:00')
-                }
-            }
-            
-            def safe_float(val):
-                try: 
-                    return float(val) if val not in [None, '', '-', 'nan', 'NaN'] else 0.0 # type: ignore
-                except (ValueError, TypeError): 
-                    return 0.0
-
-            odo_s = safe_float(row.get('odo_start', 0))
-            odo_e = safe_float(row.get('odo_end', 0))
-
-            expense = Expense.objects.create(
-                trip=batch.trip,
-                date=clean_date,
-                category='Fuel', 
-                amount=0,       
-                paid_by='Self (Out of Pocket)',
-                description=json.dumps(desc_json),
-                status='Approved', 
-                odo_start=odo_s,
-                odo_end=odo_e,
-                distance=max(0.0, float(odo_e - odo_s)),
-                travel_mode=mapped_mode,
-                vehicle_type=mapped_subType,
-                latitude=0, longitude=0
-            )
-            created_ids.append(expense.id)
-            
         batch.status = 'Approved'
-        batch.created_expenses = created_ids
+        batch.created_expenses = created_ids # type: ignore
         batch.save()
+
+
         
         # Notify user
         Notification.objects.create(
@@ -2821,8 +3076,6 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
         )
         return Response({"message": "Batch rejected"})
 
-        return Response({"message": "Batch rejected"})
-
 from django.db import models
 from rest_framework.decorators import action
 
@@ -2830,6 +3083,7 @@ from rest_framework.decorators import action
 
 class MasterActionMixin:
     """Mixin to provide restore and include_deleted functionality to Master ViewSets."""
+    pagination_class = None
     def get_queryset(self):
         include_deleted = self.request.query_params.get('include_deleted') == 'true'
         if include_deleted:
@@ -3089,6 +3343,12 @@ class CustomMasterDefinitionViewSet(viewsets.ModelViewSet):
     serializer_class = CustomMasterDefinitionSerializer
 
 class CustomMasterValueViewSet(MasterActionMixin, viewsets.ModelViewSet):
+    permission_classes = [IsCustomAuthenticated]
+    queryset = CustomMasterValue.objects.all()
+    serializer_class = CustomMasterValueSerializer
+    filterset_fields = ['definition']
+
+
     permission_classes = [IsCustomAuthenticated]
     queryset = CustomMasterValue.objects.all()
     serializer_class = CustomMasterValueSerializer

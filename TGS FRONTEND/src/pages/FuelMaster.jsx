@@ -140,68 +140,132 @@ const FuelMaster = () => {
     const avg4Wheeler = rates.filter(r => r.vehicle_type === '4 Wheeler').reduce((acc, curr) => acc + parseFloat(curr.rate_per_km), 0) / (rates.filter(r => r.vehicle_type === '4 Wheeler').length || 1);
 
     return (
-        <div className="admin-mgmt-wrapper custom-scrollbar">
-            {/* Header Section */}
-            <div className="admin-mgmt-header">
-                <div className="flex items-center gap-4">
-                    <div className="bg-magenta-600 p-4 rounded-2xl shadow-lg shadow-magenta-100 rotate-3 group-hover:rotate-0 transition-transform">
-                        <Fuel className="text-white" size={32} />
+        <div className="fuel-master-module animate-fade-in" style={{ padding: '0', background: 'transparent' }}>
+            <div className="master-page-header" style={{ padding: '20px 40px 0 40px', background: 'transparent', border: 'none' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ width: '52px', height: '52px', background: 'var(--primary-light)', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', boxShadow: '0 4px 12px rgba(0, 128, 128, 0.1)' }}>
+                            <Fuel size={28} />
+                        </div>
+                        <div>
+                            <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '0', letterSpacing: '-0.02em' }}>Fuel Management</h1>
+                            {/* <p style={{ color: 'var(--text-dim)', fontSize: '1rem', fontWeight: 500 }}>Configure per-KM rates for dynamic trip expense calculations.</p> */}
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-800">mileage Reimbursement</h1>
-                        <p className="text-slate-500">Configure per-KM rates for dynamic trip expense calculations.</p>
-                    </div>
+                    <button className="tab-switcher-btn active" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 24px', borderRadius: '16px', fontWeight: 700, background: 'var(--primary)', color: 'white', border: 'none', boxShadow: '0 10px 20px -5px rgba(0, 128, 128, 0.3)' }} onClick={() => handleOpenForm()}>
+                        <Plus size={20} />
+                        Add New Rate
+                    </button>
                 </div>
-                <button className="add-btn hover:scale-105 active:scale-95 transition-all" onClick={() => handleOpenForm()}>
-                    <Plus size={20} />
-                    Add New Rate
-                </button>
             </div>
+            
+            <div className="content-inner-wrapper" style={{ padding: '20px 40px', maxWidth: '1600px', margin: '0 auto' }}>
+            <style>{`
+                .fm-stats-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                    gap: 1.5rem;
+                    margin: 2.5rem 0;
+                }
+                .fm-stat-card {
+                    background: white;
+                    padding: 1.75rem;
+                    border-radius: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 1.5rem;
+                    border: 1.5px solid var(--admin-border);
+                    position: relative;
+                    overflow: hidden;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+                }
+                .fm-stat-card:hover {
+                    transform: translateY(-4px);
+                    box-shadow: 0 12px 20px -5px rgba(0, 0, 0, 0.08);
+                    border-color: var(--primary);
+                }
+                .fm-accent-bar {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    bottom: 0;
+                    width: 5px;
+                    border-radius: 0 10px 10px 0;
+                }
+                .fm-icon-box {
+                    width: 56px;
+                    height: 56px;
+                    border-radius: 16px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                }
+                .fm-info {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.25rem;
+                }
+                .fm-label {
+                    font-size: 0.75rem;
+                    font-weight: 800;
+                    text-transform: uppercase;
+                    color: var(--text-muted);
+                    letter-spacing: 0.05em;
+                }
+                .fm-value {
+                    font-size: 1.75rem;
+                    font-weight: 900;
+                    color: var(--text-main);
+                    line-height: 1.2;
+                }
+                .fm-badge {
+                    font-size: 0.7rem;
+                    font-weight: 700;
+                    padding: 0.25rem 0.6rem;
+                    border-radius: 6px;
+                    width: fit-content;
+                    margin-top: 0.25rem;
+                }
+            `}</style>
 
             {/* Quick Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 mt-8">
-                <div className="premium-card bg-gradient-to-br from-white to-slate-50 border-0 shadow-sm p-6 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <MapPin size={64} />
+            <div className="fm-stats-grid">
+                <div className="fm-stat-card">
+                    <div className="fm-accent-bar bg-blue-500"></div>
+                    <div className="fm-icon-box bg-blue-50 text-blue-600">
+                        <MapPin size={24} />
                     </div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-                            <Layers size={18} />
-                        </div>
-                        <span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">States Covered</span>
-                    </div>
-                    <div className="text-3xl font-bold text-slate-800">{totalStates}</div>
-                    <div className="mt-2 text-xs text-blue-600 font-medium flex items-center gap-1">
-                        <CheckCircle2 size={12} /> Active Geographical Filters
+                    <div className="fm-info">
+                        <span className="fm-label">States Covered</span>
+                        <div className="fm-value">{totalStates}</div>
+                        <div className="fm-badge bg-blue-100 text-blue-700">Active Geographic Filters</div>
                     </div>
                 </div>
 
-                <div className="premium-card bg-gradient-to-br from-white to-slate-50 border-0 shadow-sm p-6 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <TrendingUp size={64} />
+                <div className="fm-stat-card">
+                    <div className="fm-accent-bar bg-purple-500"></div>
+                    <div className="fm-icon-box bg-purple-50 text-purple-600">
+                        <Car size={24} />
                     </div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
-                            <Car size={18} />
-                        </div>
-                        <span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Avg 2Wheeler Rate</span>
+                    <div className="fm-info">
+                        <span className="fm-label">Avg 2Wheeler Rate</span>
+                        <div className="fm-value">₹{avg2Wheeler.toFixed(2)}</div>
+                        <div className="fm-badge bg-purple-100 text-purple-700">Base for Local Travel</div>
                     </div>
-                    <div className="text-3xl font-bold text-slate-800">₹{avg2Wheeler.toFixed(2)}</div>
-                    <div className="mt-2 text-xs text-purple-600 font-medium italic">Base for Local Travel</div>
                 </div>
 
-                <div className="premium-card bg-gradient-to-br from-white to-slate-50 border-0 shadow-sm p-6 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <TrendingUp size={64} />
+                <div className="fm-stat-card">
+                    <div className="fm-accent-bar bg-emerald-500"></div>
+                    <div className="fm-icon-box bg-emerald-50 text-emerald-600">
+                        <TrendingUp size={24} />
                     </div>
-                    <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
-                            <Car size={18} />
-                        </div>
-                        <span className="text-sm font-semibold text-slate-500 uppercase tracking-wider">Avg 4Wheeler Rate</span>
+                    <div className="fm-info">
+                        <span className="fm-label">Avg 4Wheeler Rate</span>
+                        <div className="fm-value">₹{avg4Wheeler.toFixed(2)}</div>
+                        <div className="fm-badge bg-emerald-100 text-emerald-700">Premium Travel Logistics</div>
                     </div>
-                    <div className="text-3xl font-bold text-slate-800">₹{avg4Wheeler.toFixed(2)}</div>
-                    <div className="mt-2 text-xs text-emerald-600 font-medium italic">Premium Travel Logistics</div>
                 </div>
             </div>
 
@@ -286,7 +350,7 @@ const FuelMaster = () => {
                                             <div className="flex flex-col items-center gap-3 text-slate-400">
                                                 <TrendingUp size={48} className="opacity-20" />
                                                 <p className="font-medium">No fuel rates matching your search.</p>
-                                                <button className="text-magenta-600 text-sm font-bold hover:underline" onClick={() => handleOpenForm()}>
+                                                <button className="text-teal-600 text-sm font-bold hover:underline" onClick={() => handleOpenForm()}>
                                                     Set up your first rate
                                                 </button>
                                             </div>
@@ -301,120 +365,186 @@ const FuelMaster = () => {
 
             {/* Modal Form */}
             {isFormOpen && (
-                <div className="modal-overlay fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-                    <div className="modal-content bg-white w-full max-w-lg rounded-[2rem] shadow-2xl relative overflow-hidden animate-pop-in">
-                        {/* Modal Header Decoration */}
-                        <div className="h-2 bg-gradient-to-r from-magenta-400 to-blue-500"></div>
+                <div className="modal-overlay fixed inset-0 bg-slate-900/40 backdrop-blur-[6px] z-[999] flex items-center justify-center p-4">
+                    <style>{`
+                        .fm-modal {
+                            background: white;
+                            width: 100%;
+                            max-width: 550px;
+                            border-radius: 28px;
+                            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+                            position: relative;
+                            overflow: hidden;
+                            animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                        }
+                        @keyframes modalPop {
+                            from { transform: scale(0.9) translateY(20px); opacity: 0; }
+                            to { transform: scale(1) translateY(0); opacity: 1; }
+                        }
+                        .fm-modal-header {
+                            padding: 2.5rem 2.5rem 1.5rem;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: flex-start;
+                        }
+                        .fm-modal-body { padding: 0 2.5rem 2.5rem; }
+                        
+                        .fm-input-group { margin-bottom: 2rem; }
+                        .fm-input-group label {
+                            display: block;
+                            font-size: 0.75rem;
+                            font-weight: 800;
+                            color: var(--text-muted);
+                            text-transform: uppercase;
+                            letter-spacing: 0.05em;
+                            margin-bottom: 0.75rem;
+                        }
+                        
+                        .fm-modern-input {
+                            display: flex;
+                            align-items: center;
+                            background: #f8fafc;
+                            border: 1.5px solid var(--admin-border);
+                            border-radius: 16px;
+                            padding: 0 1.25rem;
+                            transition: all 0.2s;
+                        }
+                        .fm-modern-input:focus-within {
+                            border-color: var(--primary);
+                            background: white;
+                            box-shadow: 0 0 0 4px var(--primary-light);
+                        }
+                        .fm-modern-input svg { color: var(--text-muted); flex-shrink: 0; }
+                        .fm-modern-input input, .fm-modern-input select {
+                            border: none;
+                            background: transparent;
+                            width: 100%;
+                            padding: 1rem 0.75rem;
+                            font-weight: 600;
+                            font-size: 0.95rem;
+                        }
+                        .fm-modern-input input:focus { outline: none; }
 
-                        <div className="p-8">
-                            <div className="flex items-center justify-between mb-8">
-                                <div className="flex items-center gap-3">
-                                    <div className="p-3 bg-magenta-50 text-magenta-600 rounded-2xl">
-                                        <Fuel size={24} />
-                                    </div>
-                                    <div>
-                                        <h2 className="text-xl font-bold text-slate-800">{editingItem ? 'Edit Fuel Rate' : 'Initialize Rate'}</h2>
-                                        <p className="text-xs text-slate-500">Define per-km pricing policy</p>
-                                    </div>
-                                </div>
-                                <button onClick={() => setIsFormOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-                                    <X size={20} className="text-slate-400" />
-                                </button>
+                        .fm-type-selector {
+                            display: grid;
+                            grid-template-columns: 1fr 1fr;
+                            gap: 1rem;
+                        }
+                        .fm-type-card {
+                            background: #f8fafc;
+                            border: 2px solid transparent;
+                            border-radius: 18px;
+                            padding: 1.25rem;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            gap: 0.75rem;
+                        }
+                        .fm-type-card:hover:not(:disabled) { background: #f1f5f9; border-color: #e2e8f0; }
+                        .fm-type-card.active {
+                            background: var(--primary-light);
+                            border-color: var(--primary);
+                            color: var(--primary);
+                        }
+                        .fm-type-card:disabled { opacity: 0.4; cursor: not-allowed; grayscale: 1; }
+                        .fm-type-card strong { font-size: 0.85rem; font-weight: 800; text-transform: uppercase; }
+
+                        .fm-btn-group { display: grid; grid-template-columns: 1fr 1.5fr; gap: 1rem; margin-top: 1rem; }
+                        .fm-btn {
+                            padding: 1rem;
+                            border-radius: 16px;
+                            font-weight: 800;
+                            font-size: 0.95rem;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                        }
+                        .fm-btn.cancel { background: #f1f5f9; color: var(--text-muted); }
+                        .fm-btn.confirm { background: var(--primary); color: white; border: none; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+                        .fm-btn:hover { transform: translateY(-2px); }
+                        .fm-btn.confirm:hover { background: var(--primary-hover); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15); }
+                    `}</style>
+
+                    <div className="fm-modal">
+                        <div className="fm-modal-header">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-800 tracking-tight">{editingItem ? 'Edit Fuel Rate' : 'Initialize Rate'}</h2>
+                                {/* <p className="text-slate-500 font-medium text-sm">Configure per-kilometer pricing standards</p> */}
                             </div>
+                            <button onClick={() => setIsFormOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+                                <X size={24} className="text-slate-400" />
+                            </button>
+                        </div>
 
-                            <form onSubmit={handleSave} className="space-y-6">
-                                <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-                                        <MapPin size={14} className="text-magenta-500" />
-                                        Target State
-                                    </label>
-                                    <SearchableSelect
-                                        placeholder="Select State"
-                                        options={states}
-                                        value={formData.state}
-                                        onChange={(val) => {
-                                            // val can be a string (fallback) or a Location object (from DB)
-                                            const stateName = typeof val === 'string' ? val : (val?.name || '');
-                                            // When state changes, auto-pick first available vehicle type
-                                            const existingForState = new Set(
-                                                rates
-                                                    .filter(r => r.state?.toLowerCase() === stateName?.toLowerCase())
-                                                    .map(r => r.vehicle_type)
-                                            );
-                                            const preferredTypes = ['4 Wheeler', '2 Wheeler'];
-                                            const firstAvailable = preferredTypes.find(t => !existingForState.has(t));
-                                            setFormData({
-                                                ...formData,
-                                                state: stateName,
-                                                vehicle_type: firstAvailable || formData.vehicle_type
-                                            });
-                                        }}
-                                    />
-                                    <p className="text-[10px] text-slate-400 px-1">States are synchronized from the Geographic Master data.</p>
+                        <div className="fm-modal-body">
+                            <form onSubmit={handleSave}>
+                                <div className="fm-input-group">
+                                    <label>Target State</label>
+                                    <div className="fm-modern-input">
+                                        <MapPin size={20} />
+                                        <SearchableSelect
+                                            placeholder="Select Regional State"
+                                            options={states}
+                                            value={formData.state}
+                                            onChange={(val) => {
+                                                const stateName = typeof val === 'string' ? val : (val?.name || '');
+                                                const existingForState = new Set(
+                                                    rates.filter(r => r.state?.toLowerCase() === stateName?.toLowerCase()).map(r => r.vehicle_type)
+                                                );
+                                                const preferredTypes = ['4 Wheeler', '2 Wheeler'];
+                                                const firstAvailable = preferredTypes.find(t => !existingForState.has(t));
+                                                setFormData({ ...formData, state: stateName, vehicle_type: firstAvailable || formData.vehicle_type });
+                                            }}
+                                        />
+                                    </div>
+                                    <p className="mt-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Synchronized via Geographic Master</p>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-                                        <Car size={14} className="text-magenta-500" />
-                                        Vehicle Class
-                                    </label>
-                                    <div className="grid grid-cols-2 gap-3">
+                                <div className="fm-input-group">
+                                    <label>Vehicle Category</label>
+                                    <div className="fm-type-selector">
                                         {['2 Wheeler', '4 Wheeler'].map((vType) => {
                                             const isTaken = takenVehicles.has(vType);
-                                            const isSelected = formData.vehicle_type === vType;
+                                            const isActive = formData.vehicle_type === vType;
                                             return (
                                                 <button
                                                     key={vType}
                                                     type="button"
                                                     disabled={isTaken}
-                                                    onClick={() => !isTaken && setFormData({ ...formData, vehicle_type: vType })}
-                                                    title={isTaken ? `Rate for ${vType} already exists for this state` : ''}
-                                                    className={`py-3 px-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 relative
-                                                        ${isTaken
-                                                            ? 'bg-slate-100 border-slate-200 text-slate-300 cursor-not-allowed opacity-60'
-                                                            : isSelected
-                                                                ? 'bg-magenta-50 border-magenta-500 text-magenta-700'
-                                                                : 'bg-slate-50 border-transparent text-slate-500 grayscale hover:border-slate-300'
-                                                        }`}
+                                                    onClick={() => setFormData({ ...formData, vehicle_type: vType })}
+                                                    className={`fm-type-card ${isActive ? 'active' : ''}`}
                                                 >
-                                                    <Car size={24} />
-                                                    <span className="text-sm font-bold uppercase tracking-tighter">{vType}</span>
-                                                    {isTaken && (
-                                                        <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
-                                                            Already Set
-                                                        </span>
-                                                    )}
+                                                    <div className={`p-3 rounded-xl ${isActive ? 'bg-white' : 'bg-white'} shadow-sm`}>
+                                                        <Car size={24} />
+                                                    </div>
+                                                    <strong>{vType}</strong>
+                                                    {isTaken && <span className="text-[9px] font-black text-red-500">EXISTS</span>}
                                                 </button>
                                             );
                                         })}
                                     </div>
                                 </div>
 
-                                <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-                                        <IndianRupee size={14} className="text-magenta-500" />
-                                        Price (Per KM)
-                                    </label>
-                                    <div className="relative group">
-                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold group-focus-within:text-magenta-500">₹</div>
+                                <div className="fm-input-group">
+                                    <label>Fuel Rate (INR per KM)</label>
+                                    <div className="fm-modern-input">
+                                        <IndianRupee size={20} />
                                         <input
                                             type="number"
                                             step="0.01"
-                                            className="form-input w-full pl-10 pr-4 py-4 rounded-2xl bg-slate-50 border-transparent focus:bg-white focus:border-magenta-200 transition-all font-bold text-lg"
+                                            placeholder="0.00"
                                             value={formData.rate_per_km}
                                             onChange={(e) => setFormData({ ...formData, rate_per_km: e.target.value })}
-                                            placeholder="0.00"
                                             required
                                         />
                                     </div>
                                 </div>
 
-                                <div className="pt-4 flex gap-3">
-                                    <button type="button" className="flex-1 py-4 px-6 rounded-2xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition-all" onClick={() => setIsFormOpen(false)}>
-                                        Cancel
-                                    </button>
-                                    <button type="submit" className="flex-[2] py-4 px-6 rounded-2xl bg-magenta-600 text-white font-bold hover:bg-magenta-700 shadow-lg shadow-magenta-100 hover:shadow-magenta-200 transition-all">
-                                        {editingItem ? 'Save Updates' : 'Confirm Rate'}
+                                <div className="fm-btn-group">
+                                    <button type="button" className="fm-btn cancel" onClick={() => setIsFormOpen(false)}>Discard</button>
+                                    <button type="submit" className="fm-btn confirm">
+                                        {editingItem ? 'Update Standard' : 'Confirm Standard'}
                                     </button>
                                 </div>
                             </form>
@@ -422,6 +552,7 @@ const FuelMaster = () => {
                     </div>
                 </div>
             )}
+            </div>
         </div>
     );
 };

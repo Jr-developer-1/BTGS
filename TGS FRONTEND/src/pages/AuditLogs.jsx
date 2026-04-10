@@ -181,7 +181,7 @@ const AuditLogs = () => {
             <header className="page-header">
                 <div>
                     <h1>Audit Logs</h1>
-                    <p>Comprehensive trail of data changes and activities.</p>
+                    {/* <p>Comprehensive trail of data changes and activities.</p> */}
                 </div>
                 <div className="header-actions">
                     <button className="btn-secondary flex items-center gap-2" onClick={handleExport} disabled={isExporting || isLoading}>

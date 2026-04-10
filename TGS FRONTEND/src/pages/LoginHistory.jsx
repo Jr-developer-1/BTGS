@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { format } from 'date-fns';
 import { 
     Search, Filter, ShieldCheck, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, 
-    ChevronsLeft, ChevronsRight, Download, Calendar, RefreshCcw, Loader2 
+    ChevronsLeft, ChevronsRight, Download, Calendar, RefreshCcw, Loader2, Clock
 } from 'lucide-react';
 
 const LoginHistory = () => {
@@ -133,73 +133,139 @@ const LoginHistory = () => {
     const totalPages = pagination.totalPages || Math.ceil(pagination.count / 20);
 
     return (
-        <div className="page-container animate-fade-in">
-            <header className="page-header">
-                <div>
-                    <h1>Login History</h1>
-                    <p>Track user login and logout activities.</p>
-                </div>
-                <div className="header-actions">
-                    <button className="btn-secondary flex items-center gap-2" onClick={handleExport} disabled={isExporting || isLoading}>
-                        {isExporting ? <RefreshCcw size={18} className="animate-spin" /> : <Download size={18} />}
-                        {isExporting ? 'Exporting...' : 'Export CSV'}
-                    </button>
-                    <button className="btn-outline flex items-center gap-2" onClick={() => fetchLogs(pagination.currentPage)}>
-                        <RefreshCcw size={18} className={isLoading ? 'animate-spin' : ''} />
-                        Refresh
-                    </button>
-                </div>
-            </header>
-
-            <div className="filters-bar premium-shadow">
-                <div className="flex items-center gap-4 px-6 py-4 overflow-x-auto no-scrollbar">
-                    <div className="search-box search-box-premium">
-                        <Search size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search by user or IP..."
-                            value={filters.search}
-                            onChange={handleSearchChange}
-                            className="search-input-premium"
-                        />
+        <div className="login-history-module animate-fade-in" style={{ padding: '0', background: 'transparent' }}>
+            <div className="master-page-header" style={{ padding: '20px 40px 0 40px', background: 'transparent', border: 'none' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                    <div>
+                        <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px', letterSpacing: '-0.02em' }}>Login History</h1>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '1rem', fontWeight: 500 }}>Monitor and track system access and user sessions.</p>
                     </div>
-
-                    <div className="filter-group whitespace-nowrap">
-                        <Calendar size={16} />
-                        <input
-                            type="date"
-                            value={filters.startDate}
-                            onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                            className="filter-date"
-                        />
-                        <span>to</span>
-                        <input
-                            type="date"
-                            value={filters.endDate}
-                            onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                            className="filter-date"
-                        />
+                    <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
+                        <button 
+                            className="tab-switcher-btn" 
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                padding: '12px 24px', 
+                                borderRadius: '14px', 
+                                fontWeight: 700, 
+                                background: 'white', 
+                                border: '1px solid #e2e8f0',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+                                color: 'var(--text-main)'
+                            }}
+                            onClick={handleExport} 
+                            disabled={isExporting || isLoading}
+                        >
+                            {isExporting ? <RefreshCcw size={18} className="animate-spin" /> : <Download size={18} className="text-primary" />}
+                            {isExporting ? 'Exporting...' : 'Export CSV'}
+                        </button>
+                        <button 
+                            className="tab-switcher-btn active"
+                            style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                padding: '12px 24px', 
+                                borderRadius: '14px', 
+                                fontWeight: 700, 
+                                background: 'var(--primary)', 
+                                color: 'white',
+                                border: 'none',
+                                boxShadow: '0 10px 15px -3px rgba(0, 128, 128, 0.3)'
+                            }}
+                            onClick={() => fetchLogs(pagination.currentPage)}
+                        >
+                            <RefreshCcw size={18} className={isLoading ? 'animate-spin' : ''} />
+                            Refresh Data
+                        </button>
                     </div>
-
-                    <button className="text-btn text-xs font-bold uppercase text-slate-400 hover:text-burgundy whitespace-nowrap" onClick={clearFilters}>
-                        Clear Filters
-                    </button>
                 </div>
             </div>
 
-            <div className="table-container premium-shadow">
-                <table className="data-table">
-                    <thead>
-                        <tr>
-                            <th className="w-10"></th>
-                            <th>User</th>
-                            <th>IP Address</th>
-                            <th>Login Time</th>
-                            <th>Logout Time</th>
-                            <th>Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+            <div className="content-inner-wrapper" style={{ padding: '16px 40px', maxWidth: '1600px', margin: '0 auto' }}>
+                <div className="filters-bar glass" style={{ 
+                    background: 'rgba(255, 255, 255, 0.6)', 
+                    padding: '24px', 
+                    borderRadius: '20px', 
+                    marginBottom: '20px',
+                    border: '1px solid rgba(255, 255, 255, 0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '20px'
+                }}>
+                    <div className="flex items-center gap-6" style={{ flex: 1 }}>
+                        <div className="search-box search-box-premium" style={{ 
+                            background: 'white', 
+                            border: '1px solid #e2e8f0', 
+                            borderRadius: '14px',
+                            padding: '12px 20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                            flex: 1,
+                            maxWidth: '400px'
+                        }}>
+                            <Search size={20} className="text-slate-400" />
+                            <input
+                                type="text"
+                                placeholder="Search by user ID, Name or IP..."
+                                value={filters.search}
+                                onChange={handleSearchChange}
+                                style={{ border: 'none', outline: 'none', width: '100%', fontWeight: 500, color: 'var(--text-main)' }}
+                            />
+                        </div>
+
+                        <div className="filter-group" style={{ 
+                            background: 'white', 
+                            border: '1px solid #e2e8f0', 
+                            borderRadius: '14px',
+                            padding: '10px 20px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px'
+                        }}>
+                            <Calendar size={18} className="text-primary" />
+                            <input
+                                type="date"
+                                value={filters.startDate}
+                                onChange={e => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                                style={{ border: 'none', outline: 'none', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}
+                            />
+                            <span style={{ fontWeight: 800, color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase' }}>To</span>
+                            <input
+                                type="date"
+                                value={filters.endDate}
+                                onChange={e => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                                style={{ border: 'none', outline: 'none', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)' }}
+                            />
+                        </div>
+                    </div>
+
+                    <button 
+                        className="text-btn" 
+                        style={{ fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em' }}
+                        onClick={clearFilters}
+                    >
+                        Clear All Filters
+                    </button>
+                </div>
+
+                <div className="table-container premium-card custom-scrollbar" style={{ marginBottom: '32px', overflow: 'auto', borderRadius: '20px' }}>
+                    <table className="data-table">
+                        <thead>
+                            <tr style={{ background: 'rgba(241, 245, 249, 0.5)' }}>
+                                <th className="w-10"></th>
+                                <th style={{ padding: '20px 24px', fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>User Details</th>
+                                <th style={{ fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Network Context</th>
+                                <th style={{ fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Access Timestamp</th>
+                                <th style={{ fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Termination</th>
+                                <th style={{ fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', color: '#64748b' }}>Session Life</th>
+                            </tr>
+                        </thead>
+                        <tbody>
                         {isLoading ? (
                             <tr><td colSpan="6" className="text-center">Loading logs...</td></tr>
                         ) : logs.length === 0 ? (
@@ -207,31 +273,77 @@ const LoginHistory = () => {
                         ) : (
                             logs.map(log => (
                                 <React.Fragment key={log.id}>
-                                    <tr onClick={() => toggleRow(log.id)} className="cursor-pointer hover:bg-gray-50 transition-colors">
-                                        <td className="text-center text-muted">
-                                            {expandedRow === log.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                    <tr 
+                                        onClick={() => toggleRow(log.id)} 
+                                        className={`premium-row ${expandedRow === log.id ? 'active' : ''}`}
+                                        style={{ transition: 'all 0.3s ease', cursor: 'pointer' }}
+                                    >
+                                        <td className="text-center">
+                                            <div style={{ 
+                                                width: '28px', 
+                                                height: '28px', 
+                                                borderRadius: '8px', 
+                                                background: expandedRow === log.id ? 'var(--primary-light)' : '#f1f5f9',
+                                                color: expandedRow === log.id ? 'var(--primary)' : '#94a3b8',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                margin: '0 auto'
+                                            }}>
+                                                {expandedRow === log.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                            </div>
                                         </td>
-                                        <td className="font-medium">
-                                            <div className="flex items-center gap-2">
-                                                <div className="avatar small">{log.user_name?.charAt(0)}</div>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            <div className="flex items-center gap-4">
+                                                <div className="avatar" style={{ 
+                                                    width: '40px', 
+                                                    height: '40px', 
+                                                    borderRadius: '12px', 
+                                                    background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)',
+                                                    color: 'white',
+                                                    fontWeight: 800,
+                                                    fontSize: '1.1rem',
+                                                    boxShadow: '0 4px 10px rgba(0, 128, 128, 0.2)'
+                                                }}>
+                                                    {log.user_name?.charAt(0)}
+                                                </div>
                                                 <div>
-                                                    <div>{log.user_name}</div>
-                                                    <div className="text-xs text-muted">{log.user_email}</div>
+                                                    <div style={{ fontWeight: 800, color: 'var(--text-main)', fontSize: '0.95rem' }}>{log.user_name}</div>
+                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>{log.user_email}</div>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td>{log.ip_address || 'N/A'}</td>
-                                        <td>{format(new Date(log.login_time), 'PPpp')}</td>
-                                        <td>{log.logout_time ? format(new Date(log.logout_time), 'PPpp') : <span className="text-green-600 font-bold">Active</span>}</td>
+                                        <td>
+                                            <div className="flex items-center gap-2">
+                                                <ShieldCheck size={14} className="text-teal-500" />
+                                                <span style={{ fontWeight: 700, color: '#475569', fontSize: '0.85rem' }}>{log.ip_address || 'Internal Network'}</span>
+                                            </div>
+                                        </td>
+                                        <td style={{ fontWeight: 600, color: '#64748b', fontSize: '0.85rem' }}>{format(new Date(log.login_time), 'PPp')}</td>
                                         <td>
                                             {log.logout_time ? (
-                                                (() => {
-                                                    const diff = new Date(log.logout_time) - new Date(log.login_time);
-                                                    const minutes = Math.floor(diff / 60000);
-                                                    const hours = Math.floor(minutes / 60);
-                                                    return `${hours}h ${minutes % 60}m`;
-                                                })()
-                                            ) : '-'}
+                                                <span style={{ fontWeight: 600, color: '#94a3b8', fontSize: '0.85rem' }}>{format(new Date(log.logout_time), 'PPp')}</span>
+                                            ) : (
+                                                <div className="flex items-center gap-2" style={{ color: '#10b981', fontWeight: 800, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                                    <div className="pulse-glow" style={{ width: '8px', height: '8px' }}></div>
+                                                    Active Session
+                                                </div>
+                                            )}
+                                        </td>
+                                        <td>
+                                            {log.logout_time ? (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700, color: 'var(--text-main)' }}>
+                                                    <Clock size={14} className="text-slate-400" />
+                                                    {(() => {
+                                                        const diff = new Date(log.logout_time) - new Date(log.login_time);
+                                                        const minutes = Math.floor(diff / 60000);
+                                                        const hours = Math.floor(minutes / 60);
+                                                        return hours > 0 ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+                                                    })()}
+                                                </div>
+                                            ) : (
+                                                <span className="text-muted" style={{ fontSize: '0.8rem', fontWeight: 500 }}>Ongoing...</span>
+                                            )}
                                         </td>
                                     </tr>
                                     {expandedRow === log.id && (
@@ -337,7 +449,8 @@ const LoginHistory = () => {
                 </div>
             )}
         </div>
-    );
+    </div>
+);
 };
 
 export default LoginHistory;

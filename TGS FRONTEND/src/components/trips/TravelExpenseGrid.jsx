@@ -290,9 +290,18 @@ const TravelExpenseGrid = ({
         if (!tripId) return;
         try {
             const res = await api.get(`/api/bulk-activities/?trip_id=${tripId}`);
-            setBulkHistory(res.data);
+            // Handle both plain array and paginated { results: [...] } responses
+            const data = res.data;
+            if (Array.isArray(data)) {
+                setBulkHistory(data);
+            } else if (data && Array.isArray(data.results)) {
+                setBulkHistory(data.results);
+            } else {
+                setBulkHistory([]);
+            }
         } catch (err) {
             console.error("Failed to fetch bulk history:", err);
+            setBulkHistory([]);
         }
     };
 
@@ -339,6 +348,25 @@ const TravelExpenseGrid = ({
     const minDate = getMinDate();
     const maxDate = getMaxDate();
 
+    const getFullUrl = (path) => {
+        if (!path) return '';
+        let p = String(path).trim();
+
+        // Robust cleaning for common legacy formats
+        p = p.replace(/^\[u'/, '').replace(/^u'/, '').replace(/^'/, '');
+        p = p.replace(/'\]$/, '').replace(/'$/, '');
+
+        if (p.startsWith('http') || p.startsWith('data:')) return p;
+
+        // Detect base64 direct strings
+        if (p.startsWith('/9j/') || p.length > 500) {
+            return `data:image/jpeg;base64,${p}`;
+        }
+
+        const backendBase = api.defaults.baseURL || 'http://192.168.1.138:4567';
+        return `${backendBase}${p.startsWith('/') ? '' : '/'}${p}`;
+    };
+
     const isTripApproved = ['approved', 'hr approved', 'on-going'].includes(tripStatus?.toLowerCase());
 
     const isSameDayTrip = () => {
@@ -365,6 +393,14 @@ const TravelExpenseGrid = ({
 
                 if (!details.auditTrail) details.auditTrail = [];
                 if (!details.travelStatus) details.travelStatus = 'Completed';
+                
+                // Map jobReportAttachments from mobile to jobReportFiles for web UI
+                if (details.jobReportAttachments && !details.jobReportFiles) {
+                    details.jobReportFiles = details.jobReportAttachments.map(url => ({
+                        data: url,
+                        name: url.split('/').pop() || 'attachment'
+                    }));
+                }
 
                 const natureVal = exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category);
                 // enforce fixed fields for non-TRP trip ids and local travel entries
@@ -1446,8 +1482,32 @@ const TravelExpenseGrid = ({
 
     const previewBill = (bill) => {
         if (!bill) return;
-        const newWindow = window.open();
-        newWindow.document.write(`<img src="${bill}" style="max-width:100%; height:auto;" />`);
+        const url = getFullUrl(bill);
+        const win = window.open();
+        if (win) {
+            win.document.write(`
+                <html>
+                  <head>
+                    <title>Bill Preview</title>
+                    <style>
+                      body { margin:0; display:flex; justify-content:center; align-items:center; min-height:100vh; background:#1e293b; color:white; font-family:sans-serif; }
+                      img { max-width:95vw; max-height:95vh; box-shadow:0 10px 25px rgba(0,0,0,0.5); object-fit:contain; }
+                      iframe { width:100vw; height:100vh; border:none; background:white; }
+                      .nav { position:fixed; top:20px; right:20px; background:rgba(0,0,0,0.6); padding:10px 20px; border-radius:30px; }
+                      a { color:#60a5fa; text-decoration:none; font-weight:bold; }
+                    </style>
+                  </head>
+                  <body>
+                    <div class="nav"><a href="${url}" target="_blank">Open in New Tab</a></div>
+                    ${url.toLowerCase().includes('.pdf') || url.startsWith('data:application/pdf')
+                    ? `<iframe src="${url}"></iframe>`
+                    : `<img src="${url}" onerror="this.src='https://placehold.co/600x400?text=Preview+Not+Available'" />`
+                }
+                  </body>
+                </html>
+            `);
+            win.document.close();
+        }
     };
 
     const handleSelfieCapture = (id) => {
@@ -1861,7 +1921,7 @@ const TravelExpenseGrid = ({
                                                                                 {row.details.jobReportFiles && row.details.jobReportFiles.length > 0 && (
                                                                                     <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                                                                         {row.details.jobReportFiles.map((f, fi) => (
-                                                                                            <a key={fi} href={f.data} download={f.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', textDecoration: 'none' }}>
+                                                                                            <a key={fi} href={getFullUrl(f.data)} download={f.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', textDecoration: 'none' }}>
                                                                                                 <FileText size={13} /> {f.name}
                                                                                             </a>
                                                                                         ))}
@@ -2740,6 +2800,15 @@ const TravelExpenseGrid = ({
                                                                 )}
                                                             </div>
                                                         ))}
+                                                        {/* JOB REPORT ACTIVITY PROOFS */}
+                                                        {(row.details.jobReportFiles || []).map((f, idx) => (
+                                                            <div key={`jr-${idx}`} className="bill-thumbnail-mini" style={{ border: '2px solid #3b82f6', borderRadius: '4px' }}>
+                                                                <div className="thumb-preview jr-attachment-preview" onClick={() => previewBill(f.data)} style={{ position: 'relative' }}>
+                                                                    <FileText size={14} style={{ color: '#3b82f6' }} />
+                                                                    <span style={{ position: 'absolute', top: '-12px', left: '-5px', fontSize: '0.6rem', color: '#1d4ed8', fontWeight: 800, background: '#dbeafe', padding: '0 3px', border: '1px solid #3b82f6', borderRadius: '2px', transform: 'scale(0.85)' }}>JR</span>
+                                                                </div>
+                                                            </div>
+                                                        ))}
                                                         <div className="upload-controls-mini">
                                                             {!isLocked && !(row.nature === 'Food' && row.details.mealCategory && row.details.mealCategory !== 'Self Meal') && (
                                                                 <button className="add-bill-btn-mini" onClick={() => document.getElementById(`f-${row.id}`).click()} title="Add Bill">
@@ -2909,11 +2978,17 @@ const TravelExpenseGrid = ({
                                                         </div>
                                                     </td>
                                                     <td className="text-center">
-                                                        {r.bills && r.bills.length > 0 ? (
+                                                        {(r.bills && r.bills.length > 0) || (r.details?.jobReportFiles && r.details.jobReportFiles.length > 0) ? (
                                                             <div className="rev-bills-list">
-                                                                {r.bills.map((b, bidx) => (
+                                                                {(r.bills || []).map((b, bidx) => (
                                                                     <button key={bidx} className="rev-bill-preview" title={`View Bill ${bidx + 1}`} onClick={() => previewBill(b)}>
                                                                         <FileText size={14} />
+                                                                    </button>
+                                                                ))}
+                                                                {(r.details?.jobReportFiles || []).map((f, fidx) => (
+                                                                    <button key={`jr-${fidx}`} className="rev-bill-preview jr-attachment-badge" title={`Job Report Attachment ${fidx + 1}`} onClick={() => previewBill(f.data)} style={{ position: 'relative', border: '2px solid #3b82f6' }}>
+                                                                        <FileText size={14} style={{ color: '#3b82f6' }} />
+                                                                        <span style={{ position: 'absolute', top: '-8px', right: '-8px', fontSize: '0.55rem', color: '#1d4ed8', fontWeight: 900, background: '#dbeafe', padding: '0 2px', border: '1px solid #3b82f6', borderRadius: '2px', lineHeight: 1 }}>JR</span>
                                                                     </button>
                                                                 ))}
                                                             </div>
@@ -3342,22 +3417,30 @@ const TravelExpenseGrid = ({
 
                                         return (
                                             <div className="history-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                                {displayHistory.map(batch => {
-                                                    const rejectedCount = (batch.data_json || []).filter(r => r._status === 'Rejected').length;
+                                                {displayHistory.map((batch, batchIdx) => {
+                                                    // Null-safe guards to prevent crashes from missing API fields
+                                                    const batchStatus = batch.status || 'Unknown';
+                                                    const statusSlug = batchStatus.toLowerCase().replace(/ /g, '-');
+                                                    const rejectedCount = Array.isArray(batch.data_json)
+                                                        ? batch.data_json.filter(r => r && r._status === 'Rejected').length
+                                                        : 0;
+                                                    const createdAtDisplay = batch.created_at
+                                                        ? (() => { try { return new Date(batch.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return 'Unknown date'; } })()
+                                                        : 'Unknown date';
                                                     return (
-                                                        <div key={batch.id} className={`history-item status-${batch.status.toLowerCase().replace(' ', '-')}`} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
+                                                        <div key={batch.id ?? batchIdx} className={`history-item status-${statusSlug}`} style={{ background: 'white', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '16px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                                                             <div className="item-main" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                                 <div className="item-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                                                     <div style={{ background: '#f3f4f6', padding: '8px', borderRadius: '8px' }}>
                                                                         <FileText size={18} className="text-primary" />
                                                                     </div>
                                                                     <div>
-                                                                        <div style={{ fontWeight: 600, color: '#111827', fontSize: '0.9rem' }}>{batch.file_name}</div>
-                                                                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{new Date(batch.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                                                                        <div style={{ fontWeight: 600, color: '#111827', fontSize: '0.9rem' }}>{batch.file_name || 'Batch Upload'}</div>
+                                                                        <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{createdAtDisplay}</div>
                                                                     </div>
                                                                 </div>
                                                                 <div className="item-status">
-                                                                    <span className={`status-badge ${batch.status.toLowerCase().replace(' ', '-')}`} style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600 }}>{batch.status}</span>
+                                                                    <span className={`status-badge ${statusSlug}`} style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 600 }}>{batchStatus}</span>
                                                                 </div>
                                                             </div>
                                                             {rejectedCount > 0 && !processedBatchIds.includes(batch.id) && (

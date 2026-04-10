@@ -1,6 +1,6 @@
 .requests-page {
     padding: 24px;
-    max-width: 1400px;
+    max-width: 1600px;
     margin: 0 auto;
 }
 
@@ -8,65 +8,85 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 24px;
+    margin-bottom: 32px;
 }
 
 .req-header-top h1 {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text-primary);
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--text-main);
+    letter-spacing: -0.02em;
 }
 
 .req-filters {
     display: flex;
     gap: 12px;
+    background: rgba(241, 245, 249, 0.5);
+    padding: 8px;
+    border-radius: 16px;
+    border: 1px solid rgba(226, 232, 240, 0.8);
 }
 
 .filter-btn {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: 1px solid var(--border-color);
-    background: white;
-    font-weight: 500;
-    font-size: 0.85rem;
+    padding: 10px 20px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+}
+
+.filter-btn:hover {
+    color: var(--primary);
+    background: white;
 }
 
 .filter-btn.active {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-}
-
-.filter-btn.active svg {
-    color: white;
+    background: white;
+    color: var(--primary);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
 .requests-kanban {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
+    gap: 24px;
+    align-items: start;
+}
+
+@media (max-width: 1200px) {
+    .requests-kanban {
+        grid-template-columns: 1fr;
+    }
+    
+    .kanban-col {
+        height: auto !important;
+        max-height: 500px;
+    }
 }
 
 .kanban-col {
     background: rgba(255, 255, 255, 0.4);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 20px;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 180px);
+    height: calc(100vh - 220px);
     overflow: hidden;
     backdrop-filter: blur(10px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
 }
 
 .col-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border-color);
-    background: white;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+    background: rgba(255, 255, 255, 0.7);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -75,154 +95,173 @@
 .col-header-left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
 }
 
 .col-header h3 {
     font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--text-primary);
+    font-weight: 800;
+    color: var(--text-main);
     margin: 0;
 }
 
 .req-count {
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    padding: 2px 8px;
+    background: var(--primary-light);
+    color: var(--primary);
+    padding: 4px 12px;
     border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 800;
 }
 
 .col-body {
-    padding: 16px;
+    padding: 20px;
     overflow-y: auto;
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
 }
 
+/* Hide scrollbar for col-body */
 .col-body::-webkit-scrollbar {
-    width: 6px;
-}
-
-.col-body::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.1);
-    border-radius: 4px;
+    width: 0px;
+    display: none;
 }
 
 .req-card {
     background: white;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 16px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     cursor: pointer;
     position: relative;
     overflow: hidden;
 }
 
 .req-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05);
+    border-color: var(--primary-light);
+}
+
+.req-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--primary);
+    opacity: 0.3;
+}
+
+.req-card:hover::after {
+    opacity: 1;
 }
 
 .card-top-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 }
 
 .req-id {
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 800;
     color: var(--primary);
-    background: var(--bg-hover);
-    padding: 2px 8px;
-    border-radius: 4px;
+    background: var(--primary-light);
+    padding: 4px 10px;
+    border-radius: 6px;
 }
 
 .req-status {
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 4px 8px;
-    border-radius: 12px;
+    font-size: 0.65rem;
+    font-weight: 900;
+    padding: 4px 12px;
+    border-radius: 20px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 1px;
 }
 
 .req-status.pending,
 .req-status.submitted {
-    background: #fff8e1;
-    color: #f59e0b;
+    background: #fef3c7;
+    color: #92400e;
 }
 
 .req-status.approved,
-.req-status.settled {
-    background: #ecfdf5;
-    color: #10b981;
+.req-status.settled,
+.req-status.active {
+    background: #dcfce7;
+    color: #166534;
 }
 
 .req-status.rejected,
 .req-status.cancelled {
-    background: #fef2f2;
-    color: #ef4444;
+    background: #fee2e2;
+    color: #991b1b;
 }
 
-.req-status.on-going {
-    background: #eff6ff;
-    color: #3b82f6;
+.req-status.on-going,
+.req-status.processing {
+    background: #e0f2fe;
+    color: #075985;
 }
 
 .req-main h4 {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 6px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 8px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: -0.01em;
 }
 
 .req-meta {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    margin-bottom: 12px;
+    gap: 6px;
+    margin-bottom: 20px;
 }
 
 .meta-row {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.8rem;
-    color: var(--text-secondary);
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-weight: 500;
 }
 
 .req-footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-top: 1px solid var(--border-color);
-    padding-top: 12px;
+    border-top: 1px solid rgba(226, 232, 240, 0.8);
+    padding-top: 16px;
     margin-top: auto;
 }
 
 .req-amount {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-primary);
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--text-main);
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
+    letter-spacing: -0.02em;
 }
 
 .req-date {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: var(--text-light);
+    font-weight: 600;
 }
 
 .empty-col {
@@ -232,11 +271,26 @@
     justify-content: center;
     text-align: center;
     height: 100%;
-    color: var(--text-muted);
-    gap: 12px;
-    padding: 40px 20px;
+    color: var(--text-light);
+    gap: 16px;
+    padding: 60px 20px;
 }
 
 .empty-col p {
-    font-size: 0.85rem;
+    font-size: 0.95rem;
+    font-weight: 600;
 }
+
+.loading-state .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--primary-light);
+    border-top: 3px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}

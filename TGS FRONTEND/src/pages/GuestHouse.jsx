@@ -404,7 +404,7 @@ const GuestHouse = () => {
 
         const mandal = mandals.find(m => (m.name || '').trim().toLowerCase() === getFilterName(filters.mandal_name));
         const clusters = [
-            ...(mandal?.clusters || []), 
+            ...(mandal?.clusters || []),
             ...(mandal?.metro_polyten_cities || []),
             ...(mandal?.cities || []),
             ...(mandal?.towns || []),
@@ -440,13 +440,13 @@ const GuestHouse = () => {
         setVisitingLocations(getChildren('visitingLocation', filters));
 
     }, [
-        ghFormData.continent_id, 
-        ghFormData.country_id, 
-        ghFormData.state_id, 
-        ghFormData.district_id, 
-        ghFormData.mandal_id, 
-        ghFormData.cluster_id, 
-        continents, 
+        ghFormData.continent_id,
+        ghFormData.country_id,
+        ghFormData.state_id,
+        ghFormData.district_id,
+        ghFormData.mandal_id,
+        ghFormData.cluster_id,
+        continents,
         fullHierarchy
     ]);
 
@@ -553,28 +553,28 @@ const GuestHouse = () => {
 
         setGhFormData(prev => {
             const newState = { ...prev, [fieldName]: selectedValue };
-            
+
             // Cascading reset
-            if (type === 'continent') { 
-                newState.country_id = ''; newState.state_id = ''; newState.district_id = ''; 
-                newState.mandal_id = ''; newState.cluster_id = ''; newState.visiting_location_id = ''; 
+            if (type === 'continent') {
+                newState.country_id = ''; newState.state_id = ''; newState.district_id = '';
+                newState.mandal_id = ''; newState.cluster_id = ''; newState.visiting_location_id = '';
             }
-            if (type === 'country') { 
-                newState.state_id = ''; newState.district_id = ''; newState.mandal_id = ''; 
-                newState.cluster_id = ''; newState.visiting_location_id = ''; 
+            if (type === 'country') {
+                newState.state_id = ''; newState.district_id = ''; newState.mandal_id = '';
+                newState.cluster_id = ''; newState.visiting_location_id = '';
             }
-            if (type === 'state') { 
-                newState.district_id = ''; newState.mandal_id = ''; newState.cluster_id = ''; 
-                newState.visiting_location_id = ''; 
+            if (type === 'state') {
+                newState.district_id = ''; newState.mandal_id = ''; newState.cluster_id = '';
+                newState.visiting_location_id = '';
             }
-            if (type === 'district') { 
-                newState.mandal_id = ''; newState.cluster_id = ''; newState.visiting_location_id = ''; 
+            if (type === 'district') {
+                newState.mandal_id = ''; newState.cluster_id = ''; newState.visiting_location_id = '';
             }
-            if (type === 'mandal') { 
-                newState.cluster_id = ''; newState.visiting_location_id = ''; 
+            if (type === 'mandal') {
+                newState.cluster_id = ''; newState.visiting_location_id = '';
             }
-            if (type === 'cluster') { 
-                newState.visiting_location_id = ''; 
+            if (type === 'cluster') {
+                newState.visiting_location_id = '';
             }
 
             // Sync legacy location field if visiting location is selected
@@ -951,13 +951,13 @@ const GuestHouse = () => {
             const destMatchesGH = (req) => {
                 if (!selectedGuestHouse) return true;
                 const dest = (req.destination || '').toLowerCase();
-                const loc  = (selectedGuestHouse.location || '').toLowerCase();
-                const addr = (selectedGuestHouse.address  || '').toLowerCase();
-                const name = (selectedGuestHouse.name     || '').toLowerCase();
+                const loc = (selectedGuestHouse.location || '').toLowerCase();
+                const addr = (selectedGuestHouse.address || '').toLowerCase();
+                const name = (selectedGuestHouse.name || '').toLowerCase();
                 return (
-                    (loc  && (loc.includes(dest)  || dest.includes(loc)))  ||
-                    (addr && (addr.includes(dest)  || dest.includes(addr))) ||
-                    (name && (name.includes(dest)  || dest.includes(name)))
+                    (loc && (loc.includes(dest) || dest.includes(loc))) ||
+                    (addr && (addr.includes(dest) || dest.includes(addr))) ||
+                    (name && (name.includes(dest) || dest.includes(name)))
                 );
             };
 
@@ -988,7 +988,7 @@ const GuestHouse = () => {
                                     gh.location?.toLowerCase().includes(req.destination?.toLowerCase()) ||
                                     gh.address?.toLowerCase().includes(req.destination?.toLowerCase()) ||
                                     req.destination?.toLowerCase().includes(gh.location?.toLowerCase())
-                                  );
+                                );
 
                             return (
                                 <div key={req.trip_id} className="gh-list-item request-card-premium">
@@ -1132,7 +1132,7 @@ const GuestHouse = () => {
                                                 }}
                                             >
                                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}><path d="M3 7v13h18V7"/><rect x="8" y="3" width="3" height="4" rx="1"/><rect x="13" y="3" width="3" height="4" rx="1"/><path d="M3 11h18"/></svg>
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}><path d="M3 7v13h18V7" /><rect x="8" y="3" width="3" height="4" rx="1" /><rect x="13" y="3" width="3" height="4" rx="1" /><path d="M3 11h18" /></svg>
                                                     <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>No Rooms Configured</span>
                                                     <span style={{ fontSize: '0.82rem' }}>Add rooms to this guest house to see availability on the calendar.</span>
                                                 </div>
@@ -1166,7 +1166,7 @@ const GuestHouse = () => {
                                         <tr>
                                             <td colSpan={6} style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
                                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.35 }}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="14" strokeWidth="2"/><line x1="12" y1="14" x2="12" y2="14" strokeWidth="2"/><line x1="16" y1="14" x2="16" y2="14" strokeWidth="2"/></svg>
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.35 }}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /><line x1="8" y1="14" x2="8" y2="14" strokeWidth="2" /><line x1="12" y1="14" x2="12" y2="14" strokeWidth="2" /><line x1="16" y1="14" x2="16" y2="14" strokeWidth="2" /></svg>
                                                     <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>No Bookings This Month</span>
                                                     <span style={{ fontSize: '0.8rem' }}>Click any available date on the calendar above to create a booking.</span>
                                                 </div>
@@ -1273,7 +1273,7 @@ const GuestHouse = () => {
             ) : (
                 <>
                     <div className="gh-header-section">
-                        <div className="gh-title-group"><h1>Guest Houses</h1><p>Manage corporate accommodations</p></div>
+                        <div className="gh-title-group"><h1>Guest House</h1></div>
                         <div className="header-actions">
                             {canManageGH && (
                                 <button className="btn-secondary mr-2" onClick={() => { setTopLevelView('requests'); setActiveTab('requests'); }}>
@@ -1321,9 +1321,9 @@ const GuestHouse = () => {
                                     <Building2 size={40} color="var(--text-light)" />
                                 </div>
                                 <h3 className="gh-empty-title">No Guest Houses Found</h3>
-                                <p className="gh-empty-text">
+                                {/* <p className="gh-empty-text">
                                     {searchQuery ? `No results found for "${searchQuery}". Try a different search term.` : "Get started by adding your first guest house location."}
-                                </p>
+                                </p> */}
                                 {searchQuery && <button className="btn-secondary" onClick={() => setSearchQuery('')}>Clear Search</button>}
                                 {!searchQuery && <button className="btn-primary" onClick={handleAddNewGh}><Plus size={18} /> Add Guest House</button>}
                             </div>
@@ -1349,7 +1349,7 @@ const GuestHouse = () => {
 
                                             <div className="form-group" style={{ zIndex: 20 }}>
                                                 <label>Continent</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="Continent"
                                                     options={continents}
                                                     value={continents.find(c => c.id === ghFormData.continent_id)}
@@ -1359,7 +1359,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 19 }}>
                                                 <label>Country</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="Country"
                                                     options={countries}
                                                     value={countries.find(c => c.id === ghFormData.country_id)}
@@ -1369,7 +1369,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 18 }}>
                                                 <label>State</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="State"
                                                     options={states}
                                                     value={states.find(s => s.id === ghFormData.state_id)}
@@ -1379,7 +1379,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 17 }}>
                                                 <label>District</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="District"
                                                     options={districts}
                                                     value={districts.find(d => d.id === ghFormData.district_id)}
@@ -1389,7 +1389,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 16 }}>
                                                 <label>Mandal</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="Mandal"
                                                     options={mandals}
                                                     value={mandals.find(m => m.id === ghFormData.mandal_id)}
@@ -1399,7 +1399,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 15 }}>
                                                 <label>City / Cluster</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="Cluster"
                                                     options={clusters}
                                                     value={clusters.find(c => c.id === ghFormData.cluster_id)}
@@ -1409,7 +1409,7 @@ const GuestHouse = () => {
                                             </div>
                                             <div className="form-group" style={{ zIndex: 14 }}>
                                                 <label>Visiting Location</label>
-                                                <SearchableSelect 
+                                                <SearchableSelect
                                                     placeholder="Visiting Location"
                                                     options={visitingLocations}
                                                     value={visitingLocations.find(l => l.id === ghFormData.visiting_location_id)}

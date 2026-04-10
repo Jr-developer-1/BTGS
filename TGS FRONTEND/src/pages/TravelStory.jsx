@@ -108,7 +108,7 @@ const TravelStory = () => {
         p = p.replace(/'\]$/, '').replace(/'$/, '');
 
         if (p.startsWith('http') || p.startsWith('data:')) return p;
-        const backendBase = 'http://192.168.1.138:4567';
+        const backendBase = api.defaults.baseURL || 'http://192.168.1.138:4567';
         return `${backendBase}${p.startsWith('/') ? '' : '/'}${p}`;
     };
 
@@ -632,7 +632,32 @@ const TravelStory = () => {
                                                                 });
                                                             })()}
 
-                                                            {/* Job Reports / Activity Proofs */}
+                                                            {/* Activity Proofs from Job Report (within expense JSON) */}
+                                                            {(() => {
+                                                                try {
+                                                                    const d = JSON.parse(exp.description);
+                                                                    if (Array.isArray(d.jobReportAttachments) && d.jobReportAttachments.length > 0) {
+                                                                        return d.jobReportAttachments.map((jrAtt, jrIdx) => {
+                                                                            const fullUrl = getFullUrl(jrAtt);
+                                                                            return (
+                                                                                <div
+                                                                                    key={`jr-att-${jrIdx}`}
+                                                                                    className="receipt-preview-mini activity-proof-mini"
+                                                                                    onClick={() => setPreviewImageUrl(fullUrl)}
+                                                                                    title="Activity Proof (Job Report)"
+                                                                                    style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', border: '1px solid #4f46e5', cursor: 'pointer', background: '#eef2ff', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                                                                >
+                                                                                    <img src={fullUrl} alt="JR" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.8 }} />
+                                                                                    <div style={{ position: 'absolute', bottom: 0, right: 0, background: '#4f46e5', color: 'white', fontSize: '7px', padding: '0 2px', borderRadius: '2px 0 0 0' }}>JR</div>
+                                                                                </div>
+                                                                            );
+                                                                        });
+                                                                    }
+                                                                } catch (e) {}
+                                                                return null;
+                                                            })()}
+
+                                                            {/* Trip-Level Job Reports / Activity Proofs (Fallback match by date) */}
                                                             {travel.job_reports?.filter(jr => {
                                                                 const jrDate = new Date(jr.created_at).toLocaleDateString('en-IN', {
                                                                     day: 'numeric',
@@ -652,7 +677,7 @@ const TravelStory = () => {
                                                                         key={`jr-${idx}`}
                                                                         className="receipt-preview-mini job-report-mini"
                                                                         onClick={() => setPreviewImageUrl(fullUrl)}
-                                                                        title={`Activity Proof: ${jr.description}`}
+                                                                        title={`Trip Activity Proof: ${jr.description}`}
                                                                         style={{ width: '40px', height: '40px', borderRadius: '4px', overflow: 'hidden', border: '1px solid #4f46e5', background: '#eef2ff', cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                                     >
                                                                         <div className="jr-icon-overlay" style={{ fontSize: '9px', fontWeight: 'bold', color: '#4f46e5', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>

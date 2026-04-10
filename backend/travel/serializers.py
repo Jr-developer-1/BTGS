@@ -369,6 +369,7 @@ class TripSerializer(serializers.ModelSerializer):
     job_reports = JobReportSerializer(many=True, read_only=True)
     activity_batches = BulkActivityBatchSerializer(many=True, read_only=True)
     current_approver_name = serializers.ReadOnlyField(source='current_approver.name')
+    approval_chain = serializers.SerializerMethodField()
 
     class Meta:
         model = Trip
@@ -380,9 +381,9 @@ class TripSerializer(serializers.ModelSerializer):
             'vehicle_type', 'members', 'lifecycle_events', 'created_at', 'updated_at',
             'advances', 'expenses', 'odometer', 'claim', 'reporting_manager_name', 'senior_manager_name', 'hod_director_name',
             'current_approver', 'current_approver_name', 'total_approved_advance', 'total_expenses', 'wallet_balance', 'has_gh_booking', 'has_vehicle_booking',
-            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches'
+            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches', 'approval_chain'
         ]
-        read_only_fields = ('trip_id', 'user', 'user_name', 'user_emp_id', 'status', 'cost_estimate', 'created_at', 'updated_at', 'lifecycle_events')
+        read_only_fields = ('trip_id', 'user', 'user_name', 'user_emp_id', 'status', 'cost_estimate', 'created_at', 'updated_at', 'lifecycle_events', 'approval_chain')
 
     def get_user_name(self, obj):
         # Use snapshot if available, otherwise fallback to dynamic property
@@ -397,6 +398,16 @@ class TripSerializer(serializers.ModelSerializer):
             (float(a.executive_approved_amount) if float(a.executive_approved_amount) > 0 else float(a.requested_amount))
             for a in obj.advances.filter(status__in=['Paid', 'Transferred', 'COMPLETED'])
         )
+
+    def get_approval_chain(self, obj):
+        if obj.approval_chain:
+            return obj.approval_chain
+        
+        # Fallback for old records: rebuild on the fly
+        from .utils import build_approval_chain
+        if obj.user:
+            return build_approval_chain(obj.user)
+        return []
 
     def get_total_expenses(self, obj):
         return float(sum(e.amount for e in obj.expenses.all()))

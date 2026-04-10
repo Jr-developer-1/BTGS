@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import '../services/trip_service.dart';
+import '../models/trip_model.dart';
+import 'live_map_screen.dart';
 
 class TeamTripDetailsScreen extends StatefulWidget {
   final String? tripId;
@@ -520,7 +522,35 @@ class _TeamTripDetailsScreenState extends State<TeamTripDetailsScreen> {
             ),
 
           GestureDetector(
-            onTap: hasCoord ? () => _openGoogleMaps(lat, lng) : null,
+            onTap: hasCoord ? () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => LiveMapScreen(
+                    trip: Trip(
+                      id: tripId,
+                      tripId: tripId,
+                      userId: employeeId,
+                      purpose: purpose,
+                      destination: destination,
+                      source: trip['source'] ?? trip['user_base_location'] ?? 'Origin',
+                      dates: '',
+                      startDate: '',
+                      endDate: '',
+                      status: 'Ongoing',
+                      costEstimate: '0',
+                      travelMode: '',
+                      vehicleType: '',
+                      employee: employeeName,
+                      title: purpose,
+                      members: [],
+                      lifecycleEvents: [],
+                    ),
+                    isOwner: false, // Manager viewing subordinate → use backend polling, NOT manager's own GPS
+                  ),
+                ),
+              );
+            } : null,
             child: Container(
               height: 140,
               width: double.infinity,
@@ -578,7 +608,7 @@ class _TeamTripDetailsScreenState extends State<TeamTripDetailsScreen> {
                         ),
                       const SizedBox(height: 4),
                       Text(
-                        isLoggedOut ? 'Last Known Location (Employee Logged Out)' : 'Tap to Track Live in Maps',
+                        isLoggedOut ? 'Last Known Location (Employee Logged Out)' : 'Tap to Open Live Tracker Hub',
                         style: GoogleFonts.plusJakartaSans(
                           color: isLoggedOut ? Colors.orange[200] : Colors.white60,
                           fontSize: 10,

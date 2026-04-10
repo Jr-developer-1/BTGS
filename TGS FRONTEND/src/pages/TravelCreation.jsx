@@ -28,13 +28,6 @@ const TravelCreation = () => {
     const { showToast } = useToast();
     const navigate = useNavigate();
 
-    useEffect(() => {
-        if (user && user.role !== 'oe' && user.designation !== 'OE') {
-            showToast("Access Denied: Only OE users can create Tour Plans.", "error");
-            navigate('/trips');
-        }
-    }, [user, navigate, showToast]);
-
     const [file, setFile] = useState(null);
     const [policyAccepted, setPolicyAccepted] = useState(false);
     const [reportingInfo, setReportingInfo] = useState({ name: 'Loading...', id: null });
@@ -47,9 +40,10 @@ const TravelCreation = () => {
             return `MMU ITS ${month}${year}`;
         })(),
         month: new Date().toISOString().slice(0, 7), // YYYY-MM
-        project: 'General',
+        project: 'Loading...',
         locationCode: 'VIJ',
         locationName: 'Vijayawada',
+        positionCode: 'EMP',
         reportingManager: null
     });
 
@@ -77,7 +71,7 @@ const TravelCreation = () => {
                 monthFormatted = `${month}${year}`;
             }
 
-            const fileName = `ITS-${formData.project || 'GENERAL'}-${formData.locationCode || 'VIJ'}-${monthFormatted}.xlsx`;
+            const fileName = `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}.xlsx`;
             link.setAttribute('download', fileName);
             document.body.appendChild(link);
             link.click();
@@ -109,15 +103,40 @@ const TravelCreation = () => {
                     }
 
                     const projectName = me.project?.name || '';
-                    let derivedCode = formData.project; // keep existing if no project assigned
-                    if (projectName) {
-                        // '104 Project' → 'PROJ-104', otherwise use first 6 chars uppercased
+                    const projectCode = me.project?.code || '';
+                    let derivedCode = projectCode;
+                    
+                    if (!derivedCode && projectName) {
                         const numMatch = projectName.match(/(\d+)/);
                         derivedCode = numMatch
                             ? `PROJ-${numMatch[1]}`
                             : projectName.slice(0, 6).toUpperCase();
                     }
-                    setFormData(prev => ({ ...prev, project: derivedCode, locationCode: locCode, locationName: locName }));
+                    if (!derivedCode) derivedCode = 'GENERAL';
+
+                    const positionName = me.position?.name || 'Employee';
+                    let derivedPosition = 'EMP';
+                    if (positionName) {
+                        // If the first word is short (like 'OE'), use it directly
+                        const words = positionName.split(' ').filter(w => w.length > 0);
+                        if (words.length > 0) {
+                            const firstWord = words[0];
+                            if (firstWord.length <= 3) {
+                                derivedPosition = firstWord.toUpperCase();
+                            } else {
+                                // Fallback to acronym of first letter of each word
+                                derivedPosition = words.map(w => w[0]).join('').toUpperCase();
+                            }
+                        }
+                    }
+
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        project: derivedCode, 
+                        locationCode: locCode, 
+                        locationName: locName,
+                        positionCode: derivedPosition
+                    }));
                 }
 
                 if (me && me.position?.reporting_to?.length > 0) {
@@ -344,7 +363,7 @@ const TravelCreation = () => {
                                             const year = date.getFullYear().toString().slice(-2);
                                             monthFormatted = `${month}${year}`;
                                         }
-                                        return `ITS-${formData.project || 'GENERAL'}-${formData.locationCode || 'VIJ'}-${monthFormatted}.xlsx`;
+                                        return `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}.xlsx`;
                                     })()}</span>
                                 </button>
                                 <br />

@@ -5,6 +5,12 @@ import base64
 from django.conf import settings
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, action
+import re
+import string
+import random
+import datetime
+from django.core.mail import send_mail
+from api_management.services import fetch_employee_data
 from rest_framework.response import Response
 from rest_framework import status, generics, viewsets
 from rest_framework.permissions import AllowAny
@@ -100,6 +106,7 @@ def login_view(request):
         
         return Response({
             'token': token,
+            'requires_password_change': user.requires_password_change,
             'user': {
                 'id': user.id,
                 'employee_id': user.employee_id,
@@ -118,6 +125,212 @@ def login_view(request):
         print(f"DEBUG: Login Error: {str(e)}")
         print(traceback.format_exc())
         return Response({'error': 'Authentication server error. Please retry later or contact IT.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+@api_view(['POST'])
+@permission_classes([IsCustomAuthenticated])
+def change_password_view(request):
+    user = request.custom_user
+    current_password = request.data.get('current_password')
+    new_password = request.data.get('new_password')
+    
+    if not current_password or not new_password:
+        return Response({'error': 'Current and new password are required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    if user.password_hash != hash_password(current_password):
+        return Response({'error': 'Invalid current password'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # Validate new password
+    if len(new_password) < 8 or len(new_password) > 12:
+        return Response({'error': 'Password must be between 8 and 12 characters'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[A-Z]', new_password):
+        return Response({'error': 'Password must contain at least one uppercase letter'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[0-9]', new_password):
+        return Response({'error': 'Password must contain at least one number'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', new_password):
+        return Response({'error': 'Password must contain at least one special character'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    user.password_hash = hash_password(new_password)
+    user.requires_password_change = False
+    user.save()
+    
+    return Response({'message': 'Password changed successfully'})
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def request_otp_view(request):
+    employee_code = request.data.get('employee_id')
+    if not employee_code:
+        return Response({'error': 'Employee ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        user = User.objects.get(employee_id__iexact=employee_code)
+    except User.DoesNotExist:
+        return Response({'error': 'User with this ID is not registered or found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+    data = fetch_employee_data(employee_id_filter=employee_code)
+    if "error" in data or data.get('count') == 0 or not data.get('results'):
+        return Response({'error': 'Failed to verify employee with external system'}, status=status.HTTP_502_BAD_GATEWAY)
+        
+    employee_data = data['results'][0]
+    first_name = employee_data.get('employee', {}).get('name', 'User')
+    email = employee_data.get('employee', {}).get('email')
+    
+    if not email:
+        email = f"{employee_code.lower()}@example.com"
+        
+    # Generate secure 6-digit OTP
+    import secrets
+    otp = ''.join(secrets.choice(string.digits) for _ in range(6))
+    
+    user.reset_otp = otp
+    user.reset_otp_expiry = timezone.now() + datetime.timedelta(minutes=10)
+    user.save()
+    
+    subject = 'BTGS Portal - Password Reset OTP'
+    plain_message = f'Hello {first_name},\n\nWe received a request to reset your password. Your OTP is: {otp}\n\nThis OTP will expire in 10 minutes.\n\nIf you did not request this, please ignore this email.'
+    
+    html_message = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background-color: #f8fafc;
+                margin: 0;
+                padding: 0;
+            }}
+            .container {{
+                max-width: 600px;
+                margin: 40px auto;
+                background-color: #ffffff;
+                border-radius: 8px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+                overflow: hidden;
+                border: 1px solid #e2e8f0;
+            }}
+            .header {{
+                background-color: #1e293b;
+                padding: 24px 0;
+                text-align: center;
+            }}
+            .header h1 {{
+                color: #ffffff;
+                margin: 0;
+                font-size: 28px;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+            }}
+            .content {{
+                padding: 32px;
+                color: #334155;
+                line-height: 1.6;
+                font-size: 15px;
+            }}
+            .content h2 {{
+                color: #0f172a;
+                font-size: 22px;
+                margin-top: 0;
+            }}
+            .password-box {{
+                background-color: #f1f5f9;
+                border: 1px solid #cbd5e1;
+                padding: 16px;
+                margin: 24px 0;
+                font-size: 32px;
+                font-family: 'Courier New', Courier, monospace;
+                font-weight: bold;
+                color: #0284c7;
+                text-align: center;
+                letter-spacing: 10px;
+                border-radius: 6px;
+            }}
+            .footer {{
+                background-color: #f8fafc;
+                padding: 20px;
+                text-align: center;
+                font-size: 12px;
+                color: #64748b;
+                border-top: 1px solid #e2e8f0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>BTGS Portal</h1>
+            </div>
+            <div class="content">
+                <h2>Password Reset Validation (OTP)</h2>
+                <p>Hello {first_name},</p>
+                <p>We received a request to reset the password for your corporate account. Please use the 6-digit OTP below to securely reset your password. This OTP will expire in 10 minutes.</p>
+                
+                <div class="password-box">
+                    {otp}
+                </div>
+                
+                <p>If you did not request this password reset, your account remains secure. Please contact the IT Administration team immediately if you receive this unexpectedly.</p>
+                
+                <p>Best Regards,<br><strong>The BTGS Team</strong></p>
+            </div>
+            <div class="footer">
+                &copy; {datetime.datetime.now().year} BTGS (Bavya-TGS). All rights reserved.<br/>
+                This is an automated message, please do not reply.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    send_mail(
+        subject,
+        plain_message,
+        settings.DEFAULT_FROM_EMAIL,
+        [email],
+        fail_silently=False,
+        html_message=html_message
+    )
+    
+    return Response({'message': 'OTP sent securely to your email address.'})
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def reset_password_otp_view(request):
+    employee_code = request.data.get('employee_id')
+    otp = request.data.get('otp')
+    new_password = request.data.get('new_password')
+    
+    if not employee_code or not otp or not new_password:
+        return Response({'error': 'Employee ID, OTP, and new password are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        user = User.objects.get(employee_id__iexact=employee_code)
+    except User.DoesNotExist:
+        return Response({'error': 'User with this ID is not registered or found.'}, status=status.HTTP_404_NOT_FOUND)
+        
+    if user.reset_otp != otp:
+        return Response({'error': 'Invalid OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    if not user.reset_otp_expiry or timezone.now() > user.reset_otp_expiry:
+        return Response({'error': 'OTP has expired. Please request a new one.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # Validate new password
+    if len(new_password) < 8 or len(new_password) > 12:
+        return Response({'error': 'Password must be between 8 and 12 characters'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[A-Z]', new_password):
+        return Response({'error': 'Password must contain at least one uppercase letter'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[0-9]', new_password):
+        return Response({'error': 'Password must contain at least one number'}, status=status.HTTP_400_BAD_REQUEST)
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', new_password):
+        return Response({'error': 'Password must contain at least one special character'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    user.password_hash = hash_password(new_password)
+    user.requires_password_change = False
+    user.reset_otp = None
+    user.reset_otp_expiry = None
+    user.save()
+    
+    return Response({'message': 'Password has been successfully updated.'})
 
 @api_view(['GET'])
 @permission_classes([IsCustomAuthenticated])

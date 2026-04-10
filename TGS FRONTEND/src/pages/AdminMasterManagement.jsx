@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/api';
 import {
-    Plus, Edit2, Trash2, AlignLeft, Layers, AlertCircle, RotateCcw, Eye, EyeOff
+    Plus, Edit2, Trash2, AlignLeft, Layers, AlertCircle, RotateCcw, Eye, EyeOff,
+    Briefcase, Zap, MapPin, Coffee, Shield
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
+import '../styles/AdminMasterManagement.css';
 
 const CONFIG_GROUPS = [
     {
         id: 'travel',
-        label: 'Travel Module',
+        label: 'Long Distance',
+        icon: <Briefcase size={18} />,
         tables: [
             { id: 'travel-mode', name: 'Travel Modes', endpoint: 'travel-mode-masters', fields: ['mode_name', 'status'] },
             { id: 'travel-provider', name: 'Providers', endpoint: 'provider-masters', fields: ['provider_name', 'is_flight', 'is_train', 'is_bus', 'is_intercity_cab', 'status'] },
@@ -23,6 +26,7 @@ const CONFIG_GROUPS = [
     {
         id: 'local',
         label: 'Local Conveyance',
+        icon: <Zap size={18} />,
         tables: [
             { id: 'local-mode', name: 'Travel Modes', endpoint: 'local-travel-mode-masters', fields: ['mode_name', 'status'] },
             { id: 'local-provider', name: 'Providers', endpoint: 'local-provider-masters', fields: ['provider_name', 'is_car', 'is_bike', 'is_auto', 'is_bus', 'is_metro', 'status'] },
@@ -32,6 +36,7 @@ const CONFIG_GROUPS = [
     {
         id: 'stay',
         label: 'Stay & Lodging',
+        icon: <MapPin size={18} />,
         tables: [
             { id: 'stay-type', name: 'Stay Types', endpoint: 'stay-type-masters', fields: ['stay_type', 'status'] },
             { id: 'room-type', name: 'Room Types', endpoint: 'room-type-masters', fields: ['room_type', 'status'] },
@@ -42,6 +47,7 @@ const CONFIG_GROUPS = [
     {
         id: 'food',
         label: 'Food & Refreshments',
+        icon: <Coffee size={18} />,
         tables: [
             { id: 'meal-cat', name: 'Meal Categories', endpoint: 'meal-category-masters', fields: ['category_name', 'status'] },
             { id: 'meal-type', name: 'Meal Types', endpoint: 'meal-type-masters', fields: ['meal_type', 'status'] },
@@ -52,6 +58,7 @@ const CONFIG_GROUPS = [
     {
         id: 'incidental',
         label: 'Incidental Expenses',
+        icon: <Shield size={18} />,
         tables: [
             { id: 'incidental-type', name: 'Incidental Types', endpoint: 'incidental-type-masters', fields: ['expense_type', 'category', 'status'] }
         ]
@@ -181,13 +188,18 @@ export default function AdminMasterManagement() {
     };
 
     return (
-        <div className="content-inner animate-fade-in">
-            <div className="admin-mgmt-header">
-                <h1>Master Data Management</h1>
-                <p>Configure system hierarchies and static master tables for all application modules.</p>
+        <div className="admin-mgmt-module animate-fade-in" style={{ padding: '0', background: 'transparent' }}>
+            <div className="master-page-header" style={{ padding: '20px 40px 0 40px', background: 'transparent', border: 'none' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                        <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px', letterSpacing: '-0.02em' }}>Master Management</h1>
+                        {/* <p style={{ color: 'var(--text-muted)', fontSize: '1rem', fontWeight: 500 }}>Global configuration for system-wide master tables.</p> */}
+                    </div>
+                </div>
             </div>
 
-            <div className="trip-category-toggle">
+            <div className="content-inner-wrapper" style={{ padding: '20px 40px', maxWidth: '1600px', margin: '0 auto' }}>
+                <div className="module-nav">
                 {CONFIG_GROUPS.map(group => (
                     <button
                         key={group.id}
@@ -197,7 +209,7 @@ export default function AdminMasterManagement() {
                             setActiveTab(group.tables[0]);
                         }}
                     >
-                        <Layers size={18} />
+                        {group.icon}
                         {group.label}
                     </button>
                 ))}
@@ -205,7 +217,7 @@ export default function AdminMasterManagement() {
 
             <div className="admin-content-grid">
                 {/* Sidebar */}
-                <div className="glass premium-card">
+                <div className="sidebar-panel">
                     <h3 className="sidebar-title">Available Tables</h3>
                     <div className="master-selector-list">
                         {activeGroup.tables.map(table => (
@@ -222,22 +234,35 @@ export default function AdminMasterManagement() {
                 </div>
 
                 {/* Main Data Panel */}
-                <div className="glass premium-card">
+                <div className="main-table-panel">
                     <div className="panel-header">
-                        <h2>{activeTab.name}</h2>
+                        <h2>{activeTab.name} Registry</h2>
                         <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                            <button 
-                                className={`action-btn ${showDeleted ? 'active' : ''}`} 
-                                style={{ width: 'auto', padding: '0 12px', fontSize: '12px', height: '36px', display: 'flex', gap: '6px', alignItems: 'center', background: showDeleted ? '#eff6ff' : 'white', border: `1px solid ${showDeleted ? '#3b82f6' : '#e2e8f0'}`, color: showDeleted ? '#2563eb' : '#64748b' }}
+                            <button
+                                className={`action-btn ${showDeleted ? 'active' : ''}`}
+                                style={{
+                                    width: 'auto',
+                                    padding: '0 12px',
+                                    fontSize: '12px',
+                                    height: '40px',
+                                    display: 'flex',
+                                    gap: '6px',
+                                    alignItems: 'center',
+                                    background: showDeleted ? 'var(--primary-light)' : '#f8fafc',
+                                    border: `1.5px solid ${showDeleted ? 'var(--primary)' : '#e2e8f0'}`,
+                                    color: showDeleted ? 'var(--primary)' : 'var(--text-muted)',
+                                    borderRadius: '10px',
+                                    fontWeight: '600'
+                                }}
                                 onClick={() => setShowDeleted(!showDeleted)}
                                 title={showDeleted ? "Hide inactive records" : "Show deleted/inactive records"}
                             >
-                                {showDeleted ? <EyeOff size={14} /> : <Eye size={14} />}
+                                {showDeleted ? <EyeOff size={16} /> : <Eye size={16} />}
                                 {showDeleted ? "Hide Inactive" : "Show Inactive"}
                             </button>
                             <button className="add-btn" onClick={() => handleOpenForm()}>
-                                <Plus size={18} />
-                                Add Record
+                                <Plus size={20} />
+                                Define Record
                             </button>
                         </div>
                     </div>
@@ -261,37 +286,29 @@ export default function AdminMasterManagement() {
                                 </thead>
                                 <tbody>
                                     {data.length > 0 ? data.map(item => (
-                                        <tr key={item.id} style={{ opacity: item.is_deleted ? 0.6 : 1, backgroundColor: item.is_deleted ? '#f9fafb' : 'transparent' }}>
-                                            <td><span className="id-badge" style={{ background: item.is_deleted ? '#f1f5f9' : '#e0f2fe', color: item.is_deleted ? '#94a3b8' : '#0369a1' }}>{item.id} {item.is_deleted && '(Inactive)'}</span></td>
+                                        <tr key={item.id} style={{ opacity: item.is_deleted ? 0.6 : 1 }}>
+                                            <td><span className="id-badge">#{item.id}</span></td>
                                             {visibleFields.map(f => (
                                                 <td key={f}>
-                                                    {fieldMetadata[f]?.type === 'boolean' || typeof item[f] === 'boolean' ? (
-                                                        <span style={{
-                                                            color: (item[f] === true || String(item[f]).toLowerCase() === 'true' || item[f] === 1) ? '#059669' : '#dc2626',
-                                                            fontWeight: 'bold',
-                                                            background: (item[f] === true || String(item[f]).toLowerCase() === 'true' || item[f] === 1) ? '#ecfdf5' : '#fef2f2',
-                                                            padding: '4px 10px',
-                                                            borderRadius: '20px',
-                                                            fontSize: '0.8rem',
-                                                            display: 'inline-block'
-                                                        }}>
-                                                            {(item[f] === true || String(item[f]).toLowerCase() === 'true' || item[f] === 1) ? 'TRUE' : 'FALSE'}
+                                                    {fieldMetadata[f]?.type === 'boolean' || typeof item[f] === 'boolean' || f === 'status' || f.startsWith('is_') ? (
+                                                        <span className={`status-badge ${item[f] ? 'status-active' : 'status-inactive'}`}>
+                                                            {item[f] ? 'ACTIVE' : 'INACTIVE'}
                                                         </span>
                                                     ) : f === 'category' ? (
-                                                        <span style={{
-                                                            color: '#475569', fontWeight: '600', background: '#f1f5f9', padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', display: 'inline-block'
-                                                        }}>
+                                                        <span className="badge-secondary" style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', background: '#f1f5f9', color: 'var(--text-muted)', fontWeight: '600' }}>
                                                             {String(item[f] || '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
                                                         </span>
                                                     ) : (
-                                                        item[f] === null || item[f] === undefined ? '' : String(item[f])
+                                                        <span style={{ fontWeight: '500' }}>
+                                                            {item[f] === null || item[f] === undefined ? '—' : String(item[f])}
+                                                        </span>
                                                     )}
                                                 </td>
                                             ))}
-                                            <td>
-                                                <div className="action-row">
+                                            <td style={{ textAlign: 'right' }}>
+                                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                                                     {item.is_deleted ? (
-                                                        <button className="action-btn" style={{ color: '#2563eb', background: '#eff6ff' }} title="Restore" onClick={() => handleRestore(item.id)}>
+                                                        <button className="action-btn" style={{ color: 'var(--primary)' }} title="Restore" onClick={() => handleRestore(item.id)}>
                                                             <RotateCcw size={16} />
                                                         </button>
                                                     ) : (
@@ -309,7 +326,7 @@ export default function AdminMasterManagement() {
                                         </tr>
                                     )) : (
                                         <tr>
-                                            <td colSpan={visibleFields.length + 2} className="empty-row">No records found.</td>
+                                            <td colSpan={visibleFields.length + 2} className="empty-row">No matching records found.</td>
                                         </tr>
                                     )}
                                 </tbody>
@@ -319,11 +336,11 @@ export default function AdminMasterManagement() {
                 </div>
             </div>
 
-            {/* Add / Edit Modal */}
+            {/* Modal for Add / Edit */}
             {isFormOpen && (
                 <div className="modal-overlay">
-                    <div className="modal-content">
-                        <h2 className="modal-title">{editingItem ? 'Edit Record' : 'Add New Record'}</h2>
+                    <div className="modal-content animate-pop-in">
+                        <h2 className="modal-title">{editingItem ? 'Update Registry' : 'Define New Entry'}</h2>
                         <form onSubmit={handleSave}>
                             {visibleFields.map(field => (
                                 <div key={field} className="form-field">
@@ -341,27 +358,31 @@ export default function AdminMasterManagement() {
                                             <option value="general_incidental">General Incidental</option>
                                         </select>
                                     ) : fieldMetadata[field]?.type === 'boolean' || typeof formData[field] === 'boolean' || field.startsWith('is_') || field === 'status' ? (
-                                        <input
-                                            type="checkbox"
-                                            className="form-checkbox-custom"
-                                            checked={formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1}
-                                            onChange={e => setFormData({ ...formData, [field]: e.target.checked })}
-                                        />
+                                        <div className="checkbox-field">
+                                            <label className="custom-checkbox">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1}
+                                                    onChange={e => setFormData({ ...formData, [field]: e.target.checked })}
+                                                />
+                                                <span>Mark as Active/Enabled</span>
+                                            </label>
+                                        </div>
                                     ) : (
                                         <input
                                             type="text"
                                             className="form-input"
                                             value={formData[field] || ''}
                                             onChange={e => setFormData({ ...formData, [field]: e.target.value })}
-                                            placeholder={`Enter ${field}...`}
+                                            placeholder={`Enter value for ${field.replace(/_/g, ' ')}...`}
                                             required
                                         />
                                     )}
                                 </div>
                             ))}
                             <div className="modal-actions">
-                                <button type="button" className="cancel-btn" onClick={() => setIsFormOpen(false)}>Cancel</button>
-                                <button type="submit" className="save-btn">{editingItem ? 'Update' : 'Create'}</button>
+                                <button type="button" className="cancel-btn" onClick={() => setIsFormOpen(false)}>Discard</button>
+                                <button type="submit" className="save-btn">{editingItem ? 'Save Changes' : 'Create Entry'}</button>
                             </div>
                         </form>
                     </div>
@@ -382,6 +403,7 @@ export default function AdminMasterManagement() {
                     </div>
                 </div>
             )}
+            </div>
         </div>
     );
 }

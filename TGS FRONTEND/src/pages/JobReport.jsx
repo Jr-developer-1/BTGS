@@ -23,6 +23,7 @@ import api from '../api/api';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { formatIndianCurrency } from '../utils/formatters';
+import './JobReport.css';
 
 
 const JobReport = () => {
@@ -208,25 +209,49 @@ const JobReport = () => {
     };
 
     return (
-        <div className="job-report-page">
-            <header className="jr-header d-flex justify-content-between align-items-center flex-wrap gap-3">
-                <div className="jr-title-group mb-0">
-                    <h1>Activity Tracking</h1>
-                    <p>Consolidated view of all local travel and site tasks</p>
+        <div className="job-report-theme">
+            <header className="jr-header-premium">
+                <div className="jr-brand-group">
+                    <div className="jr-icon-box">
+                        <FileText size={28} />
+                    </div>
+                    <div>
+                        <h1>Work & Travel Logs</h1>
+                    </div>
                 </div>
-                <div className="d-flex gap-2">
-                    <button className="jr-export-btn" onClick={() => window.print()}>
-                        <Download size={18} className="text-primary" />
-                        <span>Download PDF Report</span>
+                <div className="jr-header-actions">
+                    <button className="jr-action-button outline" onClick={() => window.print()}>
+                        <Download size={18} />
+                        <span>Save PDF</span>
                     </button>
                 </div>
             </header>
 
-            {/* Pending Batches Section for Managers */}
+            {/* Quick Summary Bar */}
+            <div className="jr-summary-strip">
+                <div className="jr-summary-card">
+                    <div className="jr-summary-icon blue"><Clock size={20} /></div>
+                    <div className="jr-summary-info">
+                        <span className="jr-summary-label">Total Logs Found</span>
+                        <span className="jr-summary-value">{reports.length} Records</span>
+                    </div>
+                </div>
+                <div className="jr-summary-card">
+                    <div className="jr-summary-icon red"><MapPin size={20} /></div>
+                    <div className="jr-summary-info">
+                        <span className="jr-summary-label">Total Distance</span>
+                        <span className="jr-summary-value">
+                            {reports.reduce((acc, curr) => acc + (parseFloat(curr.distance) || 0), 0).toFixed(1)} KM
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Pending Requests for Managers */}
             {batchesToApprove.length > 0 && (
-                <div className="jr-filter-card mb-4" style={{ borderColor: '#3b82f6', backgroundColor: '#eff6ff' }}>
-                    <h3 className="h5 text-primary fw-bold mb-3 d-flex align-items-center gap-2">
-                        <Upload size={18} /> Review Pending Activity Batches (For Your Team)
+                <div className="jr-alert-card primary mb-4">
+                    <h3 className="jr-alert-title">
+                        <Upload size={18} /> Review Pending Approvals (Group Logs)
                     </h3>
                     <div className="jr-batch-list">
                         {batchesToApprove.map(batch => (
@@ -267,11 +292,11 @@ const JobReport = () => {
                 </div>
             )}
 
-            {/* Team Activity History (For Managers / COO) */}
+            {/* Shared Activity History */}
             {teamBatchHistory.length > 0 && (
-                <div className="jr-filter-card mb-4" style={{ borderColor: '#1e293b', backgroundColor: '#f8fafc' }}>
-                    <h3 className="h5 fw-bold mb-3 d-flex align-items-center gap-2" style={{ color: '#1e293b' }}>
-                        <FileText size={18} /> Team Bulk Activity History
+                <div className="jr-alert-card dark mb-4">
+                    <h3 className="jr-alert-title">
+                        <FileText size={18} /> Team Upload History
                     </h3>
                     <div className="jr-batch-list">
                         {teamBatchHistory.map(batch => (
@@ -358,60 +383,65 @@ const JobReport = () => {
                 </div>
             )}
 
-            {/* Premium Filter Section */}
-            <div className="jr-filter-card">
-                <div className="jr-filter-grid">
-                    <div className="jr-filter-item">
-                        <label><User size={14} /> Employee Name</label>
-                        <select
-                            className="jr-select"
-                            value={filters.employee}
-                            onChange={(e) => setFilters({ ...filters, employee: e.target.value })}
-                        >
-                            <option value="">All Employees</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.employee_id}>{u.name} ({u.employee_id})</option>
-                            ))}
-                        </select>
+            {/* Modern Search & Filter Bar */}
+            <div className="jr-search-panel">
+                <div className="jr-search-grid">
+                    <div className="jr-search-field">
+                        <label>Member Name</label>
+                        <div className="jr-input-wrapper">
+                            <User size={16} />
+                            <select
+                                value={filters.employee}
+                                onChange={(e) => setFilters({ ...filters, employee: e.target.value })}
+                            >
+                                <option value="">Global View (All Members)</option>
+                                {users.map(u => (
+                                    <option key={u.id} value={u.employee_id}>{u.name}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
-                    <div className="jr-filter-item">
-                        <label><Calendar size={14} /> Start Period</label>
-                        <input
-                            type="date"
-                            className="jr-date-input"
-                            value={filters.startDate}
-                            onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-                        />
+                    <div className="jr-search-field">
+                        <label>Start Date</label>
+                        <div className="jr-input-wrapper">
+                            <Calendar size={16} />
+                            <input
+                                type="date"
+                                value={filters.startDate}
+                                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                            />
+                        </div>
                     </div>
-                    <div className="jr-filter-item">
-                        <label><Calendar size={14} /> End Period</label>
-                        <input
-                            type="date"
-                            className="jr-date-input"
-                            value={filters.endDate}
-                            onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-                        />
+                    <div className="jr-search-field">
+                        <label>End Date</label>
+                        <div className="jr-input-wrapper">
+                            <Calendar size={16} />
+                            <input
+                                type="date"
+                                value={filters.endDate}
+                                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                            />
+                        </div>
                     </div>
-                    <div className="jr-filter-item">
-                        <button className="jr-search-btn" onClick={handleSearch} disabled={loading}>
-                            <Search size={18} />
-                            <span>{loading ? 'Crunching Data...' : 'Generate Report'}</span>
+                    <div className="jr-search-actions">
+                        <button className="jr-primary-button" onClick={handleSearch} disabled={loading}>
+                            {loading ? <div className="jr-spinner-tiny" /> : <Search size={18} />}
+                            <span>Show Logs</span>
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* High-End Report Table */}
-            <div className="jr-report-container" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-                <table className="jr-table" style={{ minWidth: '1000px' }}>
+            <div className="jr-results-wrapper">
+                <table className="jr-modern-table">
                     <thead>
                         <tr>
                             <th>Activity Date</th>
-                            <th>Employee Details</th>
-                            <th>Job Description</th>
-                            <th>Odometer / Log</th>
-                            <th>Media Proofs</th>
-                            <th style={{ width: '60px' }}></th>
+                            <th>Member Details</th>
+                            <th>Task Overview</th>
+                            <th>Travel Progress</th>
+                            <th>Photos & Proofs</th>
+                            <th style={{ width: '80px' }}>Details</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -491,21 +521,21 @@ const JobReport = () => {
                                                     </span>
                                                     <strong style={{ fontSize: '0.85rem', color: '#334155' }}>{jobDesc}</strong>
                                                 </div>
-                                            </td>
-                                            <td>
+                                            </td>                                             <td>
                                                 {report.odo_start ? (
-                                                    <div className="jr-odo-display">
-                                                        <div className="jr-odo-flow">
-                                                            <strong>{Math.round(report.odo_start)}</strong>
-                                                            <ArrowRight size={12} />
-                                                            <strong>{Math.round(report.odo_end)}</strong>
+                                                    <div className="jr-progress-card">
+                                                        <div className="jr-progress-flow">
+                                                            <div className="jr-val">{Math.round(report.odo_start)}</div>
+                                                            <ArrowRight size={14} className="text-secondary" />
+                                                            <div className="jr-val">{Math.round(report.odo_end)}</div>
                                                         </div>
-                                                        <span className="jr-distance-badge">{report.distance} KM Traveled</span>
+                                                        <div className="jr-progress-badge">{report.distance} KM Covered</div>
                                                     </div>
                                                 ) : (
-                                                    <span className="text-muted small italic">Logged without ODO</span>
+                                                    <span className="text-muted italic opacity-50 small">No Travel Logged</span>
                                                 )}
                                             </td>
+
                                             <td>
                                                 <div className="jr-proof-icons">
                                                     {details.odoStartImg && (
@@ -539,71 +569,74 @@ const JobReport = () => {
                                             <tr>
                                                 <td colSpan="6" style={{ padding: 0, border: 'none' }}>
                                                     <div className="jr-expanded-card">
-                                                        <div className="jr-info-section">
-                                                            <h4><Info size={16} /> Activity & Logistics Details</h4>
-                                                            <div className="jr-detail-grid">
-                                                                <div className="jr-detail-block">
-                                                                    <span>Movement Mode</span>
-                                                                    <p>{safeRender(report.travel_mode)}</p>
+                                                        <div className="jr-expanded-grid">
+                                                            <div className="jr-info-column">
+                                                                <h4><Info size={16} /> Log Details</h4>
+                                                                <div className="jr-meta-grid">
+                                                                    <div className="jr-meta-item">
+                                                                        <label>Travel Method</label>
+                                                                        <p>{safeRender(report.travel_mode)}</p>
+                                                                    </div>
+                                                                    <div className="jr-meta-item">
+                                                                        <label>Type of Vehicle</label>
+                                                                        <p>{safeRender(report.vehicle_type)}</p>
+                                                                    </div>
+                                                                    <div className="jr-meta-item full-width">
+                                                                        <label>Main Route</label>
+                                                                        <p>{(details?.origin || details?.fromLocation || 'N/A')} → {(details?.destination || details?.toLocation || 'N/A')}</p>
+                                                                    </div>
+                                                                    <div className="jr-meta-item">
+                                                                        <label>Reason for Visit</label>
+                                                                        <p>{safeRender(details.purpose, 'Official Task')}</p>
+                                                                    </div>
+                                                                    <div className="jr-meta-item">
+                                                                        <label>Time Logged</label>
+                                                                        <p>{safeRender(details.time, 'Core Hours')}</p>
+                                                                    </div>
                                                                 </div>
-                                                                <div className="jr-detail-block">
-                                                                    <span>Vehicle Type</span>
-                                                                    <p>{safeRender(report.vehicle_type)}</p>
-                                                                </div>
-                                                                <div className="jr-detail-block" style={{ gridColumn: 'span 2' }}>
-                                                                    <span>Route (Origin → Destination)</span>
-                                                                    <p>
-                                                                        {(details?.origin || details?.fromLocation || 'Unknown')}
-                                                                        {' → '}
-                                                                        {(details?.destination || details?.toLocation || 'Unknown')}
-                                                                    </p>
-                                                                </div>
-                                                                <div className="jr-detail-block">
-                                                                    <span>Visit Intent</span>
-                                                                    <p>{safeRender(details.purpose, 'Official Task')}</p>
-                                                                </div>
-                                                                <div className="jr-detail-block">
-                                                                    <span>Timestamp</span>
-                                                                    <p>{safeRender(details.time, 'Logged during core hours')}</p>
+                                                            </div>
+
+                                                            <div className="jr-media-column">
+                                                                <h4><Camera size={16} /> Visual Evidence</h4>
+                                                                <div className="jr-media-wall">
+                                                                    {details.odoStartImg && (
+                                                                        <div className="jr-media-item" onClick={() => previewImage(details.odoStartImg)}>
+                                                                            <img src={details.odoStartImg} alt="Start ODO" />
+                                                                            <div className="jr-media-label">Start ODO Reading</div>
+                                                                        </div>
+                                                                    )}
+                                                                    {details.odoEndImg && (
+                                                                        <div className="jr-media-item" onClick={() => previewImage(details.odoEndImg)}>
+                                                                            <img src={details.odoEndImg} alt="End ODO" />
+                                                                            <div className="jr-media-label">End ODO Reading</div>
+                                                                        </div>
+                                                                    )}
+                                                                    {selfiesArr.map((s, idx) => (
+                                                                        <div key={idx} className="jr-media-item" onClick={() => previewImage(s)}>
+                                                                            <img src={s} alt={`selfie-${idx}`} />
+                                                                            <div className="jr-media-label">Selfie #{idx + 1}</div>
+                                                                        </div>
+                                                                    ))}
                                                                 </div>
                                                             </div>
                                                         </div>
-                                                        <div className="jr-info-section">
-                                                            <h4><Camera size={16} /> Visual Evidence (Live Captures)</h4>
-                                                            <div className="jr-media-wall">
-                                                                {details.odoStartImg && (
-                                                                    <div className="jr-media-item" onClick={() => previewImage(details.odoStartImg)}>
-                                                                        <img src={details.odoStartImg} alt="Start ODO" />
-                                                                        <div className="jr-media-label">Start ODO Reading</div>
-                                                                    </div>
-                                                                )}
-                                                                {details.odoEndImg && (
-                                                                    <div className="jr-media-item" onClick={() => previewImage(details.odoEndImg)}>
-                                                                        <img src={details.odoEndImg} alt="End ODO" />
-                                                                        <div className="jr-media-label">End ODO Reading</div>
-                                                                    </div>
-                                                                )}
-                                                                {selfiesArr.map((s, idx) => (
-                                                                    <div key={idx} className="jr-media-item" onClick={() => previewImage(s)}>
-                                                                        <img src={s} alt={`selfie-${idx}`} />
-                                                                        <div className="jr-media-label">Task Selfie #{idx + 1}</div>
-                                                                    </div>
-                                                                ))}
+
+                                                        <div className="jr-remarks-section">
+                                                            <h4><FileText size={16} /> Task Outcome & Remarks</h4>
+                                                            <div className="jr-remarks-content">
+                                                                {safeRender(details.remarks, "No specific remarks provided for this entry.")}
                                                             </div>
                                                         </div>
-                                                        <div className="jr-remarks-box">
-                                                            <h4 className="jr-info-section h4 m-0 mb-3"><FileText size={16} className="text-muted" /> Detailed Remarks / Activity Outcome</h4>
-                                                            <div className="jr-remarks-text">
-                                                                {safeRender(details.remarks, "The employee did not provide any specific text-based remarks for this activity.")}
+
+                                                        <div className="jr-footer-bar">
+                                                            <div className="jr-ref-info">
+                                                                ID: #{report.id} / Trip: {(report.trip && typeof report.trip === 'object') ? (report.trip.trip_id || 'ID') : (report.trip || 'N/A')}
+                                                                <span className="jr-verification-status">
+                                                                    <CheckCircle size={12} /> Verified Location
+                                                                </span>
                                                             </div>
-                                                        </div>
-                                                        <div className="jr-footer-strip">
-                                                            <span>System Ref ID: #{report.id || 'N/A'} | Trip Cluster: {(report.trip && typeof report.trip === 'object') ? (report.trip.trip_id || 'ID') : (report.trip || 'N/A')}</span>
-                                                            <div className="d-flex align-items-center gap-3">
-                                                                <div className="jr-status-pill fuel" style={{ fontSize: '0.7rem' }}>
-                                                                    <CheckCircle size={10} /> Verified Location Data
-                                                                </div>
-                                                                <span className="jr-total-cost font-bold">Internal Cost: ₹{safeRender(report.amount, '0')}</span>
+                                                            <div className="jr-cost-display">
+                                                                System Cost: <strong>₹{safeRender(report.amount, '0')}</strong>
                                                             </div>
                                                         </div>
                                                     </div>

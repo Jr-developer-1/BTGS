@@ -22,7 +22,7 @@ export const AuthProvider = ({ children }) => {
         password
       });
 
-      const { token, user: userDetails } = response.data;
+      const { token, user: userDetails, requires_password_change } = response.data;
 
       // 1. Validate response structure to prevent "partial login" white pages
       if (!token || !userDetails || typeof userDetails !== 'object') {
@@ -34,6 +34,7 @@ export const AuthProvider = ({ children }) => {
         ...userDetails,
         token: token,
         role: userDetails?.role?.toLowerCase() || 'employee',
+        requires_password_change: requires_password_change
       };
 
       setUser(userData);

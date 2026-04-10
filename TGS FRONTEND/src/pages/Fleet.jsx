@@ -690,10 +690,10 @@ const Fleet = () => {
                 <>
                     <div className="gh-header-section">
                         <div className="header-left">
-                            <h1 className="welcome-text">Fleet Management</h1>
+                            <h1 className="welcome-text">Vehicle Management</h1>
                         </div>
                         <button className="btn-primary" onClick={() => { setEditingId(null); setHubFormData({ name: '', address: '', location: '', pincode: '', isActive: true, latitude: '', longitude: '', image: '', description: '' }); setShowHubModal(true); }}>
-                            <Plus size={18} /> Add Fleet Hub
+                            <Plus size={18} /> Add New Vehicle
                         </button>
                     </div>
                     <div className="gh-search-bar premium-card">
@@ -736,10 +736,10 @@ const Fleet = () => {
                                     <div className="no-data-icon-box">
                                         <Shield size={64} />
                                     </div>
-                                    <h2>No Fleet Hubs Found</h2>
-                                    <p>We couldn't find any hubs matching your search. Try adjusting your query or click below to create a new hub.</p>
+                                    <h2>No Vehicles Found</h2>
+                                    {/* <p>We couldn't find any vehicle matching your search. Try adjusting your query or click below to create a new hub.</p> */}
                                     <button className="btn-primary" onClick={() => { setEditingId(null); setShowHubModal(true); }}>
-                                        <Plus size={18} /> Add New Fleet Hub
+                                        <Plus size={18} /> Add New Vehicle
                                     </button>
                                 </div>
                             </div>

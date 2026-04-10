@@ -42,9 +42,14 @@ const ApprovalInbox = ({ enforceTab = null }) => {
     const [filterType, setFilterType] = useState('all');
     const [tasks, setTasks] = useState([]);
     const [counts, setCounts] = useState({ total: 0, advances: 0, trips: 0, claims: 0 });
+    const [pagination, setPagination] = useState({
+        count: 0,
+        next: null,
+        previous: null,
+        currentPage: 1
+    });
     const [selectedTask, setSelectedTask] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [isFilterOpen, setIsFilterOpen] = useState(false);
     const { showToast } = useToast();
     const [showBreakdown, setShowBreakdown] = useState(false);
     const [itemRemarks, setItemRemarks] = useState({});
@@ -59,7 +64,6 @@ const ApprovalInbox = ({ enforceTab = null }) => {
     const [isTourPlanOpen, setIsTourPlanOpen] = useState(true);
     const [isSpecialRequestsOpen, setIsSpecialRequestsOpen] = useState(true);
     const [viewType, setViewType] = useState('special');
-    const [isViewTypeOpen, setIsViewTypeOpen] = useState(false);
     const [showItemRejectModal, setShowItemRejectModal] = useState(false);
     const [rejectItemId, setRejectItemId] = useState(null);
     const [rejectionItemRemarks, setRejectionItemRemarks] = useState('');
@@ -93,14 +97,26 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
     };
 
-    const fetchTasks = async (tab = 'pending', type = filterType) => {
+    const fetchTasks = async (tab = 'pending', type = filterType, page = 1) => {
         try {
             setLoading(true);
-            const url = `/api/approvals/?tab=${tab}&type=${type}`;
+            const url = `/api/approvals/?tab=${tab}&type=${type}&page=${page}`;
             const response = await api.get(url);
-            setTasks(response.data);
-            if (response.data.length > 0) {
-                const firstTask = response.data[0];
+            
+            const data = response.data.results || response.data || [];
+            setTasks(data);
+            
+            if (response.data.count !== undefined) {
+                setPagination({
+                    count: response.data.count,
+                    next: response.data.next,
+                    previous: response.data.previous,
+                    currentPage: page
+                });
+            }
+
+            if (data.length > 0) {
+                const firstTask = data[0];
                 setSelectedTask(firstTask);
                 // Pre-fill amount for editing if exec
                 if (firstTask.details?.executive_approved_amount && parseFloat(firstTask.details.executive_approved_amount) > 0) {
@@ -151,20 +167,20 @@ const ApprovalInbox = ({ enforceTab = null }) => {
     const handleBatchAction = async (batchId, action) => {
         let remarks = "";
         let dataJsonToSave = null;
-        
+
         const batch = batches.find(b => b.id === batchId);
         const edits = batchItemEdits[batchId] || {};
-        
+
         // Sync row-level edits for ANY action (approve/reject)
         if (Object.keys(edits).length > 0) {
             dataJsonToSave = (batch.data_json || []).map((row, idx) => {
                 // If previously rejected, KEEP it rejected
                 if (row._status === 'Rejected') return row;
-                
+
                 if (edits[idx]) {
-                    return { 
-                        ...row, 
-                        _status: edits[idx].status, 
+                    return {
+                        ...row,
+                        _status: edits[idx].status,
                         _remarks: edits[idx].remarks,
                         _remark_by: user?.name || 'Manager'
                     };
@@ -183,7 +199,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
 
         try {
-            await api.post(`/api/bulk-activities/${batchId}/${action}/`, { 
+            await api.post(`/api/bulk-activities/${batchId}/${action}/`, {
                 remarks: remarks || 'Some lines were rejected',
                 data_json: dataJsonToSave
             });
@@ -338,7 +354,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             return `data:image/jpeg;base64,${p}`;
         }
 
-        const backendBase = 'http://192.168.1.138:4567';
+        const backendBase = api.defaults.baseURL || 'http://192.168.1.138:4567';
         return `${backendBase}${p.startsWith('/') ? '' : '/'}${p}`;
     };
 
@@ -506,7 +522,15 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
                                                     // Inline job report from new system (stored in description JSON)
                                                     const inlineJobReport = parsedDetails.jobReport || null;
-                                                    const inlineJobFiles = parsedDetails.jobReportFiles || [];
+                                                    let inlineJobFiles = parsedDetails.jobReportFiles || [];
+                                                    
+                                                    // Map jobReportAttachments from mobile if jobReportFiles is empty
+                                                    if ((!inlineJobFiles || inlineJobFiles.length === 0) && parsedDetails.jobReportAttachments) {
+                                                        inlineJobFiles = parsedDetails.jobReportAttachments.map(url => ({
+                                                            data: url,
+                                                            name: url.split('/').pop() || 'attachment'
+                                                        }));
+                                                    }
 
                                                     // Legacy job reports matched by date
                                                     const legacyReports = task.details.job_reports?.filter(jr => jr.created_at === exp.date) || [];
@@ -515,7 +539,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
                                                     return (
                                                         <React.Fragment key={exp.id || index}>
-                                                            <tr 
+                                                            <tr
                                                                 className={`${exp.status === 'Rejected' ? 'row-rejected' : ''} ${isExpanded ? 'row-expanded-main' : ''} cursor-pointer hover:bg-slate-50 transition-colors`}
                                                                 onClick={(e) => {
                                                                     // Don't expand if clicking on buttons or inputs
@@ -540,40 +564,40 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
                                                                         {/* Regular Receipts */}
                                                                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                                                        {(() => {
-                                                                            let bills = [];
-                                                                            try {
-                                                                                if (Array.isArray(exp.receipt_image)) {
-                                                                                    bills = exp.receipt_image;
-                                                                                } else if (typeof exp.receipt_image === 'string') {
-                                                                                    if (exp.receipt_image.startsWith('[')) {
-                                                                                        bills = JSON.parse(exp.receipt_image);
-                                                                                    } else {
-                                                                                        bills = exp.receipt_image.split(',').filter(b => b.trim());
+                                                                            {(() => {
+                                                                                let bills = [];
+                                                                                try {
+                                                                                    if (Array.isArray(exp.receipt_image)) {
+                                                                                        bills = exp.receipt_image;
+                                                                                    } else if (typeof exp.receipt_image === 'string') {
+                                                                                        if (exp.receipt_image.startsWith('[')) {
+                                                                                            bills = JSON.parse(exp.receipt_image);
+                                                                                        } else {
+                                                                                            bills = exp.receipt_image.split(',').filter(b => b.trim());
+                                                                                        }
                                                                                     }
+                                                                                } catch (e) {
+                                                                                    bills = [exp.receipt_image];
                                                                                 }
-                                                                            } catch (e) {
-                                                                                bills = [exp.receipt_image];
-                                                                            }
-                                                                            return (bills || []).filter(b => b).map((img, idx) => {
-                                                                                const path = (img && typeof img === 'object') ? img.path : img;
-                                                                                const fullUrl = getFullUrl(String(path).trim());
-                                                                                return (
-                                                                                    <div key={`receipt-${idx}`} onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(fullUrl); }} title={`View Receipt ${idx + 1}`} style={{ width: '38px', height: '38px', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0', cursor: 'pointer', position: 'relative' }}>
-                                                                                        <img src={fullUrl} alt="Receipt" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.src = 'https://via.placeholder.com/40?text=Err'; }} />
-                                                                                    </div>
-                                                                                );
-                                                                            });
-                                                                        })()}
-                                                                        {!exp.receipt_image && !hasAnyReport && (
-                                                                            <span className="no-receipt">No Proof</span>
-                                                                        )}
+                                                                                return (bills || []).filter(b => b).map((img, idx) => {
+                                                                                    const path = (img && typeof img === 'object') ? img.path : img;
+                                                                                    const fullUrl = getFullUrl(String(path).trim());
+                                                                                    return (
+                                                                                        <div key={`receipt-${idx}`} onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(fullUrl); }} title={`View Receipt ${idx + 1}`} style={{ width: '38px', height: '38px', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0', cursor: 'pointer', position: 'relative' }}>
+                                                                                            <img src={fullUrl} alt="Receipt" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.src = 'https://via.placeholder.com/40?text=Err'; }} />
+                                                                                        </div>
+                                                                                    );
+                                                                                });
+                                                                            })()}
+                                                                            {!exp.receipt_image && !hasAnyReport && (
+                                                                                <span className="no-receipt">No Proof</span>
+                                                                            )}
                                                                         </div>
 
                                                                         {/* Inline Job Report (new system) */}
                                                                         {inlineJobReport && (
                                                                             <div style={{ width: '100%', marginTop: '6px' }} onClick={e => e.stopPropagation()}>
-                                                                                <button 
+                                                                                <button
                                                                                     onClick={() => {
                                                                                         setSelectedJobReport({
                                                                                             title: `Job Report - ${exp.date}`,
@@ -596,7 +620,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                         {legacyReports.map((jr, idx) => {
                                                                             return (
                                                                                 <div key={`jr-${idx}`} style={{ width: '100%', marginTop: '6px' }} onClick={e => e.stopPropagation()}>
-                                                                                    <button 
+                                                                                    <button
                                                                                         onClick={() => {
                                                                                             setSelectedJobReport({
                                                                                                 title: `Legacy Job Report - ${exp.date}`,
@@ -915,88 +939,43 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                     </div>
                 )}
 
-                <div className="filter-container" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                    <div className="relative-position">
-                        <span className="filter-label" style={{ marginRight: '8px' }}>Inbox View:</span>
-                        <button
-                            onClick={() => setIsViewTypeOpen(!isViewTypeOpen)}
-                            className="filter-btn"
-                            style={{ minWidth: '180px' }}
+                <div className="modern-navigation-bar" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div className="view-type-tabs">
+                        <button 
+                            className={`view-type-btn ${viewType === 'special' ? 'active' : ''}`}
+                            onClick={() => setViewType('special')}
                         >
-                            <div className="filter-btn-content">
-                                <FileText size={16} className="text-slate-400" />
-                                <span>{viewType === 'special' ? 'Special Requests' : 'Monthly Tour Plan'}</span>
-                            </div>
-                            <ChevronDown size={16} />
+                            Special Requests
                         </button>
-
-                        {isViewTypeOpen && (
-                            <>
-                                <div className="filter-backdrop" onClick={() => setIsViewTypeOpen(false)}></div>
-                                <div className="filter-dropdown-menu">
-                                    <div
-                                        onClick={() => { setViewType('special'); setIsViewTypeOpen(false); }}
-                                        className={`filter-dropdown-item ${viewType === 'special' ? 'active' : ''}`}
-                                    >
-                                        <span className="capitalize-text">Special Requests</span>
-                                        {viewType === 'special' && <CheckCircle size={16} className="text-blue-600" />}
-                                    </div>
-                                    <div
-                                        onClick={() => { setViewType('monthly'); setIsViewTypeOpen(false); }}
-                                        className={`filter-dropdown-item ${viewType === 'monthly' ? 'active' : ''}`}
-                                    >
-                                        <span className="capitalize-text">Monthly Tour Plan</span>
-                                        {viewType === 'monthly' && <CheckCircle size={16} className="text-blue-600" />}
-                                    </div>
-                                </div>
-                            </>
-                        )}
+                        <button 
+                            className={`view-type-btn ${viewType === 'monthly' ? 'active' : ''}`}
+                            onClick={() => setViewType('monthly')}
+                        >
+                            Monthly Tour Plan
+                        </button>
                     </div>
 
-                    <div className="relative-position" style={{ display: 'flex', alignItems: 'center' }}>
-                        <span className="filter-label" style={{ marginRight: '8px' }}>Filter Requests:</span>
-                        <div className="relative-position">
+                    <div className="modern-filter-tabs custom-scrollbar" style={{ overflowX: 'auto', maxWidth: '100%' }}>
+                        {[
+                            { id: 'all', label: 'All Requests', icon: <Filter size={16} /> },
+                            { id: 'trip', label: 'Trips', icon: <Navigation size={16} /> },
+                            { id: 'expense', label: 'Expenses', icon: <IndianRupee size={16} /> },
+                            { id: 'advance', label: 'Advances', icon: <PauseCircle size={16} /> },
+                            { id: 'mileage', label: 'Mileage', icon: <Gauge size={16} /> },
+                            { id: 'dispute', label: 'Disputes', icon: <AlertTriangle size={16} /> }
+                        ].map(type => (
                             <button
-                                onClick={() => setIsFilterOpen(!isFilterOpen)}
-                                className="filter-btn"
+                                key={type.id}
+                                onClick={() => setFilterType(type.id)}
+                                className={`filter-tab-btn ${filterType === type.id ? 'active' : ''}`}
                             >
-                                <div className="filter-btn-content">
-                                    <Filter size={16} className="text-slate-400" />
-                                    <span>
-                                        {filterType === 'all' ? 'All Requests' :
-                                            filterType === 'money' ? 'Money Only' :
-                                                filterType.charAt(0).toUpperCase() + filterType.slice(1)}
-                                    </span>
-                                </div>
-                                <ChevronDown size={16} />
+                                {type.icon}
+                                <span>{type.label}</span>
+                                {type.id === 'all' && tasks.length > 0 && (
+                                    <span className="tab-count">{tasks.length}</span>
+                                )}
                             </button>
-
-                            {isFilterOpen && (
-                                <>
-                                    <div
-                                        className="filter-backdrop"
-                                        onClick={() => setIsFilterOpen(false)}
-                                    ></div>
-                                    <div className="filter-dropdown-menu">
-                                        {['all', 'trip', 'expense', 'advance', 'mileage', 'dispute'].map(type => (
-                                            <div
-                                                key={type}
-                                                onClick={() => {
-                                                    setFilterType(type);
-                                                    setIsFilterOpen(false);
-                                                }}
-                                                className={`filter-dropdown-item ${filterType === type ? 'active' : ''}`}
-                                            >
-                                                <span className="capitalize-text">
-                                                    {type === 'all' ? 'All Requests' : type}
-                                                </span>
-                                                {filterType === type && <CheckCircle size={16} className="text-blue-600" />}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                        ))}
                     </div>
                 </div>
             </div>
@@ -1127,111 +1106,112 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                 const originalIdx = row.__idx;
                                                                                 const itemEdit = (batchItemEdits[batch.id] || {})[originalIdx] || {};
                                                                                 const isActuallyRejected = row._status === 'Rejected' || itemEdit.status === 'Rejected';
-                                                                                
+
                                                                                 return (
-                                                                                <tr key={filterIdx} className={isActuallyRejected ? 'bg-rose-50 border-b' : 'hover:bg-slate-50 border-b'}>
-                                                                                    {[...new Set(['date', 'mode', 'vehicle', 'origin_route', 'destination_route', 'start_time', 'reach_time', 'visit_intent', 'remarks', 'odo_start', 'odo_end', ...Object.keys(row)])].filter(k => !k.startsWith('_') && Object.keys(row).includes(k)).map((k, vIdx) => {
-                                                                                         const val = row[k];
-                                                                                         return (
-                                                                                        <td key={vIdx} className={`p-3 border-b ${isActuallyRejected ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'}`}>
-                                                                                            {String(val || '-')}
-                                                                                        </td>
-                                                                                                                                                                             );
-                                                                                     })}
-                                                                                    <td className="p-3 border-b">
-                                                                                        {row._status === 'Rejected' ? (
-                                                                                            <div className="flex items-center gap-1.5 text-rose-600 font-bold bg-rose-50 px-2 py-1 rounded-md border border-rose-100 w-fit">
-                                                                                                <XCircle size={14} /> Rejected
-                                                                                            </div>
-                                                                                        ) : itemEdit.status === 'Rejected' ? (
-                                                                                            <div className="flex items-center gap-1.5 text-orange-600 font-bold bg-orange-50 px-2 py-1 rounded-md border border-orange-100 w-fit">
-                                                                                                <AlertTriangle size={14} /> Rejection Queued
-                                                                                            </div>
-                                                                                        ) : (
-                                                                                            <div className="flex items-center gap-1.5 text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100 w-fit">
-                                                                                                <CheckCircle size={14} /> Validated
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </td>
-                                                                                    <td className="p-3 border-b text-center">
-                                                                                        <button 
-                                                                                            disabled={row._status === 'Rejected'}
-                                                                                            onClick={() => {
-                                                                                                const isRejected = itemEdit.status === 'Rejected';
-                                                                                                setBatchItemEdits(prev => ({
-                                                                                                    ...prev,
-                                                                                                    [batch.id]: {
-                                                                                                        ...(prev[batch.id] || {}),
-                                                                                                        [originalIdx]: {
-                                                                                                            ...((prev[batch.id] || {})[originalIdx] || {}),
-                                                                                                            status: isRejected ? 'Pending' : 'Rejected'
-                                                                                                        }
-                                                                                                    }
-                                                                                                }));
-                                                                                            }}
-                                                                                            style={{ 
-                                                                                                display: 'flex', alignItems: 'center', gap: '6px', margin: '0 auto',
-                                                                                                padding: '6px 12px', borderRadius: '8px', border: '1px solid', fontSize: '0.75rem', fontWeight: 700, 
-                                                                                                transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                                                                                                cursor: row._status === 'Rejected' ? 'not-allowed' : 'pointer',
-                                                                                                backgroundColor: row._status === 'Rejected' ? '#f8fafc' : (itemEdit.status === 'Rejected' ? '#fff' : '#fff'),
-                                                                                                borderColor: row._status === 'Rejected' ? '#e2e8f0' : (itemEdit.status === 'Rejected' ? '#4f46e5' : '#e2e8f0'),
-                                                                                                color: row._status === 'Rejected' ? '#94a3b8' : (itemEdit.status === 'Rejected' ? '#4f46e5' : '#64748b'),
-                                                                                                boxShadow: itemEdit.status === 'Rejected' ? '0 0 10px rgba(79, 70, 229, 0.1)' : 'none'
-                                                                                            }}
-                                                                                            className="hover:scale-105 active:scale-95"
-                                                                                        >
+                                                                                    <tr key={filterIdx} className={isActuallyRejected ? 'bg-rose-50 border-b' : 'hover:bg-slate-50 border-b'}>
+                                                                                        {[...new Set(['date', 'mode', 'vehicle', 'origin_route', 'destination_route', 'start_time', 'reach_time', 'visit_intent', 'remarks', 'odo_start', 'odo_end', ...Object.keys(row)])].filter(k => !k.startsWith('_') && Object.keys(row).includes(k)).map((k, vIdx) => {
+                                                                                            const val = row[k];
+                                                                                            return (
+                                                                                                <td key={vIdx} className={`p-3 border-b ${isActuallyRejected ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'}`}>
+                                                                                                    {String(val || '-')}
+                                                                                                </td>
+                                                                                            );
+                                                                                        })}
+                                                                                        <td className="p-3 border-b">
                                                                                             {row._status === 'Rejected' ? (
-                                                                                                <><PauseCircle size={14} /> Locked</>
-                                                                                            ) : (itemEdit.status === 'Rejected' ? (
-                                                                                                <><RotateCcw size={14} /> Undo</>
+                                                                                                <div className="flex items-center gap-1.5 text-rose-600 font-bold bg-rose-50 px-2 py-1 rounded-md border border-rose-100 w-fit">
+                                                                                                    <XCircle size={14} /> Rejected
+                                                                                                </div>
+                                                                                            ) : itemEdit.status === 'Rejected' ? (
+                                                                                                <div className="flex items-center gap-1.5 text-orange-600 font-bold bg-orange-50 px-2 py-1 rounded-md border border-orange-100 w-fit">
+                                                                                                    <AlertTriangle size={14} /> Rejection Queued
+                                                                                                </div>
                                                                                             ) : (
-                                                                                                <><XCircle size={14} /> Reject</>
-                                                                                            ))}
-                                                                                        </button>
-                                                                                    </td>
-                                                                                    <td className="p-3 border-b">
-                                                                                        <div className="flex flex-col gap-1.5 min-w-[180px]">
-                                                                                            <input 
-                                                                                                type="text" 
-                                                                                                placeholder="Explain rejection reason..."
+                                                                                                <div className="flex items-center gap-1.5 text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100 w-fit">
+                                                                                                    <CheckCircle size={14} /> Validated
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </td>
+                                                                                        <td className="p-3 border-b text-center">
+                                                                                            <button
                                                                                                 disabled={row._status === 'Rejected'}
-                                                                                                value={itemEdit.remarks || ''}
-                                                                                                onChange={e => {
+                                                                                                onClick={() => {
+                                                                                                    const isRejected = itemEdit.status === 'Rejected';
                                                                                                     setBatchItemEdits(prev => ({
                                                                                                         ...prev,
                                                                                                         [batch.id]: {
                                                                                                             ...(prev[batch.id] || {}),
                                                                                                             [originalIdx]: {
                                                                                                                 ...((prev[batch.id] || {})[originalIdx] || {}),
-                                                                                                                remarks: e.target.value
+                                                                                                                status: isRejected ? 'Pending' : 'Rejected'
                                                                                                             }
                                                                                                         }
                                                                                                     }));
                                                                                                 }}
-                                                                                                style={{ 
-                                                                                                    width: '100%', padding: '8px 12px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.8rem', outline: 'none',
+                                                                                                style={{
+                                                                                                    display: 'flex', alignItems: 'center', gap: '6px', margin: '0 auto',
+                                                                                                    padding: '6px 12px', borderRadius: '8px', border: '1px solid', fontSize: '0.75rem', fontWeight: 700,
+                                                                                                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                                                                    cursor: row._status === 'Rejected' ? 'not-allowed' : 'pointer',
+                                                                                                    backgroundColor: row._status === 'Rejected' ? '#f8fafc' : (itemEdit.status === 'Rejected' ? '#fff' : '#fff'),
+                                                                                                    borderColor: row._status === 'Rejected' ? '#e2e8f0' : (itemEdit.status === 'Rejected' ? '#4f46e5' : '#e2e8f0'),
+                                                                                                    color: row._status === 'Rejected' ? '#94a3b8' : (itemEdit.status === 'Rejected' ? '#4f46e5' : '#64748b'),
+                                                                                                    boxShadow: itemEdit.status === 'Rejected' ? '0 0 10px rgba(79, 70, 229, 0.1)' : 'none'
                                                                                                 }}
-                                                                                            />
-                                                                                            {row._remarks && (
-                                                                                                <div className="flex items-start gap-2 bg-slate-100 p-2 rounded-lg border border-slate-200 shadow-sm animate-fade-in">
-                                                                                                    <div className="mt-0.5 bg-indigo-100 text-indigo-600 p-1 rounded-md"><User size={10} /></div>
-                                                                                                    <div style={{ fontSize: '0.7rem', color: '#475569', lineHeight: '1.3' }}>
-                                                                                                        <span style={{ fontWeight: 800, color: '#1e293b', display: 'block' }}>{row._remark_by || 'Approver'}</span>
-                                                                                                        {row._remarks}
+                                                                                                className="hover:scale-105 active:scale-95"
+                                                                                            >
+                                                                                                {row._status === 'Rejected' ? (
+                                                                                                    <><PauseCircle size={14} /> Locked</>
+                                                                                                ) : (itemEdit.status === 'Rejected' ? (
+                                                                                                    <><RotateCcw size={14} /> Undo</>
+                                                                                                ) : (
+                                                                                                    <><XCircle size={14} /> Reject</>
+                                                                                                ))}
+                                                                                            </button>
+                                                                                        </td>
+                                                                                        <td className="p-3 border-b">
+                                                                                            <div className="flex flex-col gap-1.5 min-w-[180px]">
+                                                                                                <input
+                                                                                                    type="text"
+                                                                                                    placeholder="Explain rejection reason..."
+                                                                                                    disabled={row._status === 'Rejected'}
+                                                                                                    value={itemEdit.remarks || ''}
+                                                                                                    onChange={e => {
+                                                                                                        setBatchItemEdits(prev => ({
+                                                                                                            ...prev,
+                                                                                                            [batch.id]: {
+                                                                                                                ...(prev[batch.id] || {}),
+                                                                                                                [originalIdx]: {
+                                                                                                                    ...((prev[batch.id] || {})[originalIdx] || {}),
+                                                                                                                    remarks: e.target.value
+                                                                                                                }
+                                                                                                            }
+                                                                                                        }));
+                                                                                                    }}
+                                                                                                    style={{
+                                                                                                        width: '100%', padding: '8px 12px', border: '1.5px solid #e2e8f0', borderRadius: '8px', fontSize: '0.8rem', outline: 'none',
+                                                                                                    }}
+                                                                                                />
+                                                                                                {row._remarks && (
+                                                                                                    <div className="flex items-start gap-2 bg-slate-100 p-2 rounded-lg border border-slate-200 shadow-sm animate-fade-in">
+                                                                                                        <div className="mt-0.5 bg-indigo-100 text-indigo-600 p-1 rounded-md"><User size={10} /></div>
+                                                                                                        <div style={{ fontSize: '0.7rem', color: '#475569', lineHeight: '1.3' }}>
+                                                                                                            <span style={{ fontWeight: 800, color: '#1e293b', display: 'block' }}>{row._remark_by || 'Approver'}</span>
+                                                                                                            {row._remarks}
+                                                                                                        </div>
                                                                                                     </div>
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    </td>
-                                                                                </tr>
-                                                                            )})}
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                )
+                                                                            })}
                                                                         </tbody>
                                                                     </table>
                                                                 </div>
                                                                 <div className="p-4 bg-slate-50 border-t flex justify-end gap-3 items-center">
                                                                     <p className="text-[10px] text-slate-500 mr-auto flex items-center gap-1.5">
-                                                                        <AlertTriangle size={12} className="text-amber-500" /> 
+                                                                        <AlertTriangle size={12} className="text-amber-500" />
                                                                         Locked rows were rejected by previous managers and cannot be modified. Rows marked for rejection will not generate expenses.
                                                                     </p>
                                                                 </div>
@@ -1467,7 +1447,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                 <X size={20} />
                             </button>
                         </div>
-                        
+
                         <div className="jr-modal-meta">
                             <div className="jr-sender-info">
                                 <div className="jr-avatar">
@@ -1506,9 +1486,9 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                 <span className="jr-file-name">{file.name}</span>
                                                 <span className="jr-file-size">Proof Document</span>
                                             </div>
-                                            <a 
-                                                href={file.data} 
-                                                download={file.name} 
+                                            <a
+                                                href={getFullUrl(file.data)}
+                                                download={file.name}
                                                 className="jr-download-btn"
                                                 onClick={(e) => {
                                                     // Download action
