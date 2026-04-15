@@ -27,7 +27,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final response = await _apiService.get(ApiConstants.notifications);
       if (mounted) {
         setState(() {
-          _notifications = response is List ? response : [];
+          if (response is Map && response.containsKey('results')) {
+            _notifications = response['results'] as List<dynamic>;
+          } else if (response is List) {
+            _notifications = response;
+          } else {
+            _notifications = [];
+          }
           _isLoading = false;
         });
       }

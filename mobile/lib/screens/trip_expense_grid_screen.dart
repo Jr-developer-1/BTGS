@@ -17,6 +17,13 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
   final TripService _tripService = TripService();
   bool _isLoading = true;
   List<dynamic> _expenses = [];
+  String? _claimStatus;
+
+  // A claim has been submitted when claimStatus is set (not null/empty)
+  bool get _isLocked {
+    final s = (_claimStatus ?? '').toLowerCase().trim();
+    return s.isNotEmpty;
+  }
 
   @override
   void initState() {
@@ -32,6 +39,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
       if (!mounted) return;
       setState(() {
         _expenses = trip.expenses ?? [];
+        _claimStatus = trip.claimStatus;
         _isLoading = false;
       });
     } catch (e) {
@@ -69,6 +77,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               child: Column(
                 children: [
+                  if (_isLocked) _buildLockedBanner(),
                   _buildCategorySection('OUTSTATION TRAVEL', 'Travel', const Color(0xFF0D9488), Icons.flight_takeoff_rounded),
                   _buildCategorySection('LOCAL CONVEYANCE', 'Local Travel', const Color(0xFF0891B2), Icons.directions_car_filled_rounded),
                   _buildCategorySection('FOOD & REFRESHMENTS', 'Food', const Color(0xFF0EA5E9), Icons.restaurant_rounded),
@@ -79,6 +88,34 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
               ),
             ),
           ),
+    );
+  }
+
+  Widget _buildLockedBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_rounded, size: 16, color: Color(0xFFD97706)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Claim submitted (${_claimStatus ?? ''}) — expenses are locked for editing.',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF92400E),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -135,30 +172,52 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                     ),
                   ],
                 ),
-                Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
+                 if (!_isLocked)
+                  Material(
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
-                    onTap: () => _openAddForm(category),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      child: Row(
-                        children: [
-                          Icon(Icons.add_circle_outline_rounded, size: 14, color: color),
-                          const SizedBox(width: 4),
-                          Text('ADD', 
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800, 
-                              fontSize: 10,
-                              color: color
-                            )
-                          ),
-                        ],
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _openAddForm(category),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        child: Row(
+                          children: [
+                            Icon(Icons.add_circle_outline_rounded, size: 14, color: color),
+                            const SizedBox(width: 4),
+                            Text('ADD', 
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w800, 
+                                fontSize: 10,
+                                color: color
+                              )
+                            ),
+                          ],
+                        ),
                       ),
                     ),
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.lock_outline_rounded, size: 12, color: Color(0xFF94A3B8)),
+                        const SizedBox(width: 4),
+                        Text('LOCKED',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 10,
+                            color: const Color(0xFF94A3B8),
+                          )
+                        ),
+                      ],
+                    ),
                   ),
-                )
               ],
             ),
           ),
@@ -206,7 +265,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: () => _openEditForm(category, exp),
+        onTap: _isLocked ? null : () => _openEditForm(category, exp),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -275,7 +334,10 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                       color: const Color(0xFF0F172A)
                     ),
                   ),
-                  const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFCBD5E1)),
+                  if (_isLocked)
+                    const Icon(Icons.lock_outline_rounded, size: 14, color: Color(0xFFD97706))
+                  else
+                    const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFCBD5E1)),
                 ],
               ),
             ],
@@ -326,7 +388,9 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
   void _openAddForm(String category) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => TripExpenseFormDetailedScreen(category: category, tripId: widget.tripId)),
+      MaterialPageRoute(
+          builder: (context) => TripExpenseFormDetailedScreen(
+              category: category, tripId: widget.tripId)),
     );
     if (result == true) _fetchExpenses();
   }

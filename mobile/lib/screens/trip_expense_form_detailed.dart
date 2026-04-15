@@ -419,6 +419,22 @@ class _TripExpenseFormDetailedScreenState
         ];
       }
 
+      // If incidentals are included in the main amount, subtract them for the fare field display
+      if (_incidentals.isNotEmpty &&
+          _travelSubType != 'Own Car' &&
+          _travelSubType != 'Own Bike') {
+        double totalAmount =
+            double.tryParse(exp['amount']?.toString() ?? '0') ?? 0.0;
+        double incidentalSum = 0.0;
+        for (var inc in _incidentals) {
+          incidentalSum +=
+              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+        }
+        double baseAmount = totalAmount - incidentalSum;
+        _amountController.text =
+            baseAmount > 0 ? baseAmount.toStringAsFixed(2) : '0.00';
+      }
+
       if (details['startDate'] != null)
         _startDate = _parseDate(details['startDate']);
       else if (details['date'] != null)
@@ -537,25 +553,30 @@ class _TripExpenseFormDetailedScreenState
             0;
         double dist = (endOdo - startOdo).clamp(0, 99999);
 
+        // Sum up all incidentals to add to the main record's total amount
+        double incidentalSum = 0.0;
+        for (var inc in _incidentals) {
+          incidentalSum +=
+              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+        }
+
         if (isOwnVehicle) {
-          // Mirror web: auto-calculate from distance × fuel rate.
-          // Fallback to 0.0 as requested if no rate is configured in Fuel Management
           final rate = _travelSubType == 'Own Car'
               ? (_rate4W ?? double.tryParse(_odoRateController.text) ?? 0.0)
               : (_rate2W ?? double.tryParse(_odoRateController.text) ?? 0.0);
 
           odoTotal = dist * rate;
-          if (odoTotal >= 0) amount = odoTotal;
+          amount = odoTotal + incidentalSum; // Sum them up for the grid card
+        } else {
+          // For Ride Hailing/PT etc., _amountController is the base fare/cost
+          amount = (double.tryParse(_amountController.text) ?? 0.0) +
+              incidentalSum;
         }
-        // For other subtypes (Ride Hailing, Rental, PT etc.)
-        // amount stays as manually entered in _amountController
       }
 
       final payload = {
         'trip': widget.tripId,
-        'category': widget.category == 'Local Travel'
-            ? 'Fuel'
-            : widget.category,
+        'category': widget.category == 'Local Travel' ? 'Fuel' : widget.category,
         'amount': amount,
         'date': DateFormat('yyyy-MM-dd').format(_startDate),
         'remarks': _jobReportController.text,
@@ -569,13 +590,12 @@ class _TripExpenseFormDetailedScreenState
         final batchId = widget.expenseData['batch_id'].toString();
         final rowIndex = widget.expenseData['row_index'];
 
-        // Prepare row update data
         final rowUpdate = {
           ..._buildDescription(),
           'amount': amount,
           'date': DateFormat('yyyy-MM-dd').format(_startDate),
           'remarks': _jobReportController.text,
-          '_status': 'Validated', // Reset status as it's now corrected
+          '_status': 'Validated',
           '_remark': 'Corrected on mobile: ${_jobReportController.text}',
         };
 
@@ -595,38 +615,13 @@ class _TripExpenseFormDetailedScreenState
         return;
       }
 
-      String? mainExpenseId;
       if (widget.expenseData != null) {
-        mainExpenseId = widget.expenseData['id'].toString();
-        await _tripService.updateExpense(mainExpenseId, payload);
+        await _tripService.updateExpense(
+          widget.expenseData['id'].toString(),
+          payload,
+        );
       } else {
-        final res = await _tripService.addExpense(payload);
-        mainExpenseId = res['id']?.toString();
-
-        // Handle Incidentals separately as individual records ONLY for new entries
-        if (widget.category == 'Local Travel' && _incidentals.isNotEmpty) {
-          for (var inc in _incidentals) {
-            final incAmount =
-                double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
-            if (incAmount > 0) {
-              await _tripService.addExpense({
-                'trip': widget.tripId,
-                'category': 'Incidental',
-                'amount': incAmount,
-                'date': DateFormat('yyyy-MM-dd').format(_startDate),
-                'remarks': 'Attached to ODO entry [${mainExpenseId ?? 'New'}]',
-                'description': jsonEncode({
-                  'incidentalType': inc['category'] ?? 'Misc',
-                  'notes': _jobReportController.text,
-                  'parentOdoId': mainExpenseId,
-                }),
-                'receipt_image': inc['bill'] != null
-                    ? jsonEncode([inc['bill']])
-                    : '[]',
-              });
-            }
-          }
-        }
+        await _tripService.addExpense(payload);
       }
 
       Navigator.pop(context, true);
@@ -2032,28 +2027,31 @@ class _TripExpenseFormDetailedScreenState
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'ODOMETER EXPENSE',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 9,
-                                    color: const Color(0xFF64748B),
-                                    letterSpacing: 0.5,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'ODOMETER EXPENSE',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 9,
+                                      color: const Color(0xFF64748B),
+                                      letterSpacing: 0.5,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  '₹${odoTotal.toStringAsFixed(2)}',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 18,
-                                    color: const Color(0xFF10B981),
+                                  Text(
+                                    '₹${odoTotal.toStringAsFixed(2)}',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 18,
+                                      color: const Color(0xFF10B981),
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
+                            const SizedBox(width: 8),
                             TextButton.icon(
                               onPressed: () {
                                 Navigator.push(
@@ -2257,7 +2255,7 @@ class _TripExpenseFormDetailedScreenState
                               inc['category'],
                               _masterIncidentalTypes.isNotEmpty
                                   ? _masterIncidentalTypes
-                                  : ['Toll', 'Parking', 'Repairs', 'Cleaning'],
+                                  : ['Toll', 'Parking', 'Repairs', 'Cleaning', 'Other'],
                               (v) => setState(
                                 () => _incidentals[index]['category'] = v,
                               ),

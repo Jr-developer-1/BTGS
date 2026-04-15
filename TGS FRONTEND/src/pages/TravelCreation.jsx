@@ -84,6 +84,18 @@ const TravelCreation = () => {
     };
 
     useEffect(() => {
+        if (!user) return;
+        const role = (user.role || '').toUpperCase();
+        const desig = (user.designation || '').toUpperCase();
+        const isOE = role.includes('OE') || desig.includes('OE');
+
+        if (!isOE) {
+            showToast("Access Restricted: Only OE role can initiate Tour Plans", "error");
+            navigate('/trips');
+        }
+    }, [user, navigate, showToast]);
+
+    useEffect(() => {
         const detectManager = async () => {
             if (!user?.employee_id) return;
             try {

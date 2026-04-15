@@ -335,9 +335,6 @@ def _generate_expenses_from_batches(trip):
                     desc_dict['odoStartImg'] = row['odoStartImg']
                 if 'odoEndImg' in row:
                     desc_dict['odoEndImg'] = row['odoEndImg']
-                if 'incidentals' in row:
-                    desc_dict['incidentals'] = row['incidentals']
-
 
                 exp = Expense.objects.create(
                     trip=trip,
@@ -354,6 +351,35 @@ def _generate_expenses_from_batches(trip):
                     vehicle_type=mapped_subType
                 )
                 created_ids.append(exp.id)
+
+                # Process Incidentals as separate ledger entries
+                if 'incidentals' in row and isinstance(row['incidentals'], list):
+                    for inc in row['incidentals']:
+                        try:
+                            inc_amt = float(inc.get('amount', 0) or 0)
+                            if inc_amt <= 0: continue
+                            
+                            inc_cat = inc.get('category', 'Other')
+                            inc_desc = {
+                                'purpose': f"Incidental for {purpose}",
+                                'category': inc_cat,
+                                'parent_row_index': idx,
+                                'from_bulk_upload': True,
+                                'batch_id': batch.id
+                            }
+                            
+                            inc_exp = Expense.objects.create(
+                                trip=trip,
+                                date=final_date,
+                                category=inc_cat,
+                                amount=inc_amt,
+                                description=json.dumps(inc_desc),
+                                status='Approved',
+                                rm_remarks=f"Incidental from {final_date}: {inc_cat}"
+                            )
+                            created_ids.append(inc_exp.id)
+                        except Exception as e:
+                            print(f"Error creating incidental expense: {e}")
             except Exception as e:
                 print(f"Error creating expense from batch row {idx}: {e}")
                 
@@ -802,6 +828,7 @@ class ApprovalCountView(APIView):
             advance_count = TravelAdvance.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded']).count()
             claim_count = TravelClaim.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded']).count()
         elif is_finance:
+            source = request.query_params.get('source')
             if user.office_level == 1:
                 # Finance Head counts
                 trip_count = 0
@@ -810,7 +837,11 @@ class ApprovalCountView(APIView):
             else:
                 # Finance Executive counts
                 trip_count = 0
-                pending_money_statuses = ['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'Approved', 'Under Process']
+                if source == 'hub':
+                    pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved']
+                else:
+                    pending_money_statuses = ['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD']
+                
                 advance_count = TravelAdvance.objects.filter(status__in=pending_money_statuses, current_approver=user).count()
                 claim_count = TravelClaim.objects.filter(status__in=pending_money_statuses, current_approver=user).count()
         else:
@@ -904,28 +935,42 @@ class ApprovalsView(APIView):
             else:
                 # DEFAULT: Action Required (Pending)
                 if is_admin:
-                    finance_pending = ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE', 'REJECTED_BY_HEAD']
-                    trips = Trip.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
-                    advances = TravelAdvance.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
-                    claims = TravelClaim.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
+                    source = request.query_params.get('source')
+                    if source == 'hub':
+                        finance_pending = ['PENDING_FINAL_RELEASE', 'Approved']
+                        trips = Trip.objects.filter(status__in=finance_pending)
+                        advances = TravelAdvance.objects.filter(status__in=finance_pending)
+                        claims = TravelClaim.objects.filter(status__in=finance_pending)
+                    else:
+                        finance_pending = ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE', 'REJECTED_BY_HEAD']
+                        trips = Trip.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
+                        advances = TravelAdvance.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
+                        claims = TravelClaim.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Manager Approved', 'HR Approved'] + finance_pending)
                 elif is_finance:
                     if is_finance_head:
                         advances = TravelAdvance.objects.filter(status='PENDING_HEAD', current_approver=user)
                         claims = TravelClaim.objects.filter(status='PENDING_HEAD', current_approver=user)
                     else:
-                        pending_money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'Approved']
+                        source = request.query_params.get('source')
+                        if source == 'hub':
+                            # Financial Hub is for Payouts - only show items authorized by Head
+                            pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved']
+                        else:
+                            # Inbox is for auditing/verification
+                            pending_money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'HR Approved']
+                        
                         advances = TravelAdvance.objects.filter(status__in=pending_money_statuses, current_approver=user)
                         claims = TravelClaim.objects.filter(status__in=pending_money_statuses, current_approver=user)
                 elif is_hr:
-                    # HR verification stage
-                    trips = Trip.objects.filter(status='Manager Approved')
+                    # HR verification stage - include Submitted/Resubmitted for local tour plans
+                    trips = Trip.objects.filter(Q(status='Manager Approved') | Q(status__in=['Submitted', 'Forwarded'], consider_as_local=True))
                     advances = TravelAdvance.objects.filter(status='Manager Approved')
                     claims = TravelClaim.objects.filter(status='Manager Approved')
                 else:
                     # Regular hierarchy
-                    trips = Trip.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded'])
-                    advances = TravelAdvance.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded'])
-                    claims = TravelClaim.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded'])
+                    trips = Trip.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'])
+                    advances = TravelAdvance.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'])
+                    claims = TravelClaim.objects.filter(current_approver=user, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'])
         
         # Apply search filter if provided
         search_query = request.query_params.get('search')
@@ -960,7 +1005,8 @@ class ApprovalsView(APIView):
 
 
                 tasks.append({
-                    "id": f"TRIP-{t.trip_id}", "db_id": t.trip_id, "type": "Trip",
+                    "id": f"TRIP-{t.trip_id}", "db_id": t.trip_id, 
+                    "type": "Monthly Tour Plan" if t.consider_as_local else "Trip",
                     "requester": t.user.name if t.user else "Unknown", "purpose": t.purpose,
                     "status": t.status, "date": t.created_at.strftime("%b %d, %Y"),
                     "hierarchy_level": t.hierarchy_level,
@@ -1044,7 +1090,8 @@ class ApprovalsView(APIView):
                 if view_type == 'monthly' and not is_tour_plan: continue
 
                 tasks.append({
-                    "id": f"CLAIM-{c.id}", "db_id": c.id, "type": "Expense Claim",
+                    "id": f"CLAIM-{c.id}", "db_id": c.id, 
+                    "type": "Monthly Tour Plan" if c.trip.consider_as_local else "Expense Claim",
                     "requester": c.trip.user.name if c.trip.user else "Unknown",
                     "purpose": f"Claim for {c.trip.destination}", "cost": f"₹{c.total_amount}",
                     "status": c.status, "date": c.created_at.strftime("%b %d, %Y"),
@@ -1580,6 +1627,13 @@ class ApprovalsView(APIView):
                                 batch.save()
                     else:
                         # This IS a BulkActivityBatch
+                        # Stamp all non-rejected rows as 'Approved' in data_json
+                        updated_rows = []
+                        for row in (obj.data_json or []):
+                            if row.get('_status') != 'Rejected':
+                                row['_status'] = 'Approved'
+                            updated_rows.append(row)
+                        obj.data_json = updated_rows
                         obj.status = 'Approved'
                         obj.current_approver = None
                         obj.save()
@@ -1667,6 +1721,13 @@ class ApprovalsView(APIView):
                         message=f"{requester.name}'s request verified by executive and awaits your authorization.",
                         type='info'
                     )
+                    
+                    Notification.objects.create(
+                        user=requester,
+                        title="Finance Verified",
+                        message=f"Your {request_type} has been verified by the Finance Executive and sent to the Finance Head for final authorization.",
+                        type='success'
+                    )
                     return Response({"message": "Verified and sent to Head"})
 
                 # Case B: Finance Head Authorization (from PENDING_HEAD)
@@ -1686,6 +1747,20 @@ class ApprovalsView(APIView):
                         
                         if trip:
                             update_trip_lifecycle(trip, "Finance Authorized", f"Authorized by Head {user.name}. Sent to {final_exec.name if final_exec else 'Executive'} for payout.")
+                            
+                        Notification.objects.create(
+                            user=requester,
+                            title="Finance Head Authorized",
+                            message=f"Your {request_type} has been authorized by the Finance Head and sent for final payout.",
+                            type='success'
+                        )
+                        if final_exec:
+                            Notification.objects.create(
+                                user=final_exec,
+                                title="Final Release Required",
+                                message=f"{requester.name}'s {request_type} has been authorized by the Finance Head and requires payout processing.",
+                                type='info'
+                            )
                     
                     elif action == 'Reject':
                         obj.status = 'REJECTED_BY_HEAD'
@@ -1695,6 +1770,20 @@ class ApprovalsView(APIView):
                         
                         if trip:
                             update_trip_lifecycle(trip, "Head Rejected", f"Rejected by Finance Head {user.name}. Returned to Executive for revision.")
+                            
+                        Notification.objects.create(
+                            user=requester,
+                            title="Finance Head Rejected",
+                            message=f"Your {request_type} was rejected by the Finance Head and returned to the Finance Executive for revision.",
+                            type='error'
+                        )
+                        if obj.sent_by_executive:
+                            Notification.objects.create(
+                                user=obj.sent_by_executive,
+                                title="Finance Head Rejected",
+                                message=f"{requester.name}'s {request_type} was rejected by the Finance Head. Please review.",
+                                type='error'
+                            )
                     return Response({"message": "Head action processed"})
 
                 # Case C: Transfer action handled below in Finance Specific Actions section
@@ -1819,7 +1908,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     queryset = Expense.objects.all()
     serializer_class = ExpenseSerializer
     permission_classes = [IsCustomAuthenticated]
-    http_method_names = ['get', 'post', 'patch', 'put', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'put', 'delete', 'head', 'options']
 
     def get_queryset(self):
         user = getattr(self.request, 'custom_user', None)
@@ -3035,6 +3124,14 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
             _generate_expenses_from_batches(batch.trip)
             # Fetch IDs of expenses created from this batch for the response
             created_ids = list(Expense.objects.filter(trip=batch.trip, description__icontains=f'"batch_id": {batch.id}').values_list('id', flat=True))
+
+        # Stamp all non-rejected rows as 'Approved' in data_json so history views reflect correct status
+        updated_rows = []
+        for row in (batch.data_json or []):
+            if row.get('_status') != 'Rejected':
+                row['_status'] = 'Approved'
+            updated_rows.append(row)
+        batch.data_json = updated_rows
 
         batch.status = 'Approved'
         batch.created_expenses = created_ids # type: ignore

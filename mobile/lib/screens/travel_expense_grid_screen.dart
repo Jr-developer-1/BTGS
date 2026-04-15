@@ -20,6 +20,13 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
   List<dynamic> _expenses = [];
   List<dynamic> _rejectedExpenses = [];
   final Map<int, bool> _isSavingReport = {};
+  String? _claimStatus;
+
+  // Locked when a claim has been submitted (status present)
+  bool get _isLocked {
+    final s = (_claimStatus ?? '').toLowerCase().trim();
+    return s.isNotEmpty;
+  }
 
   @override
   void initState() {
@@ -34,6 +41,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       final all = trip.expenses ?? [];
       
       setState(() {
+        _claimStatus = trip.claimStatus;
         _rejectedExpenses = all.where((e) {
           final s = (e['status'] ?? '').toString().toLowerCase().trim();
           return s == 'rejected' || s == 'fix required' || s.contains('rejected');
@@ -97,6 +105,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        if (_isLocked) _buildLockedBanner(),
                         Text(
                           'EXPENSE CATEGORIES',
                           style: GoogleFonts.plusJakartaSans(
@@ -122,6 +131,34 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildLockedBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.lock_rounded, size: 16, color: Color(0xFFD97706)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Claim submitted (${_claimStatus ?? ''}) — expenses are locked for editing.',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: const Color(0xFF92400E),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -321,52 +358,22 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       child: Column(
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFFF0FDFA),
-                        borderRadius: BorderRadius.circular(12)),
-                    child: Icon(icon, color: color, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    title,
-                    style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF134E4A),
-                        letterSpacing: 0.5),
-                  ),
-                ],
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF0FDFA),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: color, size: 18),
               ),
-              GestureDetector(
-                onTap: () => _openAddForm(category),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
                     color: const Color(0xFF134E4A),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.add_rounded, color: Colors.white, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        'ADD',
-                        style: GoogleFonts.plusJakartaSans(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 10,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                    letterSpacing: 0.5),
               ),
             ],
           ),
@@ -381,7 +388,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                   border: Border.all(color: const Color(0xFFCCFBF1))),
               child: Center(
                   child: Text(
-                    'Tap ADD to log a journey',
+                    'No journeys logged for this category',
                     style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
                         color: const Color(0xFF0D9488),
@@ -433,7 +440,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            onTap: () => _openEditForm(category, exp),
+            onTap: _isLocked ? null : () => _openEditForm(category, exp),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
               child: Row(children: [
@@ -569,48 +576,45 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
               ),
             ],
 
-            // Write / Edit Job Report button
-            isSaving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => _openJobReportSheet(exp),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: hasReport
-                            ? const Color(0xFFF0FDFA)
-                            : const Color(0xFFF0FDFA),
-                        border: Border.all(
-                          color: hasReport
-                              ? const Color(0xFFCCFBF1)
-                              : const Color(0xFFCCFBF1),
+            // Write / Edit Job Report button — hidden when locked
+            if (!_isLocked)
+              isSaving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _openJobReportSheet(exp),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDFA),
+                          border: Border.all(color: const Color(0xFFCCFBF1)),
+                          borderRadius: BorderRadius.circular(20),
                         ),
-                        borderRadius: BorderRadius.circular(20),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(
+                            hasReport
+                                ? Icons.edit_note_rounded
+                                : Icons.article_outlined,
+                            size: 13,
+                            color: const Color(0xFF0D9488),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            hasReport ? 'Edit Report' : 'Write Job Report',
+                            style: GoogleFonts.plusJakartaSans(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF0D9488)),
+                          ),
+                        ]),
                       ),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(
-                          hasReport
-                              ? Icons.edit_note_rounded
-                              : Icons.article_outlined,
-                          size: 13,
-                          color: const Color(0xFF0D9488),
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          hasReport ? 'Edit Report' : 'Write Job Report',
-                          style: GoogleFonts.plusJakartaSans(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFF0D9488)),
-                        ),
-                      ]),
-                    ),
-                  ),
+                    )
+            else
+              const Icon(Icons.lock_outline_rounded, size: 14, color: Color(0xFFD97706)),
           ]),
         ),
 
@@ -721,16 +725,6 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
         ),
       ),
     );
-  }
-
-  void _openAddForm(String category) async {
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-          builder: (context) => TripExpenseFormDetailedScreen(
-              category: category, tripId: widget.tripId)),
-    );
-    if (result == true) _fetchExpenses();
   }
 
   void _openEditForm(String category, dynamic exp) async {

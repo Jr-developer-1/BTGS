@@ -131,6 +131,70 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
     }
   }
 
+  Future<void> _handleDeleteExpense(dynamic expenseId) async {
+    setState(() => _isActionLoading = true);
+    try {
+      await _tripService.deleteExpense(expenseId.toString());
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Expense record deleted successfully'),
+          backgroundColor: Color(0xFF0F172A),
+        ),
+      );
+      _fetchDetails();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete expense: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _isActionLoading = false);
+    }
+  }
+
+  void _confirmDeleteExpense(BuildContext context, dynamic expense) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Delete Expense?',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800),
+        ),
+        content: Text(
+          'Are you sure you want to remove this expense record? This action cannot be undone.',
+          style: GoogleFonts.plusJakartaSans(fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'CANCEL',
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.grey,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _handleDeleteExpense(expense['id']);
+            },
+            child: Text(
+              'DELETE',
+              style: GoogleFonts.plusJakartaSans(
+                color: Colors.red,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -183,25 +247,26 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                       Icons.account_balance_wallet_rounded,
                       'DETAILED EXPENSE REGISTRY',
                     ),
-                    IconButton(
-                      onPressed: () async {
-                        final refresh = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                TripExpenseGridScreen(tripId: widget.tripId),
-                          ),
-                        );
-                        if (refresh == true) _fetchDetails();
-                      },
-                      icon: const Icon(
-                        Icons.add_circle_rounded,
-                        size: 24,
-                        color: Color(0xFF0F172A),
+                    if (_trip!.claim == null || (_trip!.claim!['status'] ?? '').toString().toLowerCase() == 'draft')
+                      IconButton(
+                        onPressed: () async {
+                          final refresh = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  TripExpenseGridScreen(tripId: widget.tripId),
+                            ),
+                          );
+                          if (refresh == true) _fetchDetails();
+                        },
+                        icon: const Icon(
+                          Icons.add_circle_rounded,
+                          size: 24,
+                          color: Color(0xFF0F172A),
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
                       ),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1615,7 +1680,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
               overflow: TextOverflow.ellipsis,
             ),
             trailing: GestureDetector(
-              onTap: isApproved
+              onTap: (isApproved || (_trip!.claim != null && (_trip!.claim!['status'] ?? '').toString().toLowerCase() != 'draft'))
                   ? null
                   : () async {
                       final refresh = await Navigator.push(
@@ -1664,7 +1729,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                             : isRejected
                             ? const Color(0xFFDC2626)
                             : const Color(0xFF4F46E5),
-                        decoration: (!isApproved && !isRejected)
+                        decoration: (!isApproved && !isRejected && (_trip!.claim == null || (_trip!.claim!['status'] ?? '').toString().toLowerCase() == 'draft'))
                             ? TextDecoration.underline
                             : TextDecoration.none,
                         decorationColor: const Color(0xFF4F46E5),
@@ -1687,27 +1752,30 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
               ),
             ),
           ),
-          // EDIT / ACTION STRIP — only for non-approved expenses
-          if (!isApproved)
+          // EDIT / ACTION STRIP — only for non-approved expenses AND non-submitted claims
+          if (!isApproved && (_trip!.claim == null || (_trip!.claim!['status'] ?? '').toString().toLowerCase() == 'draft'))
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Row(
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final refresh = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => TripExpenseFormDetailedScreen(
-                              category: displayNature,
-                              tripId: widget.tripId,
-                              expenseData: exp,
-                            ),
-                          ),
-                        );
-                        if (refresh == true) _fetchDetails();
-                      },
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              final refresh = await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      TripExpenseFormDetailedScreen(
+                                    category: displayNature,
+                                    tripId: widget.tripId,
+                                    expenseData: exp,
+                                  ),
+                                ),
+                              );
+                              if (refresh == true) _fetchDetails();
+                            },
                       icon: const Icon(Icons.edit_rounded, size: 14),
                       label: Text(
                         'Edit',
@@ -1726,6 +1794,33 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                         ),
                         minimumSize: const Size(0, 36),
                       ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _isActionLoading
+                        ? null
+                        : () => _confirmDeleteExpense(context, exp),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 14),
+                    label: Text(
+                      'Delete',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFEF4444),
+                      side: const BorderSide(color: Color(0xFFFEE2E2)),
+                      backgroundColor: const Color(0xFFFFF1F2),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 8,
+                        horizontal: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      minimumSize: const Size(0, 36),
                     ),
                   ),
                 ],
@@ -1828,7 +1923,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
               Expanded(
                 child: _settleGridItem(
                   'TRANSFERRED BY',
-                  claim['processed_by']?['name'] ?? 'Waiting',
+                  (claim['processed_by'] is Map 
+                      ? claim['processed_by']['name'] 
+                      : (claim['processed_by']?.toString() ?? 'Waiting')),
                 ),
               ),
               Expanded(

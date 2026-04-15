@@ -109,7 +109,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         final double odoAmount = distance * _fuelRate;
         incidentalAmount =
             double.tryParse(_incidentalAmountController.text) ?? 0.0;
-        totalAmount = odoAmount + incidentalAmount;
+        totalAmount = odoAmount + incidentalAmount; // Sum up for grid display
       } else {
         totalAmount = double.tryParse(_amountController.text) ?? 0.0;
       }
@@ -156,7 +156,6 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                   'jobReport': _jobReportController.text,
                   'incidentalCategory': _incidentalCategory,
                   'incidentalAmount': incidentalAmount,
-                  'billImg': _incidentalImage?.path,
                   'totalKm': distance,
                   'mode': isTrip ? (_travelMode ?? 'Bike') : 'Bike',
                   'subType': isTrip
@@ -251,26 +250,11 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         );
       } else {
         await _tripService.addExpense(payload);
-
-        // If incidental present (Local Travel only), create separate entry
-        if (isLocal && incidentalAmount > 0) {
-          await _tripService.addExpense({
-            'trip': widget.tripId,
-            'nature': 'Incidental',
-            'amount': incidentalAmount,
-            'date': DateFormat('yyyy-MM-dd').format(_startDate),
-            'remarks':
-                'Added during local travel: ${_originController.text} to ${_destController.text}',
-            'details': {
-              'incidentalType': _incidentalCategory ?? 'Misc',
-              'notes': 'Added via Local Travel Form',
-            },
-          });
-        }
       }
 
       if (mounted) {
-        Navigator.pop(context, true); // Return true to signal refresh
+        Navigator.pop(context, true);
+ // Return true to signal refresh
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(

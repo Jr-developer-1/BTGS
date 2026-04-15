@@ -537,6 +537,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                     const hasAnyReport = inlineJobReport || legacyReports.length > 0;
                                                     const isExpanded = expandedExpenseId === exp.id;
 
+                                                    // Mapping incidentals for both structured and legacy/simple formats
+                                                    const incidentals = parsedDetails.incidentals || 
+                                                        ((parsedDetails.incidentalAmount && parseFloat(parsedDetails.incidentalAmount) > 0) ? [{
+                                                            category: parsedDetails.incidentalCategory || 'Incidental',
+                                                            amount: parsedDetails.incidentalAmount
+                                                        }] : []);
+
                                                     return (
                                                         <React.Fragment key={exp.id || index}>
                                                             <tr
@@ -782,6 +789,28 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                         </div>
                                                                                     </div>
                                                                                 </div>
+
+                                                                                {/* Incidental Breakdown Section */}
+                                                                                {incidentals.length > 0 && (
+                                                                                    <div className="exp-section">
+                                                                                        <h5 className="exp-section-header">
+                                                                                            <ClipboardList size={14} className="text-indigo-600" /> Incidental Breakdown
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white">
+                                                                                            <div className="incidental-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                                                                {incidentals.map((inc, iIdx) => (
+                                                                                                    <div key={iIdx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: iIdx === incidentals.length - 1 ? 'none' : '1px solid #f1f5f9' }}>
+                                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#6366f1' }}></div>
+                                                                                                            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>{inc.category || 'Other'}</span>
+                                                                                                        </div>
+                                                                                                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#10b981' }}>₹{parseFloat(inc.amount || 0).toLocaleString()}</span>
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
 
                                                                                 {/* Selfie Proofs Section */}
                                                                                 <div className="exp-section">

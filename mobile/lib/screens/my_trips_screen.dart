@@ -8,6 +8,7 @@ import '../models/trip_model.dart';
 import '../services/trip_service.dart';
 import 'create_trip_screen.dart';
 import 'local_travel_screen.dart';
+import '../services/api_service.dart';
 
 class MyTripsScreen extends StatefulWidget {
   const MyTripsScreen({super.key});
@@ -18,6 +19,7 @@ class MyTripsScreen extends StatefulWidget {
 
 class _MyTripsScreenState extends State<MyTripsScreen> {
   final TripService _tripService = TripService();
+  final ApiService _apiService = ApiService();
   List<Trip> _allTrips = [];
   List<Trip> _visibleTrips = [];
   String _filter = 'All Status';
@@ -153,6 +155,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
           'underprocess',
           'inprogress',
           'ongoing',
+          'rejected',
+          'validated',
         ];
         bool isHidden =
             hideStates.contains(status) || status.contains('pending');
@@ -520,8 +524,10 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             context,
             MaterialPageRoute(builder: (_) => TripSummaryScreen(trip: t)),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
                 padding: const EdgeInsets.all(20),
@@ -643,6 +649,42 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                   ],
                 ),
               ),
+                ],
+              ),
+              if (t.status.toLowerCase() == 'settled')
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.7),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.lock_rounded, color: Colors.white, size: 16),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Journey Completed',
+                              style: GoogleFonts.plusJakartaSans(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 10,
+                                letterSpacing: 1
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -845,18 +887,37 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               },
             ),
             const SizedBox(height: 12),
-            _buildRequestOption(
-              icon: Icons.local_taxi_rounded,
-              title: 'Local Travel',
-              subtitle: 'Monthly site visits & conveyance',
-              color: const Color(0xFF134E4A),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => LocalTravelScreen(onUploadComplete: _fetchTrips)),
+            Builder(
+              builder: (context) {
+                final user = _apiService.getUser();
+                final role = user?['role']?.toString().toUpperCase() ?? '';
+                final desig = user?['designation']?.toString().toUpperCase() ?? '';
+                final isOE = role.contains('OE') || desig.contains('OE');
+                
+                return _buildRequestOption(
+                  icon: Icons.local_taxi_rounded,
+                  title: 'Local Travel',
+                  subtitle: 'Monthly site visits & conveyance',
+                  color: isOE ? const Color(0xFF134E4A) : Colors.grey,
+                  isLocked: !isOE,
+                  onTap: () {
+                    if (!isOE) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Access Restricted: Only OE role can initiate Tour Plans'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => LocalTravelScreen(onUploadComplete: _fetchTrips)),
+                    );
+                  },
                 );
-              },
+              }
             ),
           ],
         ),
@@ -870,6 +931,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     required String subtitle,
     required Color color,
     required VoidCallback onTap,
+    bool isLocked = false,
   }) {
     return InkWell(
       onTap: onTap,
@@ -888,7 +950,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                 color: color.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(icon, color: color, size: 28),
+              child: Icon(isLocked ? Icons.lock_outline_rounded : icon, color: color, size: 28),
             ),
             const SizedBox(width: 16),
             Expanded(

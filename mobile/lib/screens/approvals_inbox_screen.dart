@@ -39,7 +39,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   final Map<int, Map<String, String>> _batchRowEdits = {};
   bool _isActionLoading = false;
   final Set<String> _expandedBatchIds = {}; // for collapsible batch cards
-  
+
   // PAGINATION CONTROLS
   final ScrollController _scrollController = ScrollController();
   int _currentPage = 1;
@@ -74,7 +74,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   }
 
   void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.9 &&
+    if (_scrollController.position.pixels >=
+            _scrollController.position.maxScrollExtent * 0.9 &&
         _hasMore &&
         !_isFetchingMore &&
         !_isLoading) {
@@ -107,7 +108,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
       if (_viewType == 'monthly') {
         finalTasks = finalTasks.map((t) {
-          if (t['type'] == 'Bulk Upload' || t['id']?.toString().startsWith('BATCH-') == true) {
+          if (t['type'] == 'Bulk Upload' ||
+              t['id']?.toString().startsWith('BATCH-') == true) {
             t['type'] = 'Monthly Tour Plan';
           }
           if (t['type'] == null) t['type'] = 'Monthly Tour Plan';
@@ -120,7 +122,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           _tasks = finalTasks;
           _isLoading = false;
         });
-        
+
         // AUTO-FETCH NEXT PAGE for seamless loading
         if (_hasMore) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -138,9 +140,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
   Future<void> _fetchMoreData({bool isAuto = false}) async {
     if (_isFetchingMore || !_hasMore) return;
-    
+
     if (mounted) setState(() => _isFetchingMore = true);
-    
+
     // Add a slight delay for "auto" loading to show the loader at the bottom
     if (isAuto) await Future.delayed(const Duration(milliseconds: 100));
     try {
@@ -160,7 +162,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       List<Map<String, dynamic>> processedMore = moreTasks;
       if (_viewType == 'monthly') {
         processedMore = moreTasks.map((t) {
-          if (t['type'] == 'Bulk Upload' || t['id']?.toString().startsWith('BATCH-') == true) {
+          if (t['type'] == 'Bulk Upload' ||
+              t['id']?.toString().startsWith('BATCH-') == true) {
             t['type'] = 'Monthly Tour Plan';
           }
           if (t['type'] == null) t['type'] = 'Monthly Tour Plan';
@@ -186,7 +189,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         setState(() {
           _isFetchingMore = false;
           // If we hit an "Invalid page" error, it means we've reached the end
-          if (e.toString().contains('Invalid page') || e.toString().contains('404')) {
+          if (e.toString().contains('Invalid page') ||
+              e.toString().contains('404')) {
             _hasMore = false;
           }
         });
@@ -221,8 +225,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       if (id.startsWith('BATCH-')) {
         final batchId = id.replaceAll('BATCH-', '');
         await _tripService.handleBulkBatchAction(
-          batchId, 
-          action.toLowerCase(), 
+          batchId,
+          action.toLowerCase(),
           extraData: extra ?? {},
         );
       } else {
@@ -332,7 +336,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                   if (index == _tasks.length) {
                                     return _isFetchingMore
                                         ? const Padding(
-                                            padding: EdgeInsets.symmetric(vertical: 20),
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: 20,
+                                            ),
                                             child: Center(
                                               child: CircularProgressIndicator(
                                                 color: Color(0xFF0D9488),
@@ -639,11 +645,10 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
-    if (task['type'] == 'Monthly Tour Plan' || task['type'] == 'Bulk Upload' || task['id']?.toString().startsWith('BATCH-') == true) {
-      return Padding(
-        padding: const EdgeInsets.all(20),
-        child: _buildBulkBatchSection(task),
-      );
+    if (task['type'] == 'Monthly Tour Plan' ||
+        task['type'] == 'Bulk Upload' ||
+        task['id']?.toString().startsWith('BATCH-') == true) {
+      return _buildBulkBatchSection(task);
     }
     final bool isHistory = _activeTab == 'history';
     final statusColor = task['status'] == 'Approved'
@@ -679,8 +684,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      (task['type'] == 'Bulk Upload' && task['trip_id'] != null) 
-                          ? task['trip_id'] 
+                      (task['type'] == 'Bulk Upload' && task['trip_id'] != null)
+                          ? task['trip_id']
                           : (task['id'] ?? 'N/A'),
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 11,
@@ -882,46 +887,65 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
   // ─── Monthly Tour Plan / Bulk Activity Batch ─────────────────────────────
 
-  Widget _buildBulkBatchSection(Map<String, dynamic> task) {
-    // For resubmitted 'Bulk Upload' items, data comes nested inside details.activity_batches[0]
-    List<dynamic> rows = task['data_json'] ?? [];
-    if (rows.isEmpty) {
-      final batches = task['details']?['activity_batches'];
-      if (batches is List && batches.isNotEmpty) {
-        rows = batches[0]['data_json'] ?? [];
+  List<dynamic> _extractBatchRows(Map<String, dynamic> task) {
+    // 1. Try top-level data_json first (direct BATCH- items)
+    dynamic raw = task['data_json'];
+    if (raw != null) {
+      if (raw is List && raw.isNotEmpty) return raw;
+      // data_json may arrive as a JSON string — decode it
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is List && decoded.isNotEmpty) return decoded;
+        } catch (_) {}
       }
     }
+
+    // 2. Merge rows from ALL activity_batches (not just index 0)
+    //    The first batch may be a parent/header with no rows; real data is in later ones.
+    final batches = task['details']?['activity_batches'];
+    if (batches is List && batches.isNotEmpty) {
+      final merged = <dynamic>[];
+      for (final b in batches) {
+        dynamic bRaw = b['data_json'];
+        if (bRaw is List) {
+          merged.addAll(bRaw);
+        } else if (bRaw is String && bRaw.isNotEmpty) {
+          try {
+            final decoded = jsonDecode(bRaw);
+            if (decoded is List) merged.addAll(decoded);
+          } catch (_) {}
+        }
+      }
+      if (merged.isNotEmpty) return merged;
+    }
+    return [];
+  }
+
+  Widget _buildBulkBatchSection(Map<String, dynamic> task) {
+    final List<dynamic> rows = _extractBatchRows(task);
+    final taskId = task['id']?.toString() ?? '';
+    final isClaim = taskId.startsWith('CLAIM-');
 
     final filteredRows = rows.where((r) {
       final dateStr = r['date']?.toString() ?? '';
       return !dateStr.toLowerCase().contains('instruc');
     }).toList();
 
-    if (filteredRows.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Text(
-          'No activity entries found.',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 13,
-            color: const Color(0xFF64748B),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-    }
+    final List<dynamic> allExpenses =
+        (task['details']?['expenses'] as List?) ?? [];
 
     final String tripId = task['trip_id']?.toString() ?? 'N/A';
     final String requester = task['requester']?.toString() ?? 'Unknown';
-    final String batchId = task['id'];
+    final String batchId =
+        task['id']?.toString() ??
+        task['trip_id']?.toString() ??
+        'batch-$tripId';
+
     final bool isExpanded = _expandedBatchIds.contains(batchId);
 
     return Container(
+      width: double.infinity,
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -929,7 +953,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0D9488).withOpacity(0.04),
+            color: isClaim
+                ? const Color(0xFF3B82F6).withOpacity(0.04)
+                : const Color(0xFF0D9488).withOpacity(0.04),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -960,12 +986,18 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF0D9488).withOpacity(0.06),
+                          color: isClaim
+                              ? const Color(0xFF3B82F6).withOpacity(0.06)
+                              : const Color(0xFF0D9488).withOpacity(0.06),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.inventory_2_rounded,
-                          color: Color(0xFF0D9488),
+                        child: Icon(
+                          isClaim
+                              ? Icons.receipt_long_rounded
+                              : Icons.inventory_2_rounded,
+                          color: isClaim
+                              ? const Color(0xFF3B82F6)
+                              : const Color(0xFF0D9488),
                           size: 20,
                         ),
                       ),
@@ -982,11 +1014,24 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                 color: const Color(0xFF0F172A),
                               ),
                             ),
+                            if ((task['purpose'] ?? '').toString().isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                task['purpose'].toString(),
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFFBB0633),
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                             const SizedBox(height: 2),
                             Text(
                               'Trip ID: $tripId',
                               style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w700,
                                 color: const Color(0xFF64748B),
                               ),
@@ -994,11 +1039,70 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           ],
                         ),
                       ),
-                      Icon(
-                        isExpanded
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
-                        color: const Color(0xFF94A3B8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Builder(
+                            builder: (context) {
+                              final batchStatus =
+                                  task['status']?.toString() ?? 'Pending Approval';
+                              final isApproved = batchStatus.toLowerCase().contains(
+                                'approved',
+                              );
+                              final isRejected = batchStatus.toLowerCase().contains(
+                                'rejected',
+                              );
+                              final badgeBg = isApproved
+                                  ? const Color(0xFFDCFCE7)
+                                  : isRejected
+                                  ? const Color(0xFFFEE2E2)
+                                  : const Color(0xFFF1F5F9);
+                              final badgeColor = isApproved
+                                  ? const Color(0xFF16A34A)
+                                  : isRejected
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF64748B);
+                              return Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: badgeBg,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  batchStatus,
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    color: badgeColor,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                          if ((task['cost'] ?? '').toString().isNotEmpty &&
+                              task['cost'] != '—' &&
+                              task['cost'] != '0')
+                            Text(
+                              task['cost'].toString(),
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF0F172A),
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          Icon(
+                            isExpanded
+                                ? Icons.keyboard_arrow_up_rounded
+                                : Icons.keyboard_arrow_down_rounded,
+                            color: const Color(0xFF94A3B8),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1008,10 +1112,16 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     children: [
                       Row(
                         children: [
-                          const Icon(Icons.description_outlined, size: 14, color: Color(0xFF94A3B8)),
+                          Icon(
+                            isClaim ? Icons.payments_outlined : Icons.route_outlined,
+                            size: 14,
+                            color: const Color(0xFF94A3B8),
+                          ),
                           const SizedBox(width: 6),
                           Text(
-                            '${filteredRows.length} Activities',
+                            isClaim
+                                ? '${allExpenses.length} Expense Items'
+                                : '${filteredRows.length} Activities',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
@@ -1020,22 +1130,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           ),
                         ],
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          'Pending Approval',
+                      if (isClaim)
+                        Text(
+                          task['date']?.toString() ?? '',
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w900,
-                            color: const Color(0xFF64748B),
-                            letterSpacing: 0.5,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF94A3B8),
                           ),
                         ),
-                      ),
                     ],
                   ),
                 ],
@@ -1049,20 +1152,78 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
-                  ...filteredRows.asMap().entries.map((entry) {
-                    final idx = entry.key;
-                    final row = Map<String, dynamic>.from(entry.value as Map);
-                    return _buildBulkRowCard(idx, row, task);
-                  }),
+                  // EXPENSES BREAKDOWN (for Claims)
+                  if (allExpenses.isNotEmpty) ...[
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.payments_outlined,
+                          size: 14,
+                          color: Color(0xFF64748B),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'EXPENSES BREAKDOWN',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildExpenseBreakdown(allExpenses),
+                    const SizedBox(height: 20),
+                    if (filteredRows.isNotEmpty) ...[
+                      const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                      const SizedBox(height: 20),
+                    ],
+                  ],
+
+                  if (filteredRows.isNotEmpty) ...[
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.route_outlined,
+                          size: 14,
+                          color: Color(0xFF64748B),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'TRAVEL MOVEMENTS',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ...filteredRows.asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      final row = Map<String, dynamic>.from(entry.value as Map);
+                      return _buildBulkRowCard(idx, row, task);
+                    }),
+                  ],
+
                   const SizedBox(height: 20),
-                  // Batch-level Action Buttons
+
+                  // Action Buttons
                   if (_activeTab != 'history')
                     Row(
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            onPressed: () => _handleAction(task['id'], 'Approve'),
-                            icon: const Icon(Icons.check_circle_rounded, size: 20),
+                            onPressed: () =>
+                                _handleAction(task['id'], 'Approve'),
+                            icon: const Icon(
+                              Icons.check_circle_rounded,
+                              size: 20,
+                            ),
                             label: Text(
                               'Approve All',
                               style: GoogleFonts.plusJakartaSans(
@@ -1084,7 +1245,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                         const SizedBox(width: 10),
                         Expanded(
                           child: OutlinedButton.icon(
-                            onPressed: () => _handleAction(task['id'], 'Reject'),
+                            onPressed: () =>
+                                _handleAction(task['id'], 'Reject'),
                             icon: const Icon(Icons.cancel_rounded, size: 20),
                             label: Text(
                               'Reject All',
@@ -1113,6 +1275,24 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       ),
     );
   }
+
+  IconData _getCategoryIcon(String category) {
+    category = category.toLowerCase();
+    if (category.contains('mileage') || category.contains('fuel')) {
+      return Icons.local_gas_station_rounded;
+    }
+    if (category.contains('toll')) return Icons.toll_rounded;
+    if (category.contains('parking')) return Icons.local_parking_rounded;
+    if (category.contains('food') || category.contains('meal')) {
+      return Icons.restaurant_rounded;
+    }
+    if (category.contains('room') || category.contains('hotel')) {
+      return Icons.hotel_rounded;
+    }
+    if (category.contains('repair')) return Icons.build_rounded;
+    return Icons.payments_rounded;
+  }
+
 
   Widget _buildBulkRowCard(
     int idx,
@@ -1153,27 +1333,46 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.calendar_today_rounded,
-                      size: 13,
-                      color: Color(0xFF94A3B8),
-                    ),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        row['date']?.toString() ?? '',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800,
-                          color: const Color(0xFF0F172A),
+                Expanded(
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.calendar_today_rounded,
+                        size: 13,
+                        color: Color(0xFF94A3B8),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          row['date']?.toString() ?? '',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF0F172A),
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                if ((row['expense_amount'] ?? '0').toString() != '0')
+                  Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFBB0633).withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '₹${row['expense_amount']}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFFBB0633),
                       ),
                     ),
-                  ],
-                ),
+                  ),
                 if (isRejected)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -1297,6 +1496,13 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                 ),
                 const SizedBox(width: 8),
                 _timeChip('REACH', reachTime),
+                const SizedBox(width: 12),
+                if ((row['incidental_amount'] ?? '0').toString() != '0')
+                  _miniExpensePill('I: ₹${row['incidental_amount']}', Icons.receipt_outlined),
+                if ((row['odo_total'] ?? '0').toString() != '0') ...[
+                  const SizedBox(width: 6),
+                  _miniExpensePill('M: ₹${row['odo_total']}', Icons.local_gas_station_rounded),
+                ],
                 const Spacer(),
                 if ((row['visit_intent'] ?? '').toString().isNotEmpty)
                   Flexible(
@@ -1367,7 +1573,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               rowStatus != 'Rejected' &&
               !isValidated &&
               rowStatus != 'Approved' &&
-              !(task['type']?.toString() ?? '').toLowerCase().contains('claim')) ...[
+              !(task['type']?.toString() ?? '').toLowerCase().contains(
+                'claim',
+              )) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -1547,7 +1755,33 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     );
   }
 
+  Widget _miniExpensePill(String label, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: const Color(0xFF64748B)),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF475569),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _timeChip(String label, String value) {
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1644,6 +1878,363 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           ],
         );
       },
+    );
+  }
+  Widget _buildExpenseBreakdown(dynamic expensesData) {
+    if (expensesData == null) return const SizedBox.shrink();
+    final List expenses = expensesData as List;
+    return Column(
+      children: expenses
+          .map(
+            (exp) => Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF1F5F9)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          exp['category'] ?? exp['nature'] ?? 'Other',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF64748B),
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        exp['date'] ?? '',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11,
+                          color: const Color(0xFF94A3B8),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: () {
+                          final String rawDesc = exp['description']?.toString() ?? '';
+                          String description = rawDesc;
+                          
+                          if (description.trim().startsWith('{')) {
+                            try {
+                              final d = jsonDecode(description.trim()) as Map<String, dynamic>;
+                              
+                              // Extract meaningful location info
+                              final String origin = d['origin']?.toString() ?? '';
+                              final String dest = (d['destination'] ?? d['location'] ?? d['hotelName'] ?? d['hotel_name'] ?? '').toString();
+                              
+                              if (origin.isNotEmpty || dest.isNotEmpty) {
+                                description = origin.isNotEmpty && dest.isNotEmpty 
+                                  ? "$origin → $dest" 
+                                  : (origin.isNotEmpty ? origin : dest);
+                              } else if (d['purpose'] != null && d['purpose'].toString().isNotEmpty) {
+                                description = d['purpose'].toString();
+                              } else {
+                                description = "Trip Segment Details";
+                              }
+
+                              // Add distance/remarks if available
+                              if (d['odoStart'] != null && d['odoEnd'] != null) {
+                                try {
+                                  final start = double.parse(d['odoStart'].toString());
+                                  final end = double.parse(d['odoEnd'].toString());
+                                  description += " (${(end - start).toStringAsFixed(1)} km)";
+                                } catch (_) {}
+                              }
+                              
+                              if (d['remarks'] != null &&
+                                  d['remarks'].toString().isNotEmpty &&
+                                  d['remarks'].toString().toLowerCase() != 'null') {
+                                description += "\nNote: ${d['remarks']}";
+                              }
+                            } catch (e) {
+                              description = "Activity Details";
+                            }
+                          }
+                          
+                          return Text(
+                            description,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF0F172A),
+                            ),
+                          );
+                        }(),
+                      ),
+                      Text(
+                        '₹${exp['amount']}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (exp['receipt_image'] != null &&
+                      exp['receipt_image'].toString() != '[]' &&
+                      exp['receipt_image'].toString().isNotEmpty &&
+                      exp['receipt_image'].toString() != 'null') ...[
+                    const SizedBox(height: 8),
+                    _miniImageThumbnail(
+                      exp['receipt_image'].toString(),
+                      "Receipt",
+                    ),
+                  ],
+                  () {
+                    final String rawDesc = exp['description']?.toString() ?? '';
+                    if (!rawDesc.trim().startsWith('{'))
+                      return const SizedBox.shrink();
+                    try {
+                      final details =
+                          jsonDecode(rawDesc.trim()) as Map<String, dynamic>;
+                      if (details['odoStart'] == null &&
+                          details['odoEnd'] == null &&
+                          details['odoStartImg'] == null &&
+                          details['odoEndImg'] == null &&
+                          (details['selfies'] == null ||
+                              (details['selfies'] as List).isEmpty)) {
+                        return const SizedBox.shrink();
+                      }
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8.0),
+                            child: Divider(height: 1),
+                          ),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 8,
+                            children: [
+                              if (details['odoStart'] != null)
+                                _miniInfoBlock(
+                                  'Odo Start',
+                                  '${details['odoStart']} km',
+                                ),
+                              if (details['odoEnd'] != null)
+                                _miniInfoBlock(
+                                  'Odo End',
+                                  '${details['odoEnd']} km',
+                                ),
+                              if (details['mode'] != null)
+                                _miniInfoBlock(
+                                  'Mode',
+                                  details['mode'].toString(),
+                                ),
+                            ],
+                          ),
+                          () {
+                            final List? incidentals =
+                                details['incidentals'] as List?;
+                            if (incidentals == null || incidentals.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Container(
+                              margin: const EdgeInsets.only(top: 12),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9).withOpacity(0.5),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.receipt_long_rounded,
+                                        size: 12,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        "INCIDENTAL BREAKDOWN",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          color: const Color(0xFF64748B),
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...incidentals.map((inc) => Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 4),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              inc['category']?.toString() ??
+                                                  'Other',
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF475569),
+                                              ),
+                                            ),
+                                            Text(
+                                              '₹${inc['amount']}',
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w900,
+                                                color: const Color(0xFF0F172A),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )),
+                                ],
+                              ),
+                            );
+                          }(),
+                          if (details['odoStartImg'] != null ||
+                              details['odoEndImg'] != null ||
+                              (details['selfies'] != null &&
+                                  (details['selfies'] as List).isNotEmpty)) ...[
+                            const SizedBox(height: 8),
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  if (details['odoStartImg'] != null)
+                                    _miniImageThumbnail(
+                                      details['odoStartImg'],
+                                      "Start",
+                                    ),
+                                  if (details['odoEndImg'] != null)
+                                    _miniImageThumbnail(
+                                      details['odoEndImg'],
+                                      "End",
+                                    ),
+                                  if (details['selfies'] != null)
+                                    ...(details['selfies'] as List)
+                                        .map(
+                                          (s) => _miniImageThumbnail(
+                                            s.toString(),
+                                            "Selfie",
+                                          ),
+                                        )
+                                        .toList(),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    } catch (e) {
+                      return const SizedBox.shrink();
+                    }
+                  }(),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _miniInfoBlock(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 9,
+            color: Colors.grey,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          value,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _miniImageThumbnail(dynamic imageInput, String label) {
+    if (imageInput == null) return const SizedBox.shrink();
+    String path = '';
+    if (imageInput is List) {
+      if (imageInput.isEmpty) return const SizedBox.shrink();
+      path = imageInput.first.toString().trim();
+    } else {
+      path = imageInput.toString().trim();
+      if (path.isEmpty || path == 'null' || path == '[]' || path == '[""]') return const SizedBox.shrink();
+      if (path.startsWith('[') && path.endsWith(']')) {
+        try {
+          final decoded = jsonDecode(path);
+          if (decoded is List && decoded.isNotEmpty) path = decoded.first.toString().trim();
+          else if (decoded is String) path = decoded.trim();
+        } catch (e) {}
+      }
+    }
+    if (path.isEmpty || path == 'null' || path == '[]' || path == '[""]') return const SizedBox.shrink();
+    path = path.replaceFirst(RegExp(r"^\[u'"), '').replaceFirst(RegExp(r"^u'"), '').replaceFirst(RegExp(r"^'"), '');
+    path = path.replaceFirst(RegExp(r"'\]$"), '').replaceFirst(RegExp(r"'$"), '');
+    Widget imageWidget;
+    try {
+      if (path.startsWith('data:image')) {
+        final base64String = path.split(',').last;
+        imageWidget = Image.memory(base64Decode(base64String), fit: BoxFit.cover);
+      } else if (path.startsWith('/9j/') || path.startsWith('iVBORw0KG') || (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
+        imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
+      } else {
+        final String backendBase = ApiConstants.baseUrl;
+        final String fullUrl = path.startsWith('http') ? path : '$backendBase${path.startsWith('/') ? '' : '/'}$path';
+        imageWidget = Image.network(fullUrl, fit: BoxFit.cover, errorBuilder: (c, e, s) => const Icon(Icons.broken_image, size: 20, color: Colors.grey));
+      }
+    } catch (e) {
+      imageWidget = const Icon(Icons.error_outline, size: 20, color: Colors.red);
+    }
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      width: 60, height: 60,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey.withOpacity(0.3))),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          children: [
+            Positioned.fill(child: imageWidget),
+            Positioned(bottom: 0, left: 0, right: 0, child: Container(color: Colors.black.withOpacity(0.5), padding: const EdgeInsets.symmetric(vertical: 2), child: Text(label, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 8)))),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2020,7 +2611,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
                 // ── Monthly Tour Plan (Bulk Batch) ───────────────────────────
                 // Hide daily activities on Expense Claims as requested (already validated in bulk flow)
-                if (type == 'Monthly Tour Plan' || task['data_json'] != null) ...[
+                if (type == 'Monthly Tour Plan' ||
+                    task['data_json'] != null) ...[
                   const SizedBox(height: 32),
                   _buildBulkBatchSection(task),
                 ],
@@ -2691,6 +3283,13 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ),
                 const SizedBox(width: 8),
                 _timeChip('REACH', reachTime),
+                const SizedBox(width: 12),
+                if ((row['incidental_amount'] ?? '0').toString() != '0')
+                  _miniExpensePill('I: ₹${row['incidental_amount']}', Icons.receipt_outlined),
+                if ((row['odo_total'] ?? '0').toString() != '0') ...[
+                  const SizedBox(width: 6),
+                  _miniExpensePill('M: ₹${row['odo_total']}', Icons.local_gas_station_rounded),
+                ],
                 const Spacer(),
                 if ((row['visit_intent'] ?? '').toString().isNotEmpty)
                   Flexible(
@@ -2756,7 +3355,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
             ),
           ],
           // Also hide them if this is an Expense Claim (where activities are already final context)
-          if (!widget.isHistory && rowStatus != 'Rejected' && !(widget.task['type']?.toString() ?? '').toLowerCase().contains('claim')) ...[
+          if (!widget.isHistory &&
+              rowStatus != 'Rejected' &&
+              !(widget.task['type']?.toString() ?? '').toLowerCase().contains(
+                'claim',
+              )) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -2931,6 +3534,31 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           ] else ...[
             const SizedBox(height: 14),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _miniExpensePill(String label, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: const Color(0xFF64748B)),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF475569),
+            ),
+          ),
         ],
       ),
     );
@@ -3134,6 +3762,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
   }
 
   Widget _buildExpenseBreakdown(dynamic expensesData) {
+    if (expensesData == null) return const SizedBox.shrink();
     final List expenses = expensesData as List;
     return Column(
       children: expenses
@@ -3184,25 +3813,46 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     children: [
                       Expanded(
                         child: () {
-                          String description =
-                              exp['description']?.toString() ?? '';
-                          if (description.startsWith('{')) {
+                          final String rawDesc = exp['description']?.toString() ?? '';
+                          String description = rawDesc;
+                          
+                          if (description.trim().startsWith('{')) {
                             try {
-                              final d =
-                                  jsonDecode(description)
-                                      as Map<String, dynamic>;
-                              description =
-                                  "${d['origin'] ?? ''}${d['origin'] != null ? ' → ' : ''}${d['destination'] ?? d['location'] ?? d['hotelName'] ?? d['hotel_name'] ?? ''}";
+                              final d = jsonDecode(description.trim()) as Map<String, dynamic>;
+                              
+                              // Extract meaningful location info
+                              final String origin = d['origin']?.toString() ?? '';
+                              final String dest = (d['destination'] ?? d['location'] ?? d['hotelName'] ?? d['hotel_name'] ?? '').toString();
+                              
+                              if (origin.isNotEmpty || dest.isNotEmpty) {
+                                description = origin.isNotEmpty && dest.isNotEmpty 
+                                  ? "$origin → $dest" 
+                                  : (origin.isNotEmpty ? origin : dest);
+                              } else if (d['purpose'] != null && d['purpose'].toString().isNotEmpty) {
+                                description = d['purpose'].toString();
+                              } else {
+                                description = "Trip Segment Details";
+                              }
+
+                              // Add distance/remarks if available
+                              if (d['odoStart'] != null && d['odoEnd'] != null) {
+                                try {
+                                  final start = double.parse(d['odoStart'].toString());
+                                  final end = double.parse(d['odoEnd'].toString());
+                                  description += " (${(end - start).toStringAsFixed(1)} km)";
+                                } catch (_) {}
+                              }
+                              
                               if (d['remarks'] != null &&
                                   d['remarks'].toString().isNotEmpty &&
-                                  d['remarks'].toString().toLowerCase() !=
-                                      'null') {
-                                description += " (${d['remarks']})";
+                                  d['remarks'].toString().toLowerCase() != 'null') {
+                                description += "\nNote: ${d['remarks']}";
                               }
                             } catch (e) {
-                              // fallback
+                              description = "Activity Details";
                             }
                           }
+                          
                           return Text(
                             description,
                             style: GoogleFonts.plusJakartaSans(
@@ -3223,7 +3873,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       ),
                     ],
                   ),
-                  if (exp['receipt_image'] != null) ...[
+                  if (exp['receipt_image'] != null &&
+                      exp['receipt_image'].toString() != '[]' &&
+                      exp['receipt_image'].toString().isNotEmpty &&
+                      exp['receipt_image'].toString() != 'null') ...[
                     const SizedBox(height: 8),
                     _miniImageThumbnail(
                       exp['receipt_image'].toString(),
@@ -3231,12 +3884,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     ),
                   ],
                   () {
-                    String description = exp['description']?.toString() ?? '';
-                    if (!description.startsWith('{'))
+                    final String rawDesc = exp['description']?.toString() ?? '';
+                    if (!rawDesc.trim().startsWith('{'))
                       return const SizedBox.shrink();
                     try {
                       final details =
-                          jsonDecode(description) as Map<String, dynamic>;
+                          jsonDecode(rawDesc.trim()) as Map<String, dynamic>;
                       if (details['odoStart'] == null &&
                           details['odoEnd'] == null &&
                           details['odoStartImg'] == null &&
@@ -3253,8 +3906,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                             padding: EdgeInsets.symmetric(vertical: 8.0),
                             child: Divider(height: 1),
                           ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 8,
                             children: [
                               if (details['odoStart'] != null)
                                 _miniInfoBlock(
@@ -3273,6 +3927,78 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                 ),
                             ],
                           ),
+                          () {
+                            final List? incidentals =
+                                details['incidentals'] as List?;
+                            if (incidentals == null || incidentals.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Container(
+                              margin: const EdgeInsets.only(top: 12),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF1F5F9).withOpacity(0.5),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.receipt_long_rounded,
+                                        size: 12,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        "INCIDENTAL BREAKDOWN",
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          color: const Color(0xFF64748B),
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...incidentals.map((inc) => Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 4),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              inc['category']?.toString() ??
+                                                  'Other',
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                                color: const Color(0xFF475569),
+                                              ),
+                                            ),
+                                            Text(
+                                              '₹${inc['amount']}',
+                                              style:
+                                                  GoogleFonts.plusJakartaSans(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w900,
+                                                color: const Color(0xFF0F172A),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )),
+                                ],
+                              ),
+                            );
+                          }(),
                           if (details['odoStartImg'] != null ||
                               details['odoEndImg'] != null ||
                               (details['selfies'] != null &&
@@ -3572,20 +4298,36 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     );
   }
 
-  Widget _miniImageThumbnail(String? imagePath, String label) {
-    if (imagePath == null || imagePath.isEmpty) return const SizedBox.shrink();
+  Widget _miniImageThumbnail(dynamic imageInput, String label) {
+    if (imageInput == null) return const SizedBox.shrink();
 
-    String path = imagePath.trim();
-    // Handle JSON array string if needed (common for receipts)
-    if (path.startsWith('[') && path.endsWith(']')) {
-      try {
-        final List<dynamic> list = jsonDecode(path);
-        if (list.isNotEmpty) {
-          path = list.first.toString().trim();
-        }
-      } catch (e) {
-        // fallback to original string
+    String path = '';
+    if (imageInput is List) {
+      if (imageInput.isEmpty) return const SizedBox.shrink();
+      path = imageInput.first.toString().trim();
+    } else {
+      path = imageInput.toString().trim();
+      if (path.isEmpty || path == 'null' || path == '[]' || path == '[""]') {
+        return const SizedBox.shrink();
       }
+
+      // Handle JSON array string if needed (common for receipts)
+      if (path.startsWith('[') && path.endsWith(']')) {
+        try {
+          final decoded = jsonDecode(path);
+          if (decoded is List && decoded.isNotEmpty) {
+            path = decoded.first.toString().trim();
+          } else if (decoded is String) {
+            path = decoded.trim();
+          }
+        } catch (e) {
+          // fallback to original string
+        }
+      }
+    }
+
+    if (path.isEmpty || path == 'null' || path == '[]' || path == '[""]') {
+      return const SizedBox.shrink();
     }
 
     // Clean legacy formats [u'path'] or ['path'] or 'path'
@@ -3606,6 +4348,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           fit: BoxFit.cover,
         );
       } else if (path.startsWith('/9j/') ||
+          path.startsWith('iVBORw0KG') ||
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
         imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
       } else {

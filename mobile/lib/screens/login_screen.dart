@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
 
@@ -348,6 +349,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           controller: _usernameController,
                           hintText: 'HR-EMP-1234',
                           icon: Icons.alternate_email_rounded,
+                          forceUpperCase: true,
                         ),
 
                         const SizedBox(height: 20),
@@ -504,6 +506,7 @@ class _LoginScreenState extends State<LoginScreen> {
     bool obscureText = false,
     VoidCallback? onToggleVisibility,
     IconData? icon,
+    bool forceUpperCase = false,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -514,6 +517,13 @@ class _LoginScreenState extends State<LoginScreen> {
       child: TextFormField(
         controller: controller,
         obscureText: isPassword ? obscureText : false,
+        enableInteractiveSelection: !isPassword,
+        textCapitalization: forceUpperCase ? TextCapitalization.characters : TextCapitalization.none,
+        inputFormatters: [
+          if (forceUpperCase) UpperCaseTextFormatter(),
+          if (forceUpperCase) FilteringTextInputFormatter.deny(RegExp(r'\s')),
+          if (isPassword) NoPasteTextInputFormatter(),
+        ],
         style: GoogleFonts.plusJakartaSans(
           fontSize: 15,
           fontWeight: FontWeight.w700,
@@ -546,6 +556,32 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class NoPasteTextInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (newValue.text.length - oldValue.text.length > 1) {
+      return oldValue; // Reject pastes (any input > 1 character simultaneously)
+    }
+    return newValue;
+  }
+}
+
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
     );
   }
 }

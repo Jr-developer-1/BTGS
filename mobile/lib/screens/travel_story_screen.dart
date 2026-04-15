@@ -125,6 +125,29 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
     }
   }
 
+  Future<void> _handleDeleteExpense(dynamic expenseId) async {
+    setState(() => _isActionLoading = true);
+    try {
+      await _tripService.deleteExpense(expenseId.toString());
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Expense record deleted successfully'),
+          backgroundColor: Color(0xFF0F172A),
+        ),
+      );
+      _fetchDetails();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete expense: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _isActionLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1101,7 +1124,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
   }
 
   Widget _buildExpenseSection() {
-    final List<dynamic> sortedExpenses = List.from(_expenses);
+    final List<dynamic> sortedExpenses = [];
 
     // Track which bulk rows already have real Expense records to avoid duplicates
     final Set<String> existingBulkKeys = {};
@@ -1116,6 +1139,59 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           details = jsonDecode(exp['description']);
         } catch (e) {}
       }
+
+      // EXPLOSION LOGIC: If a manual expense has a list of incidentals,
+      // we show them as separate cards in the grid for better visibility.
+      List<dynamic> incidentals = [];
+      if (details['incidentals'] is List) {
+        incidentals = details['incidentals'];
+      } else if (details['incidentalAmount'] != null &&
+          (double.tryParse(details['incidentalAmount'].toString()) ?? 0) > 0) {
+        // Handle legacy or simple form incidentals
+        incidentals = [
+          {
+            'category': details['incidentalCategory'] ?? 'Incidental',
+            'amount': details['incidentalAmount'],
+          }
+        ];
+      }
+
+      if (incidentals.isNotEmpty) {
+        double totalIncAmount = 0;
+        final List<dynamic> subCards = [];
+
+        for (var inc in incidentals) {
+          final amt = double.tryParse(inc['amount']?.toString() ?? '0') ?? 0;
+          if (amt <= 0) continue;
+          totalIncAmount += amt;
+
+          // Create a "Visual Card" for the incidental
+          subCards.add({
+            ...exp,
+            'is_sub_item': true,
+            'amount': amt,
+            'sub_type': inc['category'] ?? 'Incidental',
+            'id': '${exp['id']}_inc_${inc['category']}_$amt',
+          });
+        }
+
+        // Add the main record (with base amount)
+        final double totalAmt =
+            double.tryParse(exp['amount']?.toString() ?? '0') ?? 0;
+        final baseAmt = (totalAmt - totalIncAmount).clamp(0, double.infinity);
+
+        sortedExpenses.add({
+          ...exp,
+          'amount': baseAmt,
+        });
+
+        // Add the incidental cards immediately after
+        sortedExpenses.addAll(subCards);
+      } else {
+        // No incidentals, just add the record as is
+        sortedExpenses.add(exp);
+      }
+
       if (details['batch_id'] != null && details['row_index'] != null) {
         existingBulkKeys.add('${details['batch_id']}_${details['row_index']}');
       }
@@ -1378,27 +1454,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 letterSpacing: 1.2,
               ),
             ),
-            IconButton(
-              onPressed: () async {
-                final refresh = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => TripExpenseFormDetailedScreen(
-                      category: 'Local Travel',
-                      tripId: widget.tripId,
-                    ),
-                  ),
-                );
-                if (refresh == true) _fetchDetails();
-              },
-              icon: const Icon(
-                Icons.add_circle_rounded,
-                size: 24,
-                color: Color(0xFF0F172A),
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
+            const SizedBox.shrink(),
           ],
         ),
         const SizedBox(height: 16),
@@ -1485,6 +1541,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
     final date = expense['date'] ?? 'N/A';
     final status = expense['status'] ?? 'Pending';
     final remarks = expense['remarks'];
+    final bool isSubItem = expense['is_sub_item'] == true;
 
     var details = expense['details'] ?? {};
     if (details.isEmpty &&
@@ -1506,7 +1563,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
 
     // Smart override: if details contain any local conveyance/travel data,
     // always open Local Travel form regardless of stored nature
-    final bool hasLocalConveyanceData =
+    final bool hasLocalCoveranceDataRaw =
         details['origin'] != null ||
         details['destination'] != null ||
         details['odoStart'] != null ||
@@ -1514,12 +1571,17 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
         details['mode'] != null ||
         details['subType'] != null ||
         details['vehicle_type'] != null;
+
+    final bool hasLocalConveyanceData = hasLocalCoveranceDataRaw && !isSubItem;
+
     if (hasLocalConveyanceData) normalizedNature = 'Local Travel';
 
     // Grid Column: Activity / Route Details (Bold Title + Subtext)
     String routeText = date;
 
-    if (hasLocalConveyanceData ||
+    if (isSubItem) {
+      routeText = 'Incidental: ${expense['sub_type']}';
+    } else if (hasLocalConveyanceData ||
         normalizedNature.toLowerCase() == 'local travel') {
       // Local conveyance — show mode + route
       String route =
@@ -1549,15 +1611,21 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
         lowStatus == 'ok';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.fromLTRB(isSubItem ? 24 : 0, 0, 0, 12),
       decoration: BoxDecoration(
-        color: isRejected ? const Color(0xFFFFF1F2) : Colors.white,
+        color: isRejected
+            ? const Color(0xFFFFF1F2)
+            : (isSubItem ? const Color(0xFFF8FAFC) : Colors.white),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isRejected ? const Color(0xFFFECACA) : const Color(0xFFF1F5F9),
+          color: isRejected
+              ? const Color(0xFFFECACA)
+              : (isSubItem ? const Color(0xFFE2E8F0) : const Color(0xFFF1F5F9)),
+          width: isSubItem ? 1.5 : 1,
         ),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.01), blurRadius: 10),
+          if (!isSubItem)
+            BoxShadow(color: Colors.black.withOpacity(0.01), blurRadius: 10),
         ],
       ),
       child: Column(
@@ -1595,17 +1663,23 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                   decoration: BoxDecoration(
                     color: isRejected
                         ? const Color(0xFFFFB2B2).withOpacity(0.2)
-                        : const Color(0xFFF1F5F9),
+                        : (isSubItem
+                              ? const Color(0xFFEEF2FF)
+                              : const Color(0xFFF1F5F9)),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
-                    hasLocalConveyanceData
-                        ? Icons.directions_car_filled_rounded
-                        : _getNatureIcon(nature),
+                    isSubItem
+                        ? Icons.toll_rounded
+                        : (hasLocalConveyanceData
+                              ? Icons.directions_car_filled_rounded
+                              : _getNatureIcon(nature)),
                     size: 16,
                     color: isRejected
                         ? const Color(0xFFEF4444)
-                        : const Color(0xFF475569),
+                        : (isSubItem
+                              ? const Color(0xFF4F46E5)
+                              : const Color(0xFF475569)),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1661,11 +1735,18 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 // 3. AMOUNT
                 GestureDetector(
                   onTap: () async {
+                    // Block editing when claim is submitted (unless the item is rejected)
+                    final claimStatus = (_trip!.claim?['status'] ?? '').toString().toLowerCase();
+                    final claimLocked = _trip!.claim != null &&
+                        claimStatus != 'draft' &&
+                        claimStatus.isNotEmpty;
+
+                    if (claimLocked && !isRejected) return; // read-only tap
+
                     if (expense['is_synthetic'] == true) {
                       if (isRejected) {
                         await _openSyntheticEdit(expense);
                       } else {
-                        // For approved/pending batch items, open detailed form as read-only view
                         final refresh = await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -1722,7 +1803,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                             : isRejected
                             ? const Color(0xFFEF4444)
                             : const Color(0xFF4F46E5),
-                        decoration: (isApproved || isRejected)
+                        decoration: (isApproved || isRejected || (_trip!.claim != null && (_trip!.claim!['status'] ?? '').toString().toLowerCase() != 'draft'))
                             ? TextDecoration.none
                             : TextDecoration.underline,
                         decorationColor: const Color(0xFF4F46E5),
@@ -1750,24 +1831,27 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        if (expense['is_synthetic'] == true) {
-                          await _openSyntheticEdit(expense);
-                          return;
-                        }
-                        // For real rejected expenses (claim-level rejection), open edit form
-                        final refresh = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => TripExpenseFormDetailedScreen(
-                              category: normalizedNature,
-                              tripId: widget.tripId,
-                              expenseData: expense,
-                            ),
-                          ),
-                        );
-                        if (refresh == true) _fetchDetails();
-                      },
+                      onPressed: _isActionLoading
+                          ? null
+                          : () async {
+                              if (expense['is_synthetic'] == true) {
+                                await _openSyntheticEdit(expense);
+                                return;
+                              }
+                              // For real rejected expenses (claim-level rejection), open edit form
+                              final refresh = await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      TripExpenseFormDetailedScreen(
+                                    category: normalizedNature,
+                                    tripId: widget.tripId,
+                                    expenseData: expense,
+                                  ),
+                                ),
+                              );
+                              if (refresh == true) _fetchDetails();
+                            },
                       icon: const Icon(Icons.auto_fix_high_rounded, size: 14),
                       label: Text(
                         'Fix & Resubmit',
@@ -1790,7 +1874,9 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                   ),
                   const SizedBox(width: 8),
                   OutlinedButton.icon(
-                    onPressed: () => _confirmDeleteExpense(context, expense),
+                    onPressed: _isActionLoading
+                        ? null
+                        : () => _confirmDeleteExpense(context, expense),
                     icon: const Icon(Icons.delete_outline_rounded, size: 14),
                     label: Text(
                       'Delete',
@@ -1853,73 +1939,87 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               ),
             )
           else if (!isApproved && !isRejected)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () async {
-                        final refresh = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => TripExpenseFormDetailedScreen(
-                              category: normalizedNature,
-                              tripId: widget.tripId,
-                              expenseData: expense,
-                            ),
+            Builder(builder: (context) {
+              // Hide Edit/Delete when claim is submitted
+              final claimStatus = (_trip!.claim?['status'] ?? '').toString().toLowerCase();
+              final claimLocked = _trip!.claim != null &&
+                  claimStatus != 'draft' &&
+                  claimStatus != 'pending' &&
+                  claimStatus.isNotEmpty;
+              if (claimLocked) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _isActionLoading
+                            ? null
+                            : () async {
+                                final refresh = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        TripExpenseFormDetailedScreen(
+                                      category: normalizedNature,
+                                      tripId: widget.tripId,
+                                      expenseData: expense,
+                                    ),
+                                  ),
+                                );
+                                if (refresh == true) _fetchDetails();
+                              },
+                        icon: const Icon(Icons.edit_rounded, size: 14),
+                        label: Text(
+                          'Edit',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
                           ),
-                        );
-                        if (refresh == true) _fetchDetails();
-                      },
-                      icon: const Icon(Icons.edit_rounded, size: 14),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF4F46E5),
+                          side: const BorderSide(color: Color(0xFFE0E7FF)),
+                          backgroundColor: const Color(0xFFF5F3FF),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          minimumSize: const Size(0, 36),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _isActionLoading
+                          ? null
+                          : () => _confirmDeleteExpense(context, expense),
+                      icon: const Icon(Icons.delete_outline_rounded, size: 14),
                       label: Text(
-                        'Edit',
+                        'Delete',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF4F46E5),
-                        side: const BorderSide(color: Color(0xFFE0E7FF)),
-                        backgroundColor: const Color(0xFFF5F3FF),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        foregroundColor: const Color(0xFFEF4444),
+                        side: const BorderSide(color: Color(0xFFFEE2E2)),
+                        backgroundColor: const Color(0xFFFFF1F2),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 8,
+                          horizontal: 12,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                         minimumSize: const Size(0, 36),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _confirmDeleteExpense(context, expense),
-                    icon: const Icon(Icons.delete_outline_rounded, size: 14),
-                    label: Text(
-                      'Delete',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFEF4444),
-                      side: const BorderSide(color: Color(0xFFFEE2E2)),
-                      backgroundColor: const Color(0xFFFFF1F2),
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 12,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      minimumSize: const Size(0, 36),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                  ],
+                ),
+              );
+            }),
 
           // EXPANDABLE DETAILS (For Audit / Internal Info)
           Theme(
@@ -2106,12 +2206,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Expense record deleted successfully'),
-                  backgroundColor: Color(0xFF0F172A),
-                ),
-              );
+              _handleDeleteExpense(expense['id']);
             },
             child: Text(
               'DELETE',
@@ -2155,7 +2250,9 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               Expanded(
                 child: _settleGridItem(
                   'TRANSFERRED BY',
-                  claim['processed_by']?['name'] ?? 'Waiting',
+                  (claim['processed_by'] is Map 
+                      ? claim['processed_by']['name'] 
+                      : (claim['processed_by']?.toString() ?? 'Waiting')),
                 ),
               ),
               Expanded(

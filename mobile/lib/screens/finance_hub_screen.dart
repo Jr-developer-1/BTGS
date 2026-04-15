@@ -32,12 +32,16 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
 
   Future<void> _fetchFinanceData() async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _records = []; // Clear old records to ensure fresh view
+    });
     try {
       // 1. Fetch record list mirroring web app's simple tab-based request
       final data = await _tripService.fetchApprovals(
         tab: _selectedTab,
-        viewType: 'all', 
+        viewType: 'all',
+        source: 'hub',
         search: _searchController.text,
       );
 
@@ -62,6 +66,9 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   }
 
   Future<void> _handleUnderProcess(dynamic id) async {
+    setState(() {
+      _records.removeWhere((item) => item['id'] == id);
+    });
     try {
       await _tripService.performApproval(id, 'UnderProcess');
       if (mounted) {
@@ -174,14 +181,16 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                 ],
               ),
               const SizedBox(height: 24),
-              TextField(
-                onChanged: (v) => transactionId = v,
-                decoration: _modalInputDecoration(
-                  'Transaction ID / Reference',
-                  'Enter ID...',
+              if (paymentMode != 'Cash') ...[
+                TextField(
+                  onChanged: (v) => transactionId = v,
+                  decoration: _modalInputDecoration(
+                    'Transaction ID / Reference',
+                    'Enter ID...',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
+              ],
               TextField(
                 onChanged: (v) => remarks = v,
                 decoration: _modalInputDecoration(
@@ -194,7 +203,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () async {
-                    if (transactionId.isEmpty) {
+                    if (paymentMode != 'Cash' && transactionId.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Transaction ID is required'),
@@ -203,6 +212,9 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                       return;
                     }
                     Navigator.pop(context);
+                    setState(() {
+                      _records.removeWhere((item) => item['id'] == rec['id']);
+                    });
                     try {
                       await _tripService.performApproval(
                         rec['id'],
@@ -221,7 +233,9 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                             backgroundColor: Colors.green,
                           ),
                         );
-                        _fetchFinanceData();
+                        // Refresh current tab so the card disappears
+                        await Future.delayed(const Duration(milliseconds: 300));
+                        await _fetchFinanceData();
                       }
                     } catch (e) {
                       if (mounted)
@@ -875,10 +889,10 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   Widget _buildTransactionCard(Map<String, dynamic> rec) {
     // Both 'pending' and 'processing' tabs allow actions in finance hub
     bool canProcess = _selectedTab == 'pending' || _selectedTab == 'processing';
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -895,19 +909,19 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
           Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: const Color(0xFFBB0633).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
                   Icons.receipt_long_rounded,
                   color: Color(0xFFBB0633),
-                  size: 20,
+                  size: 18,
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -915,14 +929,18 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          rec['id']?.toString() ?? 'TRP-N/A',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.5,
+                        Expanded(
+                          child: Text(
+                            rec['id']?.toString() ?? 'TRP-N/A',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        const SizedBox(width: 8),
                         Text(
                           '₹${rec['cost'] ?? rec['cost_estimate'] ?? '0'}',
                           style: GoogleFonts.plusJakartaSans(
@@ -934,32 +952,55 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                       ],
                     ),
                     Text(
-                      rec['creator_name'] ?? rec['requester'] ?? 'Unknown Requester',
+                      rec['creator_name'] ??
+                          rec['requester'] ??
+                          'Unknown Requester',
                       style: GoogleFonts.inter(
-                        fontSize: 12,
+                        fontSize: 11,
                         color: Colors.grey,
                         fontWeight: FontWeight.w600,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          const Divider(height: 32),
+          const Divider(height: 28),
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _infoChip(Icons.category_rounded, rec['type'] ?? 'Trip Expense'),
-              const Spacer(),
+              Flexible(
+                child: _infoChip(
+                  Icons.category_rounded,
+                  rec['type'] ?? 'Trip Expense',
+                ),
+              ),
+              const SizedBox(width: 8),
               if (canProcess) ...[
-                 _actionIconBtn(Icons.pending_actions_rounded, Colors.orange, () => _handleUnderProcess(rec['id'])),
-                 const SizedBox(width: 12),
-                 _actionIconBtn(Icons.send_rounded, Colors.green, () => _openTransferModal(rec)),
-                 const SizedBox(width: 12),
-                 _actionIconBtn(Icons.close_rounded, Colors.red, () => _openRejectModal(rec)),
+                if (_selectedTab == 'pending') ...[
+                  _actionIconBtn(
+                    Icons.pending_actions_rounded,
+                    Colors.orange,
+                    () => _handleUnderProcess(rec['id']),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                _actionIconBtn(
+                  Icons.send_rounded,
+                  Colors.green,
+                  () => _openTransferModal(rec),
+                ),
+                const SizedBox(width: 6),
+                _actionIconBtn(
+                  Icons.close_rounded,
+                  Colors.red,
+                  () => _openRejectModal(rec),
+                ),
               ] else ...[
-                 _statusBadge(rec['status'] ?? 'Processed'),
-              ]
+                _statusBadge(rec['status'] ?? 'Processed'),
+              ],
             ],
           ),
         ],
@@ -969,7 +1010,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
 
   Widget _infoChip(IconData icon, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(8),
@@ -978,13 +1019,17 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 12, color: const Color(0xFF64748B)),
-          const SizedBox(width: 6),
-          Text(
-            label.toUpperCase(),
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 9,
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF64748B),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              label.toUpperCase(),
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF64748B),
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
           ),
         ],
@@ -997,7 +1042,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(10),
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(10),
@@ -1009,7 +1054,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   }
 
   Widget _statusBadge(String status) {
-     return Container(
+    return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: const Color(0xFF0F1E2A).withOpacity(0.05),
@@ -1027,7 +1072,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
   }
 
   Widget _buildEmptyState() {
-     return Center(
+    return Center(
       child: Padding(
         padding: const EdgeInsets.only(top: 100),
         child: Column(

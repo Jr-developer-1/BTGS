@@ -150,11 +150,15 @@ class TripService {
     String viewType = 'special',
     String? search,
     int page = 1,
+    String? source,
   }) async {
     String url =
         '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType&page=$page';
     if (search != null && search.isNotEmpty) {
       url += '&search=$search';
+    }
+    if (source != null) {
+      url += '&source=$source';
     }
     final response = await _apiService.get(url);
     if (response is Map && response.containsKey('results')) {
@@ -173,8 +177,10 @@ class TripService {
     return [];
   }
 
-  Future<Map<String, dynamic>> fetchApprovalCounts() async {
-    final response = await _apiService.get(ApiConstants.approvalsCount);
+  Future<Map<String, dynamic>> fetchApprovalCounts({String? source}) async {
+    String url = ApiConstants.approvalsCount;
+    if (source != null) url += '?source=$source';
+    final response = await _apiService.get(url);
     if (response is Map) {
       return Map<String, dynamic>.from(response);
     }
@@ -672,5 +678,13 @@ class TripService {
       debugPrint('ERROR FETCHING TEAM TRACKING: $e');
       return [];
     }
+  }
+
+  Future<List<Map<String, dynamic>>> fetchProjects() async {
+    final response = await _apiService.get('${ApiConstants.baseUrl}/api/projects/');
+    if (response is List) {
+      return List<Map<String, dynamic>>.from(response);
+    }
+    return [];
   }
 }

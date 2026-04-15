@@ -53,7 +53,7 @@ const FinanceDashboard = () => {
     const fetchFinanceData = async () => {
         try {
             setLoading(true);
-            const resp = await api.get(`/api/approvals/?tab=${activeTab}`);
+            const resp = await api.get(`/api/approvals/?tab=${activeTab}&source=hub`);
             const rawData = resp.data.results || resp.data || [];
             const data = rawData.map(item => ({
                 id: item.id,
@@ -94,6 +94,7 @@ const FinanceDashboard = () => {
     );
 
     const handleUnderProcess = async (id) => {
+        setRecords(prev => prev.filter(rec => rec.id !== id));
         try {
             await api.post('/api/approvals/', { id, action: 'UnderProcess' });
             showToast("Marked as Under Process", "success");
@@ -104,19 +105,27 @@ const FinanceDashboard = () => {
     };
 
     const handleTransfer = async () => {
-        if (!transferData.transaction_id) {
+        if (transferData.payment_mode !== 'Cash' && !transferData.transaction_id) {
             showToast("Transaction ID is required", "warning");
             return;
         }
+
+        const recordId = selectedRecord.id;
+        setRecords(prev => prev.filter(rec => rec.id !== recordId));
+
         try {
             await api.post('/api/approvals/', {
-                id: selectedRecord.id,
+                id: recordId,
                 action: 'Transfer',
                 ...transferData
             });
             showToast("Funds transferred successfully", "success");
             setIsTransferModalOpen(false);
-            fetchFinanceData();
+
+            // Allow DB a moment to sync before refresh
+            setTimeout(async () => {
+                await fetchFinanceData();
+            }, 300);
         } catch (e) {
             showToast("Transfer recording failed", "error");
         }
@@ -388,17 +397,19 @@ const FinanceDashboard = () => {
                         </div>
                     </div>
 
-                    <div className="form-group">
-                        <label className="form-label">Transaction ID / Reference</label>
-                        <input
-                            type="text"
-                            className="form-input"
-                            placeholder="Enter NEFT Ref or UPI ID"
-                            value={activeTab === 'completed' ? selectedRecord?.raw.transaction_id : transferData.transaction_id}
-                            onChange={(e) => setTransferData({ ...transferData, transaction_id: e.target.value })}
-                            disabled={activeTab === 'completed'}
-                        />
-                    </div>
+                    {(activeTab === 'completed' ? selectedRecord?.raw.payment_mode : transferData.payment_mode) !== 'Cash' && (
+                        <div className="form-group">
+                            <label className="form-label">Transaction ID / Reference</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                placeholder="Enter NEFT Ref or UPI ID"
+                                value={activeTab === 'completed' ? selectedRecord?.raw.transaction_id : transferData.transaction_id}
+                                onChange={(e) => setTransferData({ ...transferData, transaction_id: e.target.value })}
+                                disabled={activeTab === 'completed'}
+                            />
+                        </div>
+                    )}
 
                     <div className="form-group">
                         <label className="form-label">Remarks</label>

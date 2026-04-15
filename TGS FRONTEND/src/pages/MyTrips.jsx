@@ -282,12 +282,18 @@ const MyTrips = () => {
                             New Trip Request
                         </button>
                     )}
-                    {(typeFilter === 'All' || typeFilter === 'Travel') && (
-                        <button className="btn-primary" style={{ backgroundColor: 'white', color: 'var(--magenta)', border: '1px solid var(--magenta)' }} onClick={() => navigate('/travel-creation')}>
-                            <Briefcase size={18} style={{ marginRight: '8px' }} />
-                            New Tour Plan
-                        </button>
-                    )}
+                    {(() => {
+                        const role = (user?.role || '').toUpperCase();
+                        const desig = (user?.designation || '').toUpperCase();
+                        const isOE = role.includes('OE') || desig.includes('OE');
+                        
+                        return (typeFilter === 'All' || typeFilter === 'Travel') && isOE && (
+                            <button className="btn-primary" style={{ backgroundColor: 'white', color: 'var(--magenta)', border: '1px solid var(--magenta)' }} onClick={() => navigate('/travel-creation')}>
+                                <Briefcase size={18} style={{ marginRight: '8px' }} />
+                                New Tour Plan
+                            </button>
+                        );
+                    })()}
                 </div>
             </div>
 

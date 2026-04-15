@@ -551,7 +551,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Hello.., ${widget.username}!', // Full username
+                  'Hello, ${widget.username}!', // Full username
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 28,
                     fontWeight: FontWeight.w900,

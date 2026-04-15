@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import '../services/trip_service.dart';
 import '../services/api_service.dart';
@@ -8,6 +9,8 @@ import '../constants/api_constants.dart';
 import 'trip_story_screen.dart';
 import 'travel_story_screen.dart';
 import 'trip_planner_screen.dart';
+import 'role_based_dashboard.dart';
+import 'my_trips_screen.dart';
 
 class CreateTripScreen extends StatefulWidget {
   const CreateTripScreen({super.key});
@@ -696,68 +699,35 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ),
             ),
             const SizedBox(height: 32),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.pop(context); // Dialog
-                      Navigator.pop(context); // Parent
-                    },
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: const BorderSide(color: Color(0xFFF1F5F9)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (context) => const MyTripsScreen(),
                     ),
-                    child: Text(
-                      'MY TRIPS',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 11,
-                        color: const Color(0xFF64748B),
-                        letterSpacing: 0.5,
-                      ),
-                    ),
+                    (route) => route.isFirst,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF134E4A),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  elevation: 0,
+                ),
+                child: Text(
+                  'GO TO MY TRIPS',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context); // Dialog
-                      Navigator.pop(context); // Parent
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                               _considerLocal 
-                                ? TravelStoryScreen(tripId: _encodeId(tripId))
-                                : TripStoryScreen(tripId: _encodeId(tripId)),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      backgroundColor: const Color(0xFF0F172A),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: Text(
-                      'TRIP STORY',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 11,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ],
         ),
@@ -983,13 +953,15 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
         children: [
           Icon(icon, size: size + 4, color: const Color(0xFF134E4A)),
           const SizedBox(width: 10),
-          Text(
-            title,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: size,
-              fontWeight: FontWeight.w900,
-              color: const Color(0xFF134E4A),
-              letterSpacing: -0.2,
+          Expanded(
+            child: Text(
+              title,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: size,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF134E4A),
+                letterSpacing: -0.2,
+              ),
             ),
           ),
         ],
@@ -1396,18 +1368,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           ],
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              controller.text.isEmpty ? 'Select Location...' : controller.text,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: controller.text.isEmpty
-                    ? const Color(0xFF94A3B8)
-                    : const Color(0xFF0F172A),
+            Expanded(
+              child: Text(
+                controller.text.isEmpty
+                    ? 'Select Location...'
+                    : controller.text,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: controller.text.isEmpty
+                      ? const Color(0xFF94A3B8)
+                      : const Color(0xFF0F172A),
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
+            const SizedBox(width: 8),
             const Icon(
               Icons.search_rounded,
               size: 20,
@@ -1839,6 +1816,9 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
           enabled: enabled,
           maxLines: maxLines,
           textCapitalization: textCapitalization,
+          inputFormatters: textCapitalization == TextCapitalization.characters
+              ? [UpperCaseTextFormatter()]
+              : [],
           onChanged: onChanged,
           validator: validator,
           style: GoogleFonts.plusJakartaSans(
@@ -1953,20 +1933,23 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
               ],
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  value == null
-                      ? 'Select Date'
-                      : DateFormat('dd MMM, yyyy').format(value),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: value == null
-                        ? const Color(0xFF94A3B8)
-                        : const Color(0xFF0F172A),
+                Expanded(
+                  child: Text(
+                    value == null
+                        ? 'Select Date'
+                        : DateFormat('dd MMM, yyyy').format(value),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: value == null
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF0F172A),
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 8),
                 const Icon(
                   Icons.calendar_today_rounded,
                   size: 18,
@@ -2468,6 +2451,19 @@ class _SearchLocationDialogState extends State<_SearchLocationDialog> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
     );
   }
 }
