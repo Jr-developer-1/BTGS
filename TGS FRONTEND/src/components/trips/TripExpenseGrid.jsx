@@ -2933,14 +2933,14 @@ const TripExpenseGrid = ({
                                     )}
                                     {['Flight', 'Train'].includes(mode) && (
                                         <div className="input-with-label-mini mt-2" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px', borderTop: '1px solid #f1f5f9', paddingTop: '8px' }}>
-                                                <input
-                                                    type="checkbox"
-                                                    id={`meal-inc-${row.id}`}
-                                                    style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                                                    checked={row.details.mealIncluded === 'Yes'}
-                                                    onChange={e => updateDetails(row.id, 'mealIncluded', e.target.checked ? 'Yes' : 'No')}
-                                                    disabled={isLocked}
-                                                />
+                                            <input
+                                                type="checkbox"
+                                                id={`meal-inc-${row.id}`}
+                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                checked={row.details.mealIncluded === 'Yes'}
+                                                onChange={e => updateDetails(row.id, 'mealIncluded', e.target.checked ? 'Yes' : 'No')}
+                                                disabled={isLocked}
+                                            />
                                             <label htmlFor={`meal-inc-${row.id}`} style={{ cursor: 'pointer', fontWeight: '600', color: '#475569', fontSize: '0.75rem' }}>Meal Included in Ticket</label>
                                         </div>
                                     )}
@@ -4460,7 +4460,7 @@ const TripExpenseGrid = ({
                                                                                                     }
                                                                                                     return true;
                                                                                                 });
-                                                                                                
+
                                                                                                 const newFilesPromises = validFiles.map(file => {
                                                                                                     return new Promise(resolve => {
                                                                                                         const reader = new FileReader();
@@ -5375,10 +5375,10 @@ const TripExpenseGrid = ({
                                                                 </button>
                                                             ))}
                                                             {r.jobReportFiles && r.jobReportFiles.length > 0 && r.jobReportFiles.map((b, bidx) => (
-                                                                <button 
-                                                                    key={`jr-${bidx}`} 
-                                                                    className="rev-bill-preview" 
-                                                                    title={`View Job Report Attachment ${bidx + 1}`} 
+                                                                <button
+                                                                    key={`jr-${bidx}`}
+                                                                    className="rev-bill-preview"
+                                                                    title={`View Job Report Attachment ${bidx + 1}`}
                                                                     onClick={() => previewBill(b)}
                                                                     style={{ border: '1.5px solid #3b82f6', background: '#eff6ff', position: 'relative' }}
                                                                 >

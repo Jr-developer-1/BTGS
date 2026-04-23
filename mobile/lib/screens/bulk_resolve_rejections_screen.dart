@@ -43,8 +43,14 @@ class _BulkResolveRejectionsScreenState
 
     for (int i = 0; i < widget.allRows.length; i++) {
       final row = Map<String, dynamic>.from(widget.allRows[i]);
-      final raw = (row['_status'] ?? row['status'] ?? 'Pending').toString().toLowerCase().trim();
-      final isRejected = raw == 'rejected' || raw == 'fix required' || raw.contains('rejected');
+      final raw = (row['_status'] ?? row['status'] ?? 'Pending')
+          .toString()
+          .toLowerCase()
+          .trim();
+      final isRejected =
+          raw == 'rejected' ||
+          raw == 'fix required' ||
+          raw.contains('rejected');
 
       if (isRejected) {
         _rejectedRows.add({...row, '_original_index': i});
@@ -67,7 +73,7 @@ class _BulkResolveRejectionsScreenState
   Future<void> _resubmit() async {
     setState(() => _isSubmitting = true);
     try {
-      // Rebuild the full payload. 
+      // Rebuild the full payload.
       // Corrected rows get updated data and their status is cleared so they look "new" to the approver.
       // Already approved/validated rows are sent as-is, preserving their status so the manager doesn't have to re-evaluate them.
       final List<Map<String, dynamic>> finalPayload = [];
@@ -76,7 +82,7 @@ class _BulkResolveRejectionsScreenState
         if (_controllers.containsKey(i)) {
           final originalRow = Map<String, dynamic>.from(widget.allRows[i]);
           final c = _controllers[i]!;
-          
+
           final Map<String, dynamic> updatedRow = {
             ...originalRow,
             'date': DateFormat('yyyy-MM-dd').format(c.date),
@@ -423,7 +429,10 @@ class _BulkResolveRejectionsScreenState
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        row['remarks'] ?? row['_remarks'] ?? row['_remark'] ?? 'No reason provided',
+                        row['remarks'] ??
+                            row['_remarks'] ??
+                            row['_remark'] ??
+                            'No reason provided',
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
@@ -630,19 +639,31 @@ class RowControllers {
   RowControllers(Map<String, dynamic> row) {
     final details = row['details'] ?? {};
     from = TextEditingController(
-      text: (row['origin_route'] ?? row['from_location'] ?? details['origin'] ?? '').toString(),
+      text:
+          (row['origin_route'] ??
+                  row['from_location'] ??
+                  details['origin'] ??
+                  '')
+              .toString(),
     );
     to = TextEditingController(
-      text: (row['destination_route'] ?? row['to_location'] ?? details['destination'] ?? '').toString(),
+      text:
+          (row['destination_route'] ??
+                  row['to_location'] ??
+                  details['destination'] ??
+                  '')
+              .toString(),
     );
     purpose = TextEditingController(
-      text: (row['visit_intent'] ?? row['purpose'] ?? details['purpose'] ?? '').toString(),
+      text: (row['visit_intent'] ?? row['purpose'] ?? details['purpose'] ?? '')
+          .toString(),
     );
     mode = TextEditingController(
       text: (row['mode'] ?? details['mode'] ?? '').toString(),
     );
     subType = TextEditingController(
-      text: (row['subType'] ?? row['vehicle_type'] ?? details['subType'] ?? '').toString(),
+      text: (row['subType'] ?? row['vehicle_type'] ?? details['subType'] ?? '')
+          .toString(),
     );
     odoStart = TextEditingController(
       text: (row['odo_start'] ?? details['odoStart'] ?? '').toString(),

@@ -1032,7 +1032,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   }
 
   Widget _buildWalletDisplay() {
-    final advance = _dashboardStats?['advance_balance'] ?? 0.0;
+    final balance = _dashboardStats?['wallet_balance'] ?? 0.0;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1082,7 +1082,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'ADVANCE',
+                'WALLET',
                 style: GoogleFonts.inter(
                   fontSize: 7,
                   fontWeight: FontWeight.w900,
@@ -1091,7 +1091,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
                 ),
               ),
               Text(
-                "₹${NumberFormat('#,###').format(advance)}",
+                "₹${NumberFormat('#,###').format(balance)}",
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 15,
                   fontWeight: FontWeight.w900,

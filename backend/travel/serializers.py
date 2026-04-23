@@ -6,11 +6,17 @@ from .models import (
     LocalTravelModeMaster, LocalProviderMaster, LocalSubTypeMaster,
     StayTypeMaster, RoomTypeMaster, StayBookingTypeMaster, StayBookingSourceMaster,
     MealCategoryMaster, MealTypeMaster, MealSourceMaster, MealProviderMaster,
-    IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking
+    IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking,
+    HistoricalTripStop
 )
 from api_management.utils import encrypt_key, decrypt_key
 
 # --- MASTER SERIALIZERS ---
+
+class HistoricalTripStopSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HistoricalTripStop
+        fields = '__all__'
 
 class TripTrackingSerializer(serializers.ModelSerializer):
     class Meta:
@@ -193,11 +199,51 @@ class ExpenseSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         if representation.get('receipt_image'):
             representation['receipt_image'] = decrypt_key(representation['receipt_image'])
+            
+        # Fallback for deviation info stored in JSON description (for old records)
+        desc_str = representation.get('description', '')
+        if desc_str and desc_str.strip().startswith('{'):
+            try:
+                import json
+                desc_json = json.loads(desc_str)
+                if desc_json.get('is_deviated') is True:
+                    if not representation.get('is_deviated'):
+                        representation['is_deviated'] = True
+                    if not representation.get('deviation_reason'):
+                        representation['deviation_reason'] = desc_json.get('deviation_reason', '')
+                    if not representation.get('deviation_target'):
+                        representation['deviation_target'] = desc_json.get('deviation_target', '')
+                    if not representation.get('planned_origin'):
+                        representation['planned_origin'] = desc_json.get('planned_origin', '')
+                    if not representation.get('planned_destination'):
+                        representation['planned_destination'] = desc_json.get('planned_destination', '')
+            except:
+                pass
         return representation
 
     def to_internal_value(self, data):
         if data.get('receipt_image'):
             data['receipt_image'] = encrypt_key(data['receipt_image'])
+        
+        # Extract deviation details from description JSON if they exist
+        description_str = data.get('description')
+        if description_str and isinstance(description_str, str) and description_str.strip().startswith('{'):
+            try:
+                import json
+                desc_json = json.loads(description_str)
+                if desc_json.get('is_deviated') is True:
+                    data['is_deviated'] = True
+                    if desc_json.get('deviation_reason'):
+                        data['deviation_reason'] = desc_json.get('deviation_reason')
+                    if desc_json.get('deviation_target'):
+                        data['deviation_target'] = desc_json.get('deviation_target')
+                    if desc_json.get('planned_origin'):
+                        data['planned_origin'] = desc_json.get('planned_origin')
+                    if desc_json.get('planned_destination'):
+                        data['planned_destination'] = desc_json.get('planned_destination')
+            except:
+                pass
+
         return super().to_internal_value(data)
 
     def validate(self, attrs):
@@ -362,6 +408,7 @@ class TripSerializer(serializers.ModelSerializer):
     user_account_no = serializers.ReadOnlyField(source='user.account_no')
     user_ifsc_code = serializers.ReadOnlyField(source='user.ifsc_code')
     user_base_location = serializers.ReadOnlyField(source='user.base_location')
+    user_carry_forward = serializers.ReadOnlyField(source='user.carry_forward_balance')
     route_path_name = serializers.ReadOnlyField(source='route_path.path_name')
 
     has_gh_booking = serializers.SerializerMethodField()
@@ -370,18 +417,20 @@ class TripSerializer(serializers.ModelSerializer):
     activity_batches = BulkActivityBatchSerializer(many=True, read_only=True)
     current_approver_name = serializers.ReadOnlyField(source='current_approver.name')
     approval_chain = serializers.SerializerMethodField()
+    is_bulk_upload = serializers.SerializerMethodField()
 
     class Meta:
         model = Trip
         fields = [
             'trip_id', 'user', 'user_name', 'user_emp_id', 'user_bank_name', 'user_account_no', 'user_ifsc_code', 'user_base_location',
+            'user_carry_forward',
             'purpose', 'destination', 'start_date', 'end_date',
             'status', 'cost_estimate', 'source', 'travel_mode', 'composition',
             'trip_leader', 'en_route', 'route_path', 'route_path_name', 'project_code', 'consider_as_local', 'accommodation_requests',
             'vehicle_type', 'members', 'lifecycle_events', 'created_at', 'updated_at',
             'advances', 'expenses', 'odometer', 'claim', 'reporting_manager_name', 'senior_manager_name', 'hod_director_name',
             'current_approver', 'current_approver_name', 'total_approved_advance', 'total_expenses', 'wallet_balance', 'has_gh_booking', 'has_vehicle_booking',
-            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches', 'approval_chain'
+            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches', 'approval_chain', 'is_bulk_upload'
         ]
         read_only_fields = ('trip_id', 'user', 'user_name', 'user_emp_id', 'status', 'cost_estimate', 'created_at', 'updated_at', 'lifecycle_events', 'approval_chain')
 
@@ -413,13 +462,34 @@ class TripSerializer(serializers.ModelSerializer):
         return float(sum(e.amount for e in obj.expenses.all()))
 
     def get_wallet_balance(self, obj):
-        return float(self.get_total_approved_advance(obj)) - float(self.get_total_expenses(obj))
+        if not obj.user:
+            return 0.0
+        
+        # The carry_forward_balance is the global pool of surplus funds from previous settlements
+        global_wallet = float(obj.user.carry_forward_balance or 0)
+        
+        # Calculate the net position of the CURRENT trip
+        trip_advances = float(self.get_total_approved_advance(obj))
+        trip_expenses = float(self.get_total_expenses(obj))
+        trip_net = trip_advances - trip_expenses
+        
+        # If the trip is already settled, its surplus/deficit has already been moved 
+        # to the global_wallet by the Finance reconciliation logic.
+        if obj.status == 'Settled':
+            return global_wallet
+            
+        # For ongoing or pending trips, the 'available liquidity' is the global wallet 
+        # PLUS what's currently held/spent in this trip.
+        return global_wallet + trip_net
 
     def get_has_gh_booking(self, obj):
         return obj.room_bookings.exists()
     
     def get_has_vehicle_booking(self, obj):
         return obj.vehicle_bookings.exists()
+
+    def get_is_bulk_upload(self, obj):
+        return obj.activity_batches.exists()
 
     def validate(self, attrs):
         source = attrs.get('source')

@@ -10,6 +10,8 @@ class SearchableDropdown extends StatefulWidget {
   final Function(String) onChanged;
   final IconData? icon;
   final bool isLocation;
+  final bool enabled;
+  final String? hint;
 
   const SearchableDropdown({
     super.key,
@@ -19,6 +21,8 @@ class SearchableDropdown extends StatefulWidget {
     required this.onChanged,
     this.icon,
     this.isLocation = false,
+    this.enabled = true,
+    this.hint,
   });
 
   @override
@@ -51,22 +55,41 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
     }
   }
 
-  void _onSearchChanged(String query) {
+  void _onSearchChanged(String query, Function setModalState) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), () async {
+
+    // Immediate local filtering for better perceived performance
+    if (widget.initialOptions != null && query.isNotEmpty) {
+      final localFiltered = widget.initialOptions!
+          .where((opt) => opt.toLowerCase().contains(query.toLowerCase()))
+          .toList();
+      if (localFiltered.isNotEmpty) {
+        setState(() => _options = localFiltered);
+        setModalState(() {});
+      }
+    }
+
+    _debounce = Timer(const Duration(milliseconds: 200), () async {
       if (query.length < 2) {
-        if (mounted) setState(() => _options = widget.initialOptions ?? []);
+        if (mounted) {
+          setState(() => _options = widget.initialOptions ?? []);
+          setModalState(() {});
+        }
         return;
       }
 
       if (widget.isLocation) {
-        if (mounted) setState(() => _isLoading = true);
+        if (mounted) {
+          setState(() => _isLoading = true);
+          setModalState(() {});
+        }
         final results = await _masterService.searchLocations(query);
         if (mounted) {
           setState(() {
-            _options = results.map((e) => e['name']?.toString() ?? '').toList();
+            _options = results.map((e) => _masterService.formatLocation(e)).toList();
             _isLoading = false;
           });
+          setModalState(() {});
         }
       } else {
         // Simple local filtering
@@ -75,7 +98,9 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
             _options = (widget.initialOptions ?? [])
                 .where((opt) => opt.toLowerCase().contains(query.toLowerCase()))
                 .toList();
+            _isLoading = false;
           });
+          setModalState(() {});
         }
       }
     });
@@ -99,11 +124,11 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
         ),
         const SizedBox(height: 6),
         GestureDetector(
-          onTap: () => _showSearchDialog(context),
+          onTap: widget.enabled ? () => _showSearchDialog(context) : null,
           child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FDFA),
+              color: widget.enabled ? const Color(0xFFF0FDFA) : const Color(0xFFF1F5F9),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFFCCFBF1)),
             ),
@@ -115,7 +140,7 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
                 ],
                 Expanded(
                   child: Text(
-                    widget.value?.isEmpty ?? true ? 'Select ${widget.label}' : widget.value!,
+                    widget.value?.isEmpty ?? true ? (widget.hint ?? 'Select ${widget.label}') : widget.value!,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.plusJakartaSans(
@@ -163,11 +188,7 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
                   controller: _searchController,
                   autofocus: true,
                   onChanged: (val) {
-                    _onSearchChanged(val);
-                    // Update modal state to show loader/results
-                    Future.delayed(const Duration(milliseconds: 600), () {
-                      if (mounted) setModalState(() {});
-                    });
+                    _onSearchChanged(val, setModalState);
                   },
                   decoration: InputDecoration(
                     hintText: 'Search ${widget.label}...',
@@ -188,20 +209,35 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
                   )
                 else
                   Expanded(
-                    child: ListView.builder(
-                      itemCount: _options.length,
-                      itemBuilder: (context, index) {
-                        return ListTile(
+                    child: ListView(
+                      children: [
+                        if (_searchController.text.isNotEmpty)
+                          ListTile(
+                            leading: const Icon(Icons.edit_note_rounded, color: Color(0xFF0284C7)),
+                            title: Text(
+                              'Use manual entry: "${_searchController.text}"',
+                              style: GoogleFonts.plusJakartaSans(
+                                color: const Color(0xFF0284C7),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                            onTap: () {
+                              widget.onChanged(_searchController.text);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ..._options.map((option) => ListTile(
                           title: Text(
-                            _options[index],
+                            option,
                             style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600),
                           ),
                           onTap: () {
-                            widget.onChanged(_options[index]);
+                            widget.onChanged(option);
                             Navigator.pop(context);
                           },
-                        );
-                      },
+                        )).toList(),
+                      ],
                     ),
                   ),
               ],

@@ -43,8 +43,22 @@ class _TripExpenseFormDetailedScreenState
   List<String> _masterRoomTypes = [];
   List<String> _masterMealCategories = [];
   List<String> _masterMealTypes = [];
+  List<String> _masterMealSources = [];
+  List<String> _masterMealProviders = [];
+  List<String> _masterStayBookingTypes = [];
+  List<String> _masterStayBookingSources = [];
   List<String> _masterClasses = [];
-  List<String> _masterIncidentalTypes = [];
+  List<String> _masterIncidentalTypes = [];        // all types
+  List<String> _masterGeneralIncidentalTypes = [];  // category == 'general_incidental'
+  List<String> _masterTravelIncidentalTypes = [];   // category == 'travel_incidental'
+  List<String> _masterLocalIncidentalTypes = [];    // category == 'local_conveyance'
+  List<String> _masterTicketStatuses = [];
+  List<String> _masterQuotaTypes = [];
+  List<String> _masterVehicles = [];
+  List<String> _masterOperators = [];
+  List<String> _masterProviders = [];
+  List<String> _masterLocations = [];
+  List<Map<String, dynamic>> _masterLocalSubTypesRaw = [];
   bool get isStartFieldsComplete =>
       _originController.text.isNotEmpty &&
       _odoStartController.text.isNotEmpty &&
@@ -64,6 +78,7 @@ class _TripExpenseFormDetailedScreenState
   final TextEditingController _pnrController = TextEditingController();
   final TextEditingController _ticketNoController = TextEditingController();
   final TextEditingController _seatNoController = TextEditingController();
+  final TextEditingController _travelNoController = TextEditingController();
   final TextEditingController _personsController = TextEditingController();
   final TextEditingController _vehicleNoController = TextEditingController();
   final TextEditingController _odoStartController = TextEditingController();
@@ -81,12 +96,21 @@ class _TripExpenseFormDetailedScreenState
   final TextEditingController _driverNameController = TextEditingController();
   final TextEditingController _boardingPointController =
       TextEditingController();
-  final TextEditingController _travelNoController =
-      TextEditingController(); // Flight No / Train No
+  final TextEditingController _remainingRouteController =
+      TextEditingController();
+  final TextEditingController _bookingIdController = TextEditingController();
+  final TextEditingController _cancellationChargesController = TextEditingController();
+  final TextEditingController _noShowChargesController = TextEditingController();
+  final TextEditingController _baseFareController = TextEditingController();
+  final TextEditingController _reasonController = TextEditingController();
+  bool _isPublicTransport = false;
 
   // Dropdown States
   String? _mealCategory;
   String? _mealType;
+  String? _mealSource;
+  String? _mealProvider;
+  String? _bookingSource;
   String? _accomType;
   String? _roomType;
   String? _travelMode;
@@ -95,6 +119,9 @@ class _TripExpenseFormDetailedScreenState
   String? _bookingType;
   String? _travelStatus = 'Completed';
   String? _travelClass;
+  String? _ticketStatus;
+  String? _quotaType;
+  String? _incidentalType;
   bool _nightTravel = false;
   bool _isSharedMeal = false;
   String? _odoStartImg;
@@ -129,10 +156,25 @@ class _TripExpenseFormDetailedScreenState
   DateTime _scheduledEndDate = DateTime.now();
   TimeOfDay _scheduledStartTime = TimeOfDay.now();
   TimeOfDay _scheduledEndTime = TimeOfDay.now();
+  List<String> _auditTrail = [];
 
   int? _batchId;
   int? _rowIndex;
   bool _fromBulkUpload = false;
+  bool _isDeviated = false;
+  String? _deviationReason;
+  String? _deviationTarget;
+  String? _plannedOrigin;
+  String? _plannedDestination;
+
+  // Granular Masters
+  List<String> _masterAirlines = [];
+  List<String> _masterBusOperators = [];
+  List<String> _masterFlightProviders = [];
+  List<String> _masterTrainProviders = [];
+  List<String> _masterBusProviders = [];
+  List<String> _masterCabProviders = [];
+  List<Map<String, dynamic>> _masterLocalProvidersRaw = [];
 
   @override
   void initState() {
@@ -140,19 +182,79 @@ class _TripExpenseFormDetailedScreenState
     _loadMasters();
     if (widget.expenseData != null) {
       _loadExpenseData();
-      // Also fetch live rates when editing so that recalculations use
-      // the current backend-configured rate, not the hardcoded fallback.
       if (widget.category == 'Local Travel') {
         _fetchRates();
       }
     } else {
-      // Set defaults based on category
       if (widget.category == 'Local Travel') {
         _travelMode = 'Bike';
         _travelSubType = 'Own Bike';
+        _isPublicTransport = false;
         _fetchRates();
       }
     }
+    _odoStartController.addListener(_updateFormTotal);
+    _odoEndController.addListener(_updateFormTotal);
+    _odoRateController.addListener(_updateFormTotal);
+    _amountController.addListener(_updateFormTotal);
+  }
+
+  void _updateFormTotal() {
+    double incidentalSum = 0.0;
+    for (var inc in _incidentals) {
+      incidentalSum += double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+    }
+
+    if (widget.category == 'Local Travel') {
+      final isOwnVehicle =
+          _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+
+      final start =
+          double.tryParse(
+            _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0;
+      final end =
+          double.tryParse(
+            _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0;
+      final rate =
+          double.tryParse(
+            _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0;
+
+      if (isOwnVehicle && end > start) {
+        final total = (end - start) * rate;
+        final finalAmount = total + incidentalSum;
+        // For Local Travel, the _amountController reflects the FINAL TOTAL (odo + inc)
+        if (_amountController.text != finalAmount.toStringAsFixed(2)) {
+          _amountController.removeListener(_updateFormTotal);
+          _amountController.text = finalAmount.toStringAsFixed(2);
+          _amountController.addListener(_updateFormTotal);
+        }
+      } else if (_isPublicTransport) {
+        // For Public Transport (OTHERS tab), the amount is manual entry.
+        // We do NOT auto-set here to avoid overwriting user input.
+      }
+      // For hired rides (Ride Bike, Ride Hailing, etc.) — do NOT auto-set
+      // the amount. The user enters the fare manually from the receipt/bill.
+    } else if (widget.category == 'Travel' ||
+        widget.category == 'Outstation Travel') {
+      // For Outstation Travel, _amountController is just the FARE.
+    } else if (widget.category == 'Accommodation') {
+      final base = double.tryParse(_baseFareController.text) ?? 0.0;
+      final early = double.tryParse(_earlyCheckInController.text) ?? 0.0;
+      final late = double.tryParse(_lateCheckOutController.text) ?? 0.0;
+      final total = base + early + late;
+      
+      if (_amountController.text != total.toStringAsFixed(2)) {
+        _amountController.text = total.toStringAsFixed(2);
+      }
+    }
+    
+    if (mounted) setState(() {});
   }
 
   Future<void> _fetchRates() async {
@@ -177,54 +279,181 @@ class _TripExpenseFormDetailedScreenState
     _odoRateController.text = (rate ?? 0.0).toStringAsFixed(2);
   }
 
+  void _handleStatusChange(String? newStatus) {
+    if (newStatus == null || newStatus == _travelStatus) return;
+
+    setState(() {
+      final oldStatus = _travelStatus ?? 'Completed';
+      _travelStatus = newStatus;
+
+      // Add to audit trail
+      final timestamp = DateTime.now().toString();
+      _auditTrail.add(
+        '[$timestamp] Status changed from $oldStatus to $newStatus',
+      );
+
+      // Logic parity with web: Swap amounts based on status
+      if (newStatus == 'Cancelled') {
+        // Save current fare to baseFare if not already saved
+        if (oldStatus == 'Completed' || oldStatus == 'Rescheduled') {
+          _baseFareController.text = _amountController.text;
+        }
+        _amountController.text = _cancellationChargesController.text;
+      } else if (newStatus == 'No-Show') {
+        if (oldStatus == 'Completed' || oldStatus == 'Rescheduled') {
+          _baseFareController.text = _amountController.text;
+        }
+        _amountController.text = _noShowChargesController.text;
+      } else if (oldStatus == 'Cancelled' || oldStatus == 'No-Show') {
+        // Reverting to Completed/Rescheduled
+        _amountController.text = _baseFareController.text;
+      }
+    });
+  }
+
   Future<void> _loadMasters() async {
+    Future<List<String>> safeFetch(Future<List<String>> future) async {
+      try {
+        return await future;
+      } catch (e) {
+        print('FETCH_ERROR: $e');
+        return [];
+      }
+    }
+
+    Future<List<Map<String, dynamic>>> safeFetchRaw(
+        Future<List<Map<String, dynamic>>> future) async {
+      try {
+        return await future;
+      } catch (e) {
+        print('FETCH_RAW_ERROR: $e');
+        return [];
+      }
+    }
+
     try {
       final results = await Future.wait([
-        _masterService.getTravelModes(),
-        _masterService.getBookingTypes(),
-        _masterService.getLocalTravelModes(),
-        _masterService.fetchMasterList(
+        safeFetch(_masterService.getTravelModes()), // 0
+        safeFetch(_masterService.getBookingTypes()), // 1
+        safeFetch(_masterService.getLocalTravelModes()), // 2
+        safeFetch(_masterService.fetchMasterList(
           ApiConstants.masterStayTypes,
           'results',
           'stay_type',
-        ),
-        _masterService.fetchMasterList(
+        )), // 3
+        safeFetch(_masterService.fetchMasterList(
           ApiConstants.masterRoomTypes,
           'results',
           'room_type',
-        ),
-        _masterService.fetchMasterList(
+        )), // 4
+        safeFetch(_masterService.fetchMasterList(
           ApiConstants.masterMealCategories,
           'results',
           'category_name',
-        ),
-        _masterService.fetchMasterList(
+        )), // 5
+        safeFetch(_masterService.fetchMasterList(
           ApiConstants.masterMealTypes,
           'results',
           'meal_type',
-        ),
-        _masterService.getIncidentalTypes(),
+        )), // 6
+        safeFetch(_masterService.fetchMasterList(
+          ApiConstants.masterMealSources,
+          'results',
+          'source_name',
+        )), // 7
+        safeFetch(_masterService.fetchMasterList(
+          ApiConstants.masterMealProviders,
+          'results',
+          'provider_name',
+        )), // 8
+        safeFetch(_masterService.fetchMasterList(
+          ApiConstants.masterStayBookingTypes,
+          'results',
+          'booking_type',
+        )), // 9
+        safeFetch(_masterService.fetchMasterList(
+          ApiConstants.masterStayBookingSources,
+          'results',
+          'source_name',
+        )), // 10
+        safeFetch(_masterService.getIncidentalTypes()), // 11
+        safeFetch(_masterService.fetchMasterList(
+            ApiConstants.masterTicketStatus, 'results', 'status_name')), // 12
+        safeFetch(_masterService.fetchMasterList(
+            ApiConstants.masterQuotaTypes, 'results', 'quota_name')), // 13
+        safeFetch(_masterService.getVehicles()), // 14
+        safeFetch(_masterService.getOperators()), // 15
+        safeFetch(_masterService.getProviders()), // 16
+        safeFetch(_masterService.getLocationsPool()), // 17
+        safeFetchRaw(_masterService.getLocalSubTypesRaw()), // 18
+        safeFetchRaw(_masterService.getOperatorsRaw()), // 19
+        safeFetchRaw(_masterService.getProvidersRaw()), // 20
+        safeFetchRaw(_masterService.getLocalProvidersRaw()), // 21
       ]);
+
+      String toTC(String s) => s
+          .split(' ')
+          .map((w) =>
+              w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1).toLowerCase())
+          .join(' ');
+
+      // --- Fetch & split incidental types by category ---
+      await _masterService.getIncidentalTypesRaw().then((raw) {
+        final all = raw.map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
+        final general = raw.where((m) => m['category'] == 'general_incidental').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
+        final travel = raw.where((m) => m['category'] == 'travel_incidental').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
+        final local = raw.where((m) => m['category'] == 'local_conveyance').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
+        if (mounted) {
+          setState(() {
+            _masterIncidentalTypes = all;
+            _masterGeneralIncidentalTypes = general;
+            _masterTravelIncidentalTypes = travel;
+            _masterLocalIncidentalTypes = local;
+          });
+        }
+      });
 
       if (mounted) {
         setState(() {
-          _masterTravelModes = results[0];
-          _masterBookingTypes = results[1];
-          _masterLocalTravelModes = results[2];
-          _masterStayTypes = results[3];
-          _masterRoomTypes = results[4];
-          _masterMealCategories = results[5];
-          _masterMealTypes = results[6];
-          _masterIncidentalTypes = results[7];
+          _masterTravelModes = results[0] as List<String>;
+          _masterBookingTypes = results[1] as List<String>;
+          _masterLocalTravelModes = results[2] as List<String>;
+          _masterStayTypes = results[3] as List<String>;
+          _masterRoomTypes = results[4] as List<String>;
+          _masterMealCategories = results[5] as List<String>;
+          _masterMealTypes = results[6] as List<String>;
+          _masterMealSources = results[7] as List<String>;
+          _masterMealProviders = results[8] as List<String>;
+          _masterStayBookingTypes = results[9] as List<String>;
+          _masterStayBookingSources = results[10] as List<String>;
+          _masterTicketStatuses = results[12] as List<String>;
+          _masterQuotaTypes = results[13] as List<String>;
+          _masterVehicles = results[14] as List<String>;
+          _masterOperators = results[15] as List<String>;
+          _masterProviders = results[16] as List<String>;
+          _masterLocations = results[17] as List<String>;
+          _masterLocalSubTypesRaw = results[18] as List<Map<String, dynamic>>;
+
+          // Process Raw Operators & Providers for mode-specific lists
+          final ops = results[19] as List<Map<String, dynamic>>;
+          _masterAirlines = ops.where((m) => m['is_flight'] == true).map((m) => toTC(m['operator_name']?.toString() ?? '')).toList();
+          _masterBusOperators = ops.where((m) => m['is_bus'] == true).map((m) => toTC(m['operator_name']?.toString() ?? '')).toList();
+
+          final provs = results[20] as List<Map<String, dynamic>>;
+          _masterFlightProviders = provs.where((m) => m['is_flight'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
+          _masterTrainProviders = provs.where((m) => m['is_train'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
+          _masterBusProviders = provs.where((m) => m['is_bus'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
+          _masterCabProviders = provs.where((m) => m['is_intercity_cab'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
+
+          _masterLocalProvidersRaw = results[21] as List<Map<String, dynamic>>;
         });
 
-        // Load classes if mode is already set
         if (_travelMode != null) {
           _loadClasses();
         }
       }
     } catch (e) {
-      debugPrint('Error loading master data: $e');
+      debugPrint('Error in _loadMasters: $e');
     }
   }
 
@@ -240,7 +469,11 @@ class _TripExpenseFormDetailedScreenState
 
   void _loadExpenseData() {
     final exp = widget.expenseData;
-    _amountController.text = exp['amount']?.toString() ?? '';
+    final initialAmount = exp['amount']?.toString() ?? '';
+    _amountController.text =
+        (initialAmount == '0.0' || initialAmount == '0.00' || initialAmount == '0')
+            ? ''
+            : initialAmount;
 
     var details = exp['details'] ?? {};
     if (details.isEmpty &&
@@ -260,6 +493,11 @@ class _TripExpenseFormDetailedScreenState
     _fromBulkUpload =
         details['from_bulk_upload'] == true ||
         details['from_bulk_upload'] == 'true';
+    _isDeviated = details['is_deviated'] == true || details['is_deviated'] == 'true' || exp['is_deviated'] == true;
+    _deviationReason = details['deviation_reason'] ?? exp['deviation_reason'];
+    _deviationTarget = details['deviation_target'] ?? exp['deviation_target'];
+    _plannedOrigin = exp['planned_origin'] ?? details['from_city'] ?? details['origin'];
+    _plannedDestination = exp['planned_destination'] ?? details['to_city'] ?? details['destination'];
 
     _jobReportController.text =
         exp['remarks'] ?? details['remarks'] ?? details['jobReport'] ?? '';
@@ -313,6 +551,12 @@ class _TripExpenseFormDetailedScreenState
     _excessBaggage =
         details['excessBaggage'] == 'Yes' || details['excessBaggage'] == true;
     _isTatkal = details['isTatkal'] == true;
+    _bookingIdController.text = details['bookingId'] ?? '';
+    _ticketStatus = details['ticketStatus'];
+    _quotaType = details['quotaType'];
+
+    if (details['checkInTime'] != null) _startTime = _parseTime(details['checkInTime']);
+    if (details['checkOutTime'] != null) _endTime = _parseTime(details['checkOutTime']);
 
     if (details['bookingDate'] != null)
       _bookingDate = DateTime.tryParse(details['bookingDate']) ?? _bookingDate;
@@ -321,8 +565,35 @@ class _TripExpenseFormDetailedScreenState
 
     _mealCategory = details['mealCategory'];
     _mealType = details['mealType'];
+    _mealSource = details['mealSource'];
+    _mealProvider = details['provider'] ?? details['mealProvider'];
+    _hotelNameController.text = details['hotelName'] ?? '';
+    _restaurantController.text = details['restaurant'] ?? '';
     _accomType = details['accomType'];
     _roomType = details['roomType'];
+    _bookingType = details['bookingType'];
+    _bookingSource = details['bookingSource'];
+    _incidentalType = details['incidentalType'];
+    _cityController.text = details['location'] ?? '';
+    _invoiceNoController.text = details['invoiceNo'] ?? '';
+    _reasonController.text = details['otherReason'] ?? '';
+    _jobReportController.text = details['notes'] ?? details['purpose'] ?? '';
+    _bookingIdController.text = details['bookingId'] ?? '';
+    _earlyCheckInController.text = (details['earlyCheckInCharges'] ?? '').toString();
+    _lateCheckOutController.text = (details['lateCheckOutCharges'] ?? '').toString();
+    _baseFareController.text = (details['baseAmount'] ?? (widget.category == 'Accommodation' ? exp['amount'] : '')).toString();
+    _jobReportController.text = details['remarks'] ?? details['purpose'] ?? '';
+    
+    // Timeline Restore for Accommodation
+    if (details['scheduledCheckInDate'] != null) _scheduledStartDate = _parseDate(details['scheduledCheckInDate']);
+    if (details['scheduledCheckOutDate'] != null) _scheduledEndDate = _parseDate(details['scheduledCheckOutDate']);
+    if (details['scheduledCheckInTime'] != null) _scheduledStartTime = _parseTime(details['scheduledCheckInTime']);
+    if (details['scheduledCheckOutTime'] != null) _scheduledEndTime = _parseTime(details['scheduledCheckOutTime']);
+    
+    if (details['actualCheckInDate'] != null) _startDate = _parseDate(details['actualCheckInDate']);
+    if (details['actualCheckOutDate'] != null) _endDate = _parseDate(details['actualCheckOutDate']);
+    if (details['actualCheckInTime'] != null) _startTime = _parseTime(details['actualCheckInTime']);
+    if (details['actualCheckOutTime'] != null) _endTime = _parseTime(details['actualCheckOutTime']);
     _travelMode = details['mode'];
     _travelSubType = details['subType'];
     _bookedBy = details['bookedBy'];
@@ -392,6 +663,15 @@ class _TripExpenseFormDetailedScreenState
     if (details['mealTime'] != null)
       _startTime = _parseTime(details['mealTime']);
 
+    if (details['cancellationCharges'] != null)
+      _cancellationChargesController.text = details['cancellationCharges'].toString();
+    if (details['noShowCharges'] != null)
+      _noShowChargesController.text = details['noShowCharges'].toString();
+    if (details['baseFare'] != null)
+      _baseFareController.text = details['baseFare'].toString();
+    if (details['auditTrail'] is List)
+      _auditTrail = List<String>.from(details['auditTrail']);
+
     if (widget.category == 'Local Travel') {
       // Restore previously saved rate if available; the async _fetchRates()
       // call (triggered in initState) will overwrite this with the live backend
@@ -417,6 +697,11 @@ class _TripExpenseFormDetailedScreenState
             'bill': _incidentalBill,
           },
         ];
+      }
+
+      // Outstation Travel Incidentals (Parity with Web)
+      if (details['travelIncidentals'] is List) {
+        _incidentals = List<Map<String, dynamic>>.from(details['travelIncidentals']);
       }
 
       // If incidentals are included in the main amount, subtract them for the fare field display
@@ -524,6 +809,25 @@ class _TripExpenseFormDetailedScreenState
     return const TimeOfDay(hour: 9, minute: 0);
   }
 
+  String _mapCategory(String cat) {
+    switch (cat) {
+      case 'Local Travel':
+      case 'Fuel':
+        return 'Fuel';
+      case 'Travel':
+      case 'Outstation Travel':
+        return 'Others';
+      case 'Food':
+        return 'Food';
+      case 'Accommodation':
+        return 'Accommodation';
+      case 'Incidental':
+        return 'Incidental';
+      default:
+        return cat;
+    }
+  }
+
   void _calculateNights() {
     final diff = _endDate.difference(_startDate).inDays;
     _nightsController.text = diff.clamp(1, 100).toString();
@@ -572,16 +876,34 @@ class _TripExpenseFormDetailedScreenState
           amount = (double.tryParse(_amountController.text) ?? 0.0) +
               incidentalSum;
         }
+      } else if (widget.category == 'Travel' ||
+          widget.category == 'Outstation Travel') {
+        double incidentalSum = 0.0;
+        for (var inc in _incidentals) {
+          incidentalSum +=
+              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+        }
+        amount = (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
       }
 
       final payload = {
         'trip': widget.tripId,
-        'category': widget.category == 'Local Travel' ? 'Fuel' : widget.category,
+        'category': _mapCategory(widget.category),
         'amount': amount,
         'date': DateFormat('yyyy-MM-dd').format(_startDate),
-        'remarks': _jobReportController.text,
         'description': jsonEncode(_buildDescription()),
         'receipt_image': jsonEncode(_expenseBills),
+
+        // Essential Top-Level Fields for consistent DB storage
+        'travel_mode': _travelMode,
+        'class_type': _travelClass,
+        'booking_reference': _pnrController.text,
+        'refundable_flag': false, // or add a toggle if needed in UI
+        'meal_included_flag': _mealIncluded,
+        'vehicle_type': _vehicleType,
+        'odo_start': double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')),
+        'odo_end': double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')),
+        'distance': (double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0) - (double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0),
       };
 
       // NEW: Handle correction of rejected bulk rows
@@ -646,25 +968,40 @@ class _TripExpenseFormDetailedScreenState
       desc.addAll({
         'mealCategory': _mealCategory,
         'mealType': _mealType,
+        'mealSource': _mealSource,
+        'provider': _mealProvider,
+        'hotelName': _hotelNameController.text,
         'restaurant': _restaurantController.text,
         'mealTime': _startTime.format(context),
         'invoiceNo': _invoiceNoController.text,
         'isShared': _isSharedMeal,
         'persons': _personsController.text,
+        'date': DateFormat('yyyy-MM-dd').format(_startDate),
       });
     } else if (widget.category == 'Accommodation') {
       desc.addAll({
         'accomType': _accomType,
-        'roomType': _roomType,
         'hotelName': _hotelNameController.text,
         'city': _cityController.text,
-        'checkIn': DateFormat('yyyy-MM-dd').format(_startDate),
-        'checkOut': DateFormat('yyyy-MM-dd').format(_endDate),
-        'checkInTime': _startTime.format(context),
-        'checkOutTime': _endTime.format(context),
-        'nights': int.tryParse(_nightsController.text) ?? 1,
+        'bookingType': _bookingType,
+        'bookingSource': _bookingSource,
+        'bookingId': _bookingIdController.text,
+        'baseAmount': _baseFareController.text,
         'earlyCheckInCharges': _earlyCheckInController.text,
         'lateCheckOutCharges': _lateCheckOutController.text,
+        
+        'scheduledCheckInDate': DateFormat('yyyy-MM-dd').format(_scheduledStartDate),
+        'scheduledCheckOutDate': DateFormat('yyyy-MM-dd').format(_scheduledEndDate),
+        'scheduledCheckInTime': _scheduledStartTime.format(context),
+        'scheduledCheckOutTime': _scheduledEndTime.format(context),
+        
+        'actualCheckInDate': DateFormat('yyyy-MM-dd').format(_startDate),
+        'actualCheckOutDate': DateFormat('yyyy-MM-dd').format(_endDate),
+        'actualCheckInTime': _startTime.format(context),
+        'actualCheckOutTime': _endTime.format(context),
+        
+        'nights': int.tryParse(_nightsController.text) ?? 1,
+        'remarks': _jobReportController.text,
       });
     } else if (widget.category == 'Travel' ||
         widget.category == 'Outstation Travel') {
@@ -698,6 +1035,11 @@ class _TripExpenseFormDetailedScreenState
         'isTatkal': _isTatkal,
         'bookingDate': DateFormat('yyyy-MM-dd').format(_bookingDate),
         'bookingTime': _bookingTime.format(context),
+        'bookingId': _bookingIdController.text,
+        'ticketStatus': _ticketStatus,
+        'quotaType': _quotaType,
+        'seatNo': _seatNoController.text,
+        'travelIncidentals': _incidentals,
 
         // Scheduled Timings (Parity with Web)
         'scheduledDepDate': DateFormat(
@@ -706,6 +1048,10 @@ class _TripExpenseFormDetailedScreenState
         'scheduledArrDate': DateFormat('yyyy-MM-dd').format(_scheduledEndDate),
         'scheduledDepTime': _scheduledStartTime.format(context),
         'scheduledArrTime': _scheduledEndTime.format(context),
+        'cancellationCharges': _cancellationChargesController.text,
+        'noShowCharges': _noShowChargesController.text,
+        'baseFare': _baseFareController.text,
+        'auditTrail': _auditTrail,
       });
     } else if (widget.category == 'Local Travel') {
       desc.addAll({
@@ -717,15 +1063,17 @@ class _TripExpenseFormDetailedScreenState
         'endDate': DateFormat('yyyy-MM-dd').format(_endDate),
         'mode': _travelMode,
         'subType': _travelSubType,
-        'odoStart': _odoStartController.text,
-        'odoEnd': _odoEndController.text,
-        'odoRate': _odoRateController.text,
-        'odoStartImg': _odoStartImg,
-        'odoEndImg': _odoEndImg,
-        'odoStartLat': _odoStartLat,
-        'odoStartLong': _odoStartLong,
-        'odoEndLat': _odoEndLat,
-        'odoEndLong': _odoEndLong,
+        'isPublicTransport': _isPublicTransport,
+        'remainingRoute': _remainingRouteController.text,
+        'odoStart': _isPublicTransport ? '' : _odoStartController.text,
+        'odoEnd': _isPublicTransport ? '' : _odoEndController.text,
+        'odoRate': _isPublicTransport ? '' : _odoRateController.text,
+        'odoStartImg': _isPublicTransport ? null : _odoStartImg,
+        'odoEndImg': _isPublicTransport ? null : _odoEndImg,
+        'odoStartLat': _isPublicTransport ? null : _odoStartLat,
+        'odoStartLong': _isPublicTransport ? null : _odoStartLong,
+        'odoEndLat': _isPublicTransport ? null : _odoEndLat,
+        'odoEndLong': _isPublicTransport ? null : _odoEndLong,
         'travelStatus': _travelStatus,
         'time': {
           'boardingTime': _startTime.format(context),
@@ -750,6 +1098,12 @@ class _TripExpenseFormDetailedScreenState
     if (_fromBulkUpload) {
       desc['from_bulk_upload'] = true;
     }
+    desc['is_deviated'] = _isDeviated;
+    if (_deviationReason != null) desc['deviation_reason'] = _deviationReason;
+    if (_deviationTarget != null) desc['deviation_target'] = _deviationTarget;
+    if (_plannedOrigin != null) desc['planned_origin'] = _plannedOrigin;
+    if (_plannedDestination != null) desc['planned_destination'] = _plannedDestination;
+
     if (_batchId != null) {
       desc['batch_id'] = _batchId;
     }
@@ -799,7 +1153,7 @@ class _TripExpenseFormDetailedScreenState
                   widget.category == 'Others')
                 _buildIncidentalForm(),
 
-              if (!(widget.category == 'Local Travel' && _isTravelo))
+              if (!(widget.category == 'Local Travel' && _isTravelo && !_isPublicTransport))
                 _buildAttachmentSection(),
               const SizedBox(height: 40),
               SizedBox(
@@ -837,435 +1191,750 @@ class _TripExpenseFormDetailedScreenState
   }
 
   Widget _buildTravelForm() {
-    return _buildWebCard(
-      title: 'OUTSTATION TRAVEL',
-      icon: Icons.flight_takeoff_rounded,
-      color: Colors.deepPurple,
+    return Column(
       children: [
-        Row(
+        _buildWebCard(
+          title: 'BOOKING DETAILS',
+          icon: Icons.confirmation_number_outlined,
+          color: Colors.blue,
           children: [
-            Expanded(
-              child: SearchableDropdown(
-                label: 'TRAVEL MODE',
-                value: _travelMode,
-                icon: Icons.flight_takeoff_rounded,
-                initialOptions: _masterTravelModes.isNotEmpty
-                    ? _masterTravelModes
-                    : [
-                        'Flight',
-                        'Train',
-                        'Intercity Bus',
-                        'Intercity Cab',
-                        'Others',
-                      ],
-                onChanged: (v) => setState(() {
-                  _travelMode = v;
-                  _masterClasses = [];
-                  _travelClass = null;
-                  _loadClasses();
-                }),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SearchableDropdown(
-                label: 'STATUS',
-                value: _travelStatus,
-                icon: Icons.info_outline_rounded,
-                initialOptions: ['Completed', 'Pending', 'Cancelled'],
-                onChanged: (v) => setState(() => _travelStatus = v),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini(
-                'BOOKING DATE',
-                _bookingDate,
-                (d) => setState(() => _bookingDate = d),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTimePickerMini(
-                'BOOKING TIME',
-                _bookingTime,
-                (t) => setState(() => _bookingTime = t),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        const Divider(),
-        Text(
-          'ROUTE & PROVIDER INFO',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 10,
-            fontWeight: FontWeight.w900,
-            color: Colors.grey,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: SearchableDropdown(
-                label: 'FROM',
-                value: _originController.text,
-                icon: Icons.location_on_outlined,
-                isLocation: true,
-                onChanged: (v) => setState(() => _originController.text = v),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SearchableDropdown(
-                label: 'TO',
-                value: _destController.text,
-                icon: Icons.location_on_outlined,
-                isLocation: true,
-                onChanged: (v) => setState(() => _destController.text = v),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        if (_travelMode == 'Flight') ...[
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini('AIRLINE NAME', _providerController),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildTextFieldMini('FLIGHT NO.', _travelNoController),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini('TICKET NO.', _ticketNoController),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: _buildTextFieldMini('PNR', _pnrController)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          SearchableDropdown(
-            label: 'TRAVEL CLASS',
-            value: _travelClass,
-            icon: Icons.airline_seat_recline_extra_rounded,
-            initialOptions: [
-              'Economy',
-              'Premium Economy',
-              'Business',
-              'First Class',
-            ],
-            onChanged: (v) => setState(() => _travelClass = v),
-          ),
-        ] else if (_travelMode == 'Intercity Cab') ...[
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini(
-                  'PROVIDER / VENDOR',
-                  _providerController,
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'BOOKED BY',
+                    _bookedBy,
+                    _masterBookingTypes,
+                    (v) => setState(() => _bookedBy = v),
+                    icon: Icons.person_outline_rounded,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildDropdownMini(
-                  'VEHICLE TYPE',
-                  _vehicleType,
-                  ['Sedan', 'SUV', 'MUV', 'Hatchback'],
-                  (v) => setState(() => _vehicleType = v),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          _buildTextFieldMini('DRIVER NAME', _driverNameController),
-        ] else ...[
-          // Train, Bus, etc.
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini(
-                  'PROVIDER / AGENT',
-                  _providerController,
-                ),
-              ),
-              if (_travelMode == 'Intercity Bus') ...[
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTextFieldMini(
-                    'BOARDING POINT',
-                    _boardingPointController,
+                    'BOOKING ID',
+                    _bookingIdController,
+                    icon: Icons.tag_rounded,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'BOOKING DATE',
+                    _bookingDate,
+                    (d) => setState(() => _bookingDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'BOOKING TIME',
+                    _bookingTime,
+                    (t) => setState(() => _bookingTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'TICKET STATUS',
+                    _ticketStatus,
+                    _masterTicketStatuses.isNotEmpty 
+                      ? _masterTicketStatuses 
+                      : ['Confirmed', 'Waitlist', 'RAC', 'Cancelled'],
+                    (v) => setState(() => _ticketStatus = v),
+                    icon: Icons.confirmation_number_rounded,
+                  ),
+                ),
+                if (_travelMode != 'Train') ...[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'TRAVEL STATUS',
+                      _travelStatus,
+                      const [
+                        'Completed',
+                        'Pending',
+                        'Cancelled',
+                        'Rescheduled',
+                        'No-Show'
+                      ],
+                      (v) => _handleStatusChange(v),
+                      icon: Icons.info_outline_rounded,
+                    ),
+                  ),
+                ],
+                if (_travelMode == 'Train') ...[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'QUOTA TYPE',
+                      _quotaType,
+                      _masterQuotaTypes,
+                      (v) => setState(() => _quotaType = v),
+                      icon: Icons.people_outline_rounded,
+        ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'ROUTE & TRAVEL DETAILS',
+          icon: Icons.route_outlined,
+          color: Colors.orange,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'TRAVEL MODE',
+                    _travelMode,
+                    _masterTravelModes,
+                    (v) => setState(() {
+                      _travelMode = v;
+                      _masterClasses = [];
+                      _travelClass = null;
+                      _loadClasses();
+                    }),
+                    icon: Icons.flight_takeoff_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Spacer(),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (_travelStatus == 'Cancelled')
+              _buildTextFieldMini(
+                'CANCELLATION CHARGES',
+                _cancellationChargesController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.money_off_rounded,
+                onChanged: (v) {
+                  _amountController.text = v;
+                },
+              )
+            else if (_travelStatus == 'No-Show')
+              _buildTextFieldMini(
+                'NO-SHOW CHARGES',
+                _noShowChargesController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.person_off_rounded,
+                onChanged: (v) {
+                  _amountController.text = v;
+                },
+              )
+            else
+              _buildTextFieldMini(
+                'TICKET FARE',
+                _amountController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.payments_outlined,
+                onChanged: (v) {
+                  _baseFareController.text = v;
+                },
+              ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: SearchableDropdown(
+                    label: 'FROM',
+                    value: _originController.text,
+                    icon: Icons.location_on_outlined,
+                    isLocation: true,
+                    initialOptions: _masterLocations,
+                    onChanged: (v) =>
+                        setState(() => _originController.text = v),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SearchableDropdown(
+                    label: 'TO',
+                    value: _destController.text,
+                    icon: Icons.location_on_outlined,
+                    isLocation: true,
+                    initialOptions: _masterLocations,
+                    onChanged: (v) => setState(() => _destController.text = v),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            if (_travelMode == 'Flight') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: SearchableDropdown(
+                      label: 'AIRLINE NAME',
+                      value: _carrierController.text,
+                      icon: Icons.flight_takeoff_rounded,
+                      initialOptions: _masterAirlines,
+                      onChanged: (v) => setState(() => _carrierController.text = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'TRAVEL AGENT / PROVIDER',
+                      _providerController.text,
+                      _masterFlightProviders,
+                      (v) => setState(() => _providerController.text = v ?? ''),
+                      icon: Icons.business_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'FLIGHT NO.',
+                      _travelNoController,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'TICKET NO.',
+                      _ticketNoController,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'TRAVEL CLASS',
+                      _travelClass,
+                      _masterClasses,
+                      (v) => setState(() => _travelClass = v),
+                      icon: Icons.airline_seat_recline_extra_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'SEAT NO.',
+                      _seatNoController,
+                      icon: Icons.event_seat_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _buildTextFieldMini('PNR / BOOKING REF', _pnrController),
+            ] else if (_travelMode == 'Intercity Cab') ...[
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'PROVIDER / VENDOR',
+                    _providerController.text,
+                    _masterCabProviders,
+                    (v) => setState(() => _providerController.text = v ?? ''),
+                    icon: Icons.business_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDropdownMini(
+                    'CAB TYPE',
+                    _vehicleType,
+                    _masterVehicles,
+                    (v) => setState(() => _vehicleType = v ?? ''),
+                    icon: Icons.directions_car_rounded,
+                  ),
+                ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'DRIVER NAME',
+                      _driverNameController,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'VEHICLE NO.',
+                      _travelNoController,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              SearchableDropdown(
+                label: 'BOARDING POINT',
+                value: _boardingPointController.text,
+                icon: Icons.pin_drop_outlined,
+                isLocation: true,
+                initialOptions: _masterLocations,
+                onChanged: (v) => setState(() => _boardingPointController.text = v),
+              ),
+            ] else ...[
+              // Train, Bus, etc.
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SearchableDropdown(
+                      label: _travelMode == 'Bus' ? 'OPERATOR NAME' : 'PROVIDER / AGENT',
+                      value: (_travelMode == 'Bus') ? _carrierController.text : _providerController.text,
+                      icon: Icons.business_rounded,
+                      initialOptions: (_travelMode == 'Bus') ? _masterBusOperators : (_travelMode == 'Train' ? _masterTrainProviders : (_travelMode == 'Bus' ? _masterBusProviders : _masterProviders)),
+                      onChanged: (v) => setState(() {
+                         if (_travelMode == 'Bus') _carrierController.text = v;
+                         else _providerController.text = v;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  if (_travelMode == 'Bus')
+                    Expanded(
+                      child: SearchableDropdown(
+                        label: 'BOOKING AGENT',
+                        value: _providerController.text,
+                        icon: Icons.support_agent_rounded,
+                        initialOptions: _masterBusProviders,
+                        onChanged: (v) => setState(() => _providerController.text = v),
+                      ),
+                    )
+                  else
+                    const Spacer(),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SearchableDropdown(
+                      label: 'BOARDING POINT',
+                      value: _boardingPointController.text,
+                      icon: Icons.pin_drop_outlined,
+                      isLocation: true,
+                      initialOptions: _masterLocations,
+                      onChanged: (v) =>
+                          setState(() => _boardingPointController.text = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Spacer(),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'TICKET NO.',
+                      _ticketNoController,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini('PNR / REF', _pnrController),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      _travelMode == 'Train' ? 'TRAIN NAME' : 'CARRIER NAME',
+                      _carrierController,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      _travelMode == 'Train' ? 'TR NO.' : 'CARRIER NO.',
+                      _travelNoController,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      _travelMode == 'Intercity Bus' ? 'BUS TYPE' : 'CLASS',
+                      _travelClass,
+                      _masterClasses,
+                      (v) => setState(() => _travelClass = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'SEAT / BERTH NO.',
+                      _seatNoController,
+                      icon: Icons.event_seat_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              if (_travelMode == 'Train') ...[
+                const SizedBox(height: 12),
+                Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'TATKAL?',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Switch.adaptive(
+                        value: _isTatkal,
+                        onChanged: (v) => setState(() => _isTatkal = v),
+                        activeColor: Colors.deepPurple,
+                      ),
+                    ],
                   ),
                 ),
               ],
             ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini('TICKET NO.', _ticketNoController),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: _buildTextFieldMini('PNR / REF', _pnrController)),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildTextFieldMini(
-                  _travelMode == 'Train' ? 'TRAIN NAME' : 'CARRIER NAME',
-                  _carrierController,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildTextFieldMini(
-                  _travelMode == 'Train' ? 'TR NO.' : 'VEHICLE NO.',
-                  _travelNoController,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _buildDropdownMini(
-                  _travelMode == 'Intercity Bus' ? 'BUS TYPE' : 'CLASS',
-                  _travelClass,
-                  _masterClasses.isNotEmpty
-                      ? _masterClasses
-                      : (_travelMode == 'Train'
-                            ? [
-                                'Sleeper',
-                                '3AC',
-                                '2AC',
-                                '1AC',
-                                'Chair Car',
-                                'General',
-                              ]
-                            : [
-                                'Sleeper',
-                                'Semi Sleeper',
-                                'AC',
-                                'Non-AC',
-                                'Volvo',
-                                'Seater',
-                              ]),
-                  (v) => setState(() => _travelClass = v),
-                ),
-              ),
-              if (_travelMode == 'Train') ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Container(
-                    height: 48,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+            const SizedBox(height: 20),
+            if (_travelMode == 'Flight' || _travelMode == 'Train') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: CheckboxListTile(
+                      title: Text(
+                        'MEAL INCLUDED?',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      value: _mealIncluded,
+                      onChanged: (v) =>
+                          setState(() => _mealIncluded = v ?? false),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'TATKAL?',
+                  ),
+                  if (_travelMode == 'Flight')
+                    Expanded(
+                      child: CheckboxListTile(
+                        title: Text(
+                          'EXCESS BAGGAGE?',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        Switch.adaptive(
-                          value: _isTatkal,
-                          onChanged: (v) => setState(() => _isTatkal = v),
-                          activeColor: Colors.deepPurple,
-                        ),
-                      ],
+                        value: _excessBaggage,
+                        onChanged: (v) =>
+                            setState(() => _excessBaggage = v ?? false),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                      ),
                     ),
+                ],
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'JOURNEY SCHEDULE',
+          icon: Icons.schedule_outlined,
+          color: Colors.purple,
+          children: [
+            Text(
+              'ACTUAL TIMINGS',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'ACTUAL DEP DATE',
+                    _startDate,
+                    (d) => setState(() => _startDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'ACTUAL DEP TIME',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
                   ),
                 ),
               ],
-            ],
-          ),
-        ],
-        const SizedBox(height: 32),
-        const Divider(),
-        Text(
-          'JOURNEY SCHEDULE',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 10,
-            fontWeight: FontWeight.w900,
-            color: Colors.grey,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini(
-                'ACTUAL DEP DATE',
-                _startDate,
-                (d) => setState(() => _startDate = d),
-              ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTimePickerMini(
-                'ACTUAL DEP TIME',
-                _startTime,
-                (t) => setState(() => _startTime = t),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini(
-                'ACTUAL ARR DATE',
-                _endDate,
-                (d) => setState(() => _endDate = d),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTimePickerMini(
-                'ACTUAL ARR TIME',
-                _endTime,
-                (t) => setState(() => _endTime = t),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        const Divider(),
-        Text(
-          'SCHEDULED TIMINGS (PER TICKET)',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 10,
-            fontWeight: FontWeight.w900,
-            color: Colors.grey,
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini(
-                'SCHED DEP DATE',
-                _scheduledStartDate,
-                (d) => setState(() => _scheduledStartDate = d),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTimePickerMini(
-                'SCHED DEP TIME',
-                _scheduledStartTime,
-                (t) => setState(() => _scheduledStartTime = t),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini(
-                'SCHED ARR DATE',
-                _scheduledEndDate,
-                (d) => setState(() => _scheduledEndDate = d),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTimePickerMini(
-                'SCHED ARR TIME',
-                _scheduledEndTime,
-                (t) => setState(() => _scheduledEndTime = t),
-              ),
-            ),
-          ],
-        ),
-        if (_travelMode == 'Flight' || _travelMode == 'Train') ...[
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: CheckboxListTile(
-                  title: Text(
-                    'MEAL INCLUDED?',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  value: _mealIncluded,
-                  onChanged: (v) => setState(() => _mealIncluded = v ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                ),
-              ),
-              if (_travelMode == 'Flight')
+            const SizedBox(height: 20),
+            Row(
+              children: [
                 Expanded(
-                  child: CheckboxListTile(
-                    title: Text(
-                      'EXCESS BAGGAGE?',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    value: _excessBaggage,
-                    onChanged: (v) =>
-                        setState(() => _excessBaggage = v ?? false),
-                    controlAffinity: ListTileControlAffinity.leading,
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
+                  child: _buildDatePickerMini(
+                    'ACTUAL ARR DATE',
+                    _endDate,
+                    (d) => setState(() => _endDate = d),
                   ),
                 ),
-            ],
-          ),
-        ],
-        const SizedBox(height: 32),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'ACTUAL ARR TIME',
+                    _endTime,
+                    (t) => setState(() => _endTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 12),
+            Text(
+              'SCHEDULED TIMINGS (PER TICKET)',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'SCHED DEP DATE',
+                    _scheduledStartDate,
+                    (d) => setState(() => _scheduledStartDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'SCHED DEP TIME',
+                    _scheduledStartTime,
+                    (t) => setState(() => _scheduledStartTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'SCHED ARR DATE',
+                    _scheduledEndDate,
+                    (d) => setState(() => _scheduledEndDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'SCHED ARR TIME',
+                    _scheduledEndTime,
+                    (t) => setState(() => _scheduledEndTime = t),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'COST & REMARKS',
+          icon: Icons.payments_outlined,
+          color: Colors.green,
+          children: [
+            _buildTextFieldMini(
+              'FARE / TICKET AMOUNT',
+              _amountController,
+              prefix: '₹',
+              keyboardType: TextInputType.number,
+              icon: Icons.payments_outlined,
+              onChanged: (v) => setState(() {}),
+            ),
+            const SizedBox(height: 20),
+            _buildTextFieldMini(
+              'PURPOSE / REMARKS',
+              _jobReportController,
+              maxLines: 2,
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildIncidentalSection(),
+      ],
+    );
+  }
+
+  Widget _buildIncidentalSection() {
+    return _buildWebCard(
+      title: 'INCIDENTAL EXPENSES',
+      icon: Icons.receipt_long_rounded,
+      color: Colors.deepOrange,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'ITEMIZED LIST',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: Colors.grey,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => setState(() {
+                _incidentals.add({
+                  'category': null,
+                  'amount': '',
+                  'bill': null,
+                });
+              }),
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 16),
+              label: Text(
+                'ADD ITEM',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_incidentals.isEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'No incidental items added',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          )
+        else
+          ...List.generate(_incidentals.length, (index) {
+            final inc = _incidentals[index];
+            return Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.withOpacity(0.1)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: _buildDropdownMini(
+                          'CATEGORY',
+                          inc['category'],
+                          (() {
+                            if (widget.category == 'Local Travel') {
+                              return _masterLocalIncidentalTypes.isNotEmpty ? _masterLocalIncidentalTypes : _masterIncidentalTypes;
+                            }
+                            if (widget.category == 'Travel' || widget.category == 'Outstation Travel') {
+                              return _masterTravelIncidentalTypes.isNotEmpty ? _masterTravelIncidentalTypes : _masterIncidentalTypes;
+                            }
+                            return _masterGeneralIncidentalTypes.isNotEmpty ? _masterGeneralIncidentalTypes : _masterIncidentalTypes;
+                          })(),
+                          (v) => setState(
+                            () => _incidentals[index]['category'] = v,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 1,
+                        child: _buildIncidentalValueField('COST', index),
+                      ),
+                      const SizedBox(width: 4),
+                      _buildIncidentalBillButton(index),
+                      IconButton(
+                        onPressed: () =>
+                            setState(() => _incidentals.removeAt(index)),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Colors.red,
+                          size: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
         const Divider(),
         const SizedBox(height: 12),
-        SearchableDropdown(
-          label: 'BOOKED BY',
-          value: _bookedBy,
-          icon: Icons.person_outline_rounded,
-          initialOptions: ['Self Booked', 'Company Booked'],
-          onChanged: (v) => setState(() => _bookedBy = v),
-        ),
-        const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'AMOUNT',
-          _amountController,
-          prefix: '₹',
-          keyboardType: TextInputType.number,
-          icon: Icons.payments_outlined,
-        ),
-        const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'PURPOSE / REMARKS',
-          _jobReportController,
-          maxLines: 2,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'TOTAL AMOUNT',
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+                color: Colors.blueGrey[800],
+              ),
+            ),
+            Text(
+              '₹${(_incidentals.fold<double>(0.0, (sum, item) => sum + (double.tryParse(item['amount']?.toString() ?? '0') ?? 0)) + (double.tryParse(_amountController.text) ?? 0)).toStringAsFixed(2)}',
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+                color: Colors.blue[700],
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -1277,229 +1946,251 @@ class _TripExpenseFormDetailedScreenState
   }
 
   Widget _buildTripLocalTravelForm() {
-    double startOdo =
-        double.tryParse(
-          _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
-        ) ??
-        0;
-    double endOdo =
-        double.tryParse(
-          _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
-        ) ??
-        0;
-    double dist = (endOdo - startOdo).clamp(0, 99999);
-    double rate =
-        double.tryParse(
-          _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
-        ) ??
-        0.0;
-    double odoTotal = dist * rate;
+    final isOwnVehicle = _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+    final showOdoCard = isOwnVehicle;
 
-    // Incidental sum is now 0 as it's removed from UI
-    double dayTotal = odoTotal;
+    final start = double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final end = double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final rate = double.tryParse(_odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final dist = (end - start).clamp(0.0, 99999.0);
+    final odoTotal = dist * rate;
+
+    double incidentalSum = 0.0;
+    for (var inc in _incidentals) {
+      incidentalSum += double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+    }
+
+    final totalAmount = isOwnVehicle 
+        ? (odoTotal + incidentalSum) 
+        : (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
+
 
     return Column(
       children: [
-        // Premium Form Header - Live Dashboard Look
-        Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 24),
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF2563EB), Color(0xFF1E40AF)],
+        // 1. TRANSPORT DETAILS
+        _buildWebCard(
+          title: 'TRANSPORT DETAILS',
+          icon: Icons.directions_car_filled_rounded,
+          color: const Color(0xFF4F46E5),
+          children: [
+            _buildDropdownMini(
+              'MODE',
+              _travelMode,
+              _masterLocalTravelModes,
+              (v) => setState(() {
+                _travelMode = v ?? '';
+                _travelSubType = null;
+                _fetchRates();
+              }),
+              icon: Icons.commute_rounded,
             ),
-            borderRadius: BorderRadius.circular(32),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF2563EB).withOpacity(0.2),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            if (_travelMode != null && _travelMode!.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              Row(
                 children: [
-                  Text(
-                    'ESTIMATED TOTAL',
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.white.withOpacity(0.7),
-                      fontWeight: FontWeight.w800,
-                      fontSize: 10,
-                      letterSpacing: 1,
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'SUB-TYPE',
+                      _travelSubType,
+                      (() {
+                        final mode = _travelMode?.toLowerCase() ?? '';
+                        if (mode == 'public transport') {
+                          return _masterLocalProvidersRaw
+                              .where((p) => p['is_metro'] == true || p['is_bus'] == true)
+                              .map((p) => p['provider_name']?.toString() ?? '')
+                              .toList();
+                        }
+                        return _masterLocalSubTypesRaw.where((m) {
+                          if (mode == 'bike') return m['is_bike'] == true;
+                          if (mode == 'car') return m['is_car'] == true;
+                          if (mode == 'auto') return m['is_auto'] == true;
+                          return true;
+                        }).map((m) => m['sub_type']?.toString() ?? m['sub_type_name']?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+                      })(),
+                      (v) => setState(() {
+                        _travelSubType = v;
+                        _updateRateForSubType(v ?? '');
+                        _updateFormTotal();
+                      }),
+                      icon: Icons.merge_type_rounded,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '₹${dayTotal.toStringAsFixed(2)}',
-                    style: GoogleFonts.plusJakartaSans(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 24,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'BOOKING TYPE',
+                      _bookingType,
+                      _masterBookingTypes,
+                      (v) => setState(() => _bookingType = v ?? ''),
+                      icon: Icons.confirmation_number_rounded,
                     ),
                   ),
                 ],
               ),
+              if (['Pooling', 'Uber', 'Ola', 'Rental', 'App Based Cab'].map((s) => s.toLowerCase()).contains(_travelSubType?.toLowerCase())) ...[
+                const SizedBox(height: 20),
+                _buildDropdownMini(
+                  'PROVIDER',
+                  _providerController.text,
+                  _masterLocalProvidersRaw.where((p) {
+                    final m = _travelMode?.toLowerCase() ?? '';
+                    if (m == 'bike') return p['is_bike'] == true;
+                    if (m == 'car') return p['is_car'] == true;
+                    if (m == 'auto') return p['is_auto'] == true;
+                    return true;
+                  }).map((p) => p['provider_name']?.toString() ?? '').toList(),
+                  (v) => setState(() => _providerController.text = v ?? ''),
+                  icon: Icons.business_rounded,
+                ),
+              ],
+            ],
+          ],
+        ),
+        const SizedBox(height: 20),
+
+        // 2. LOCATION
+        _buildWebCard(
+          title: 'LOCATION',
+          icon: Icons.map_rounded,
+          color: const Color(0xFF0EA5E9),
+          children: [
+            SearchableDropdown(
+              label: 'FROM LOCATION',
+              value: _originController.text,
+              icon: Icons.location_on_rounded,
+              isLocation: true,
+              initialOptions: _masterLocations,
+              onChanged: (v) => setState(() => _originController.text = v),
+              enabled: !_isTravelo,
+            ),
+            const SizedBox(height: 20),
+            SearchableDropdown(
+              label: 'TO LOCATION',
+              value: _destController.text,
+              icon: Icons.flag_rounded,
+              isLocation: true,
+              initialOptions: _masterLocations,
+              onChanged: (v) => setState(() => _destController.text = v),
+              enabled: !_isTravelo,
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        // 3. DATE & TIME
+        _buildWebCard(
+          title: 'DATE & TIME',
+          icon: Icons.calendar_today_rounded,
+          color: const Color(0xFF8B5CF6),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini('START DATE', _startDate, (d) => setState(() => _startDate = d)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDatePickerMini('END DATE', _endDate, (d) => setState(() => _endDate = d)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTimePickerMini('START TIME', _startTime, (t) => setState(() => _startTime = t)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini('END TIME', _endTime, (t) => setState(() => _endTime = t)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+            // START SECTION — only if own vehicle (ODO is needed)
+            // For hired rides (Ride Bike, Ride Hailing, etc.) show bill upload instead
+        // 4. TRACKING (ODO) - Only for own/company vehicles
+        if (showOdoCard) ...[
+          _buildWebCard(
+            title: 'TRACKING (ODO)',
+            icon: Icons.speed_rounded,
+            color: const Color(0xFF10B981),
+            children: [
+              _buildOdoSegment(
+                label: 'START ODOMETER',
+                color: const Color(0xFF4F46E5),
+                date: _startDate,
+                time: _startTime,
+                locationController: _originController,
+                odoController: _odoStartController,
+                odoImg: _odoStartImg,
+                onDate: (d) => setState(() => _startDate = d),
+                onTime: (t) => setState(() => _startTime = t),
+                onImg: (img) => setState(() => _odoStartImg = img),
+                isStart: true,
+                isEnabled: true,
+                isLocationEnabled: false,
+              ),
+              const SizedBox(height: 16),
+              const Divider(height: 32),
+              _buildOdoSegment(
+                label: 'END ODOMETER',
+                color: const Color(0xFF10B981),
+                date: _endDate,
+                time: _endTime,
+                locationController: _destController,
+                odoController: _odoEndController,
+                odoImg: _odoEndImg,
+                onDate: (d) => setState(() => _endDate = d),
+                onTime: (t) => setState(() => _endTime = t),
+                onImg: (img) => setState(() => _odoEndImg = img),
+                isStart: false,
+                isEnabled: true,
+                isLocationEnabled: false,
+              ),
+              const SizedBox(height: 20),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFBBF7D0)),
                 ),
-                child: Column(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '${dist.toStringAsFixed(1)} KM',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                      ),
-                    ),
-                    Text(
-                      'DISTANCE',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: Colors.white.withOpacity(0.7),
-                        fontWeight: FontWeight.w800,
-                        fontSize: 8,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
+                    Text('TOTAL DISTANCE', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w900, color: const Color(0xFF166534))),
+                    Text('${dist.toStringAsFixed(1)} KM', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w900, color: const Color(0xFF15803D))),
                   ],
                 ),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 20),
+        ],
+        const SizedBox(height: 20),
 
+        // 5. EXPENSE & BILLING
         _buildWebCard(
-          title: 'VEHICLE & MODE CONFIGURATION',
-          icon: Icons.settings_suggest_rounded,
-          color: Colors.blue,
+          title: 'EXPENSE & BILLING',
+          icon: Icons.currency_rupee_rounded,
+          color: const Color(0xFFF59E0B),
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: SearchableDropdown(
-                    label: 'MODE',
-                    value: _travelMode,
-                    icon: Icons.directions_car_filled_rounded,
-                    initialOptions: _masterLocalTravelModes.isNotEmpty
-                        ? _masterLocalTravelModes
-                        : ['Bike', 'Car / Cab', 'Public Transport', 'Walk'],
-                    onChanged: (v) => setState(() {
-                      _travelMode = v;
-                      _travelSubType = null;
-                      _fetchRates();
-                    }),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildDropdownMini(
-                    'SUB-TYPE',
-                    _travelSubType,
-                    _travelMode == 'Bike'
-                        ? ['Own Bike', 'Rental Bike', 'Ride Bike']
-                        : _travelMode == 'Car / Cab'
-                        ? ['Own Car', 'Company Car', 'Ride Hailing', 'Rental']
-                        : _travelMode == 'Public Transport'
-                        ? ['Auto', 'Metro', 'Bus']
-                        : ['N/A'],
-                    (v) => setState(() {
-                      _travelSubType = v;
-                      // Mirror web: instantly switch rate; only fetch if rates not loaded yet
-                      if (_rate2W == null || _rate4W == null) {
-                        _fetchRates();
-                      } else {
-                        _updateRateForSubType(v);
-                      }
-                    }),
-                  ),
-                ),
-              ],
-            ),
+            if (isOwnVehicle) ...[
+               Row(
+                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                 children: [
+                   Text('Fuel Reimbursement', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey[600])),
+                   Text('₹${odoTotal.toStringAsFixed(2)}', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold)),
+                 ],
+               ),
+               const Divider(height: 24),
+            ],
+            
+            _buildIncidentalSection(),
             const SizedBox(height: 20),
-            SearchableDropdown(
-              label: 'BOOKING TYPE',
-              value: _bookingType,
-              icon: Icons.confirmation_number_rounded,
-              initialOptions: _masterBookingTypes.isNotEmpty
-                  ? _masterBookingTypes
-                  : ['Online', 'Agent', 'Direct'],
-              onChanged: (v) => setState(() => _bookingType = v),
-            ),
-          ],
-        ),
-
-        _buildWebCard(
-          title: 'LOCATION & ODOMETER LOGS',
-          icon: Icons.map_rounded,
-          color: const Color(0xFF4F46E5),
-          children: [
-            // START SECTION
-            _buildOdoSegment(
-              label: 'START JOURNEY DETAILS',
-              color: const Color(0xFF4F46E5),
-              date: _startDate,
-              time: _startTime,
-              locationController: _originController,
-              odoController: _odoStartController,
-              odoImg: _odoStartImg,
-              onDate: (d) => setState(() => _startDate = d),
-              onTime: (t) => setState(() => _startTime = t),
-              onImg: (img) => setState(() => _odoStartImg = img),
-              isStart: true,
-              isEnabled: true,
-            ),
-            const SizedBox(height: 32),
-            Row(
-              children: [
-                Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Icon(
-                    Icons.arrow_downward_rounded,
-                    size: 16,
-                    color: Colors.grey.withOpacity(0.3),
-                  ),
-                ),
-                Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-              ],
-            ),
-            const SizedBox(height: 32),
-            // END SECTION
-            AbsorbPointer(
-              absorbing: !isStartFieldsComplete,
-              child: Opacity(
-                opacity: isStartFieldsComplete ? 1.0 : 0.5,
-                child: _buildOdoSegment(
-                  label: 'END JOURNEY DETAILS',
-                  color: const Color(0xFF10B981),
-                  date: _endDate,
-                  time: _endTime,
-                  locationController: _destController,
-                  odoController: _odoEndController,
-                  odoImg: _odoEndImg,
-                  onDate: (d) => setState(() => _endDate = d),
-                  onTime: (t) => setState(() => _endTime = t),
-                  onImg: (img) => setState(() => _odoEndImg = img),
-                  isStart: false,
-                  isEnabled: isStartFieldsComplete,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            // Professional Insight Card
+            
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -1507,108 +2198,39 @@ class _TripExpenseFormDetailedScreenState
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: const Color(0xFFE2E8F0)),
               ),
-              child: Column(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ODO DISTANCE',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          Text(
-                            '${dist.toStringAsFixed(1)} KM',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 16,
-                              color: const Color(0xFF4F46E5),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        isOwnVehicle ? 'TOTAL REIMBURSABLE' : 'TOTAL FARE AMOUNT',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF64748B), letterSpacing: 0.5),
                       ),
-                      Container(
-                        width: 1,
-                        height: 30,
-                        color: const Color(0xFFE2E8F0),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            'ODO RATE (₹/KM)',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          SizedBox(
-                            width: 60,
-                            height: 24,
-                            child: TextFormField(
-                              controller: _odoRateController,
-                              keyboardType: TextInputType.number,
-                              style: GoogleFonts.plusJakartaSans(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 16,
-                                color: const Color(0xFF4F46E5),
-                              ),
-                              textAlign: TextAlign.right,
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                              onChanged: (v) => setState(() {}),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        '₹${totalAmount.toStringAsFixed(2)}',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 20, fontWeight: FontWeight.w900, color: const Color(0xFF0F172A)),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ODOMETER EXPENSE',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 9,
-                              color: const Color(0xFF64748B),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                          Text(
-                            '₹${odoTotal.toStringAsFixed(2)}',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 18,
-                              color: const Color(0xFF10B981),
-                            ),
-                          ),
-                        ],
+                  if (!isOwnVehicle)
+                    SizedBox(
+                      width: 120,
+                      child: _buildTextFieldMini(
+                        'EDIT FARE',
+                        _amountController,
+                        prefix: '₹',
+                        keyboardType: TextInputType.number,
+                        onChanged: (v) => setState(() {}),
                       ),
-                    ],
-                  ),
+                    ),
                 ],
               ),
             ),
           ],
         ),
+
 
         _buildWebCard(
           title: 'SELFIE VERIFICATION',
@@ -1860,82 +2482,466 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.map_rounded,
           color: const Color(0xFF4F46E5),
           children: [
-            // START SECTION
-            _buildOdoSegment(
-              label: 'START JOURNEY DETAILS',
-              color: const Color(0xFF4F46E5),
-              date: _startDate,
-              time: _startTime,
-              locationController: _originController,
-              odoController: _odoStartController,
-              odoImg: _odoStartImg,
-              onDate: (d) => setState(() => _startDate = d),
-              onTime: (t) => setState(() => _startTime = t),
-              onImg: (img) => setState(() => _odoStartImg = img),
-              isStart: true,
-              isEnabled: true,
-            ),
-            const SizedBox(height: 32),
-            // Functional Divider
-            Row(
-              children: [
-                Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Icon(
-                    Icons.arrow_downward_rounded,
-                    size: 16,
-                    color: Colors.grey.withOpacity(0.3),
+            if (_isTravelo && !_isDeviated) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFFEDD5)),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Planned locations are locked. Use buttons below to record changes.',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF92400E),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _showDeviationDialog,
+                            icon: const Icon(Icons.alt_route_rounded, size: 14),
+                            label: const Text('DEVIATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFF59E0B),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _showSkipDialog,
+                            icon: const Icon(Icons.cancel_outlined, size: 14),
+                            label: const Text('NOT VISITED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            if (_isDeviated) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFBBF7D0)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle_outline_rounded, color: Color(0xFF16A34A), size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Deviated: ${_deviationTarget ?? ""} - ${_deviationReason ?? ""}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF166534),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            // CATEGORY SELECTOR (Vehicle vs Public Transport)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => setState(() {
+                        _isPublicTransport = false;
+                        if (_travelMode == 'Public Transport' || _travelMode == null) {
+                          _travelMode = 'Bike';
+                          _travelSubType = 'Own Bike';
+                          _updateRateForSubType(_travelSubType);
+                        }
+                        _updateFormTotal();
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: !_isPublicTransport ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: !_isPublicTransport ? [
+                            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
+                          ] : [],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.directions_car_rounded, size: 16, color: !_isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B)),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'VEHICLE (ODO)',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: !_isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-              ],
-            ),
-            const SizedBox(height: 32),
-            // END SECTION
-            AbsorbPointer(
-              absorbing: !isStartFieldsComplete,
-              child: Opacity(
-                opacity: isStartFieldsComplete ? 1.0 : 0.5,
-                child: _buildOdoSegment(
-                  label: 'END JOURNEY DETAILS',
-                  color: const Color(0xFF10B981),
-                  date: _endDate,
-                  time: _endTime,
-                  locationController: _destController,
-                  odoController: _odoEndController,
-                  odoImg: _odoEndImg,
-                  onDate: (d) => setState(() => _endDate = d),
-                  onTime: (t) => setState(() => _endTime = t),
-                  onImg: (img) => setState(() => _odoEndImg = img),
-                  isStart: false,
-                  isEnabled: isStartFieldsComplete,
-                ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => setState(() {
+                        _isPublicTransport = true;
+                        if (_travelMode != 'Public Transport') {
+                          _travelMode = 'Public Transport';
+                          _travelSubType = 'Auto';
+                        }
+                        // Clear 0.00 if present to show hint
+                        if (_amountController.text == '0.00' || _amountController.text == '0') {
+                          _amountController.text = '';
+                        }
+                        _updateFormTotal();
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: _isPublicTransport ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: _isPublicTransport ? [
+                            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
+                          ] : [],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.directions_bus_rounded, size: 16, color: _isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B)),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'OTHERS (BUS/AUTO)',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: _isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 24),
-            // Professional Insight Card
-            Builder(
-              builder: (context) {
-                final isOwnVehicle =
-                    _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
-                return Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+
+            if (!_isPublicTransport) ...[
+               if (['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental'].contains(_travelSubType)) ...[
+                 // START SECTION
+              _buildOdoSegment(
+                label: 'START JOURNEY DETAILS',
+                color: const Color(0xFF4F46E5),
+                date: _startDate,
+                time: _startTime,
+                locationController: _originController,
+                odoController: _odoStartController,
+                odoImg: _odoStartImg,
+                onDate: (d) => setState(() => _startDate = d),
+                onTime: (t) => setState(() => _startTime = t),
+                onImg: (img) => setState(() => _odoStartImg = img),
+                isStart: true,
+                isEnabled: true,
+                isLocationEnabled: !_isTravelo,
+              ),
+              const SizedBox(height: 32),
+              // Functional Divider
+              Row(
+                children: [
+                  Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Icon(
+                      Icons.arrow_downward_rounded,
+                      size: 16,
+                      color: Colors.grey.withOpacity(0.3),
+                    ),
                   ),
-                  child: Column(
+                  Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
+                ],
+              ),
+              const SizedBox(height: 32),
+              // END SECTION
+              AbsorbPointer(
+                absorbing: !isStartFieldsComplete,
+                child: Opacity(
+                  opacity: isStartFieldsComplete ? 1.0 : 0.5,
+                  child: _buildOdoSegment(
+                    label: 'END JOURNEY DETAILS',
+                    color: const Color(0xFF10B981),
+                    date: _endDate,
+                    time: _endTime,
+                    locationController: _destController,
+                    odoController: _odoEndController,
+                    odoImg: _odoEndImg,
+                    onDate: (d) => setState(() => _endDate = d),
+                    onTime: (t) => setState(() => _endTime = t),
+                    onImg: (img) => setState(() => _odoEndImg = img),
+                    isStart: false,
+                    isEnabled: isStartFieldsComplete,
+                    isLocationEnabled: !_isTravelo,
+                  ),
+                ),
+              ),
+            ],
+              ] else ...[
+                 Center(
+                   child: Padding(
+                     padding: const EdgeInsets.all(24.0),
+                     child: Column(
+                       children: [
+                         Icon(Icons.info_outline_rounded, size: 48, color: Colors.grey.withOpacity(0.3)),
+                         const SizedBox(height: 12),
+                         Text(
+                           'ODO tracking is not required for this mode.',
+                           style: GoogleFonts.plusJakartaSans(color: Colors.grey, fontSize: 12),
+                         ),
+                       ],
+                     ),
+                   ),
+                 ),
+              ],
+          ],
+        ),
+        if (_isPublicTransport)
+          _buildWebCard(
+            title: 'CONVEYANCE LOGS',
+            icon: Icons.alt_route_rounded,
+            color: const Color(0xFF0D9488),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: _buildDatePickerMini('DATE', _startDate, (d) => setState(() => _startDate = d)),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: _buildTimePickerMini('TIME', _startTime, (t) => setState(() => _startTime = t)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildModernTextField(
+                      label: 'ORIGIN',
+                      controller: _originController,
+                      hint: 'Starting point',
+                      icon: Icons.location_on_rounded,
+                      enabled: !_isTravelo,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildModernTextField(
+                      label: 'DESTINATION',
+                      controller: _destController,
+                      hint: 'Target location',
+                      icon: Icons.flag_rounded,
+                      enabled: !_isTravelo,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'TYPE / PUBLIC MODE',
+                      _travelSubType,
+                      const ['Auto', 'Bus', 'Taxi', 'Metro', 'Rickshaw', 'Other'],
+                      (v) => setState(() => _travelSubType = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: (_travelSubType == 'Auto' || _isPublicTransport) 
+                      ? _buildTextFieldMini(
+                        'AMOUNT (₹)',
+                        _amountController,
+                        keyboardType: TextInputType.number,
+                        hint: 'Enter cost',
+                        icon: Icons.currency_rupee_rounded,
+                        )
+                      : const SizedBox.shrink(),
+                  ),
+                ],
+              ),
+            ],
+          ),
+            
+        // Web parity: Incidental section only for vehicle owners
+        if (!_isPublicTransport && ['Own Car', 'Company Car', 'Own Bike', 'Company Bike'].contains(_travelSubType))
+           _buildIncidentalSection(),
+           
+        const SizedBox(height: 24),
+        // Professional Insight Card
+        Builder(
+          builder: (context) {
+            final isOwnVehicle =
+                _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+            return Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Column(
+                          Text(
+                            'ODO DISTANCE',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 9,
+                              color: const Color(0xFF64748B),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          Text(
+                            '${dist.toStringAsFixed(1)} KM',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              color: const Color(0xFF4F46E5),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        width: 1,
+                        height: 30,
+                        color: const Color(0xFFE2E8F0),
+                      ),
+                      if (isOwnVehicle) ...[
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'ODO RATE (₹/KM)',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 9,
+                                color: const Color(0xFF64748B),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            Text(
+                              '₹${_odoRateController.text.isNotEmpty ? _odoRateController.text : '-'}/km',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                                color: const Color(0xFF10B981),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ] else ...[
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'AMOUNT (₹)',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 9,
+                                color: const Color(0xFF64748B),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            SizedBox(
+                              width: 100,
+                              height: 28,
+                              child: TextFormField(
+                                controller: _amountController,
+                                keyboardType: TextInputType.number,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  color: const Color(0xFF4F46E5),
+                                ),
+                                textAlign: TextAlign.right,
+                                decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.zero,
+                                  hintText: '0',
+                                  prefixText: '₹',
+                                ),
+                                onChanged: (v) => setState(() {}),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (isOwnVehicle) ...[
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'ODO DISTANCE',
+                                'ODOMETER EXPENSE',
                                 style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w800,
                                   fontSize: 9,
@@ -1944,199 +2950,100 @@ class _TripExpenseFormDetailedScreenState
                                 ),
                               ),
                               Text(
-                                '${dist.toStringAsFixed(1)} KM',
+                                '₹${odoTotal.toStringAsFixed(2)}',
                                 style: GoogleFonts.plusJakartaSans(
                                   fontWeight: FontWeight.w900,
-                                  fontSize: 16,
-                                  color: const Color(0xFF4F46E5),
+                                  fontSize: 18,
+                                  color: const Color(0xFF10B981),
                                 ),
                               ),
                             ],
                           ),
-                          Container(
-                            width: 1,
-                            height: 30,
-                            color: const Color(0xFFE2E8F0),
-                          ),
-                          if (isOwnVehicle) ...[
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  'ODO RATE (₹/KM)',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 9,
-                                    color: const Color(0xFF64748B),
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                Text(
-                                  '₹${_odoRateController.text.isNotEmpty ? _odoRateController.text : '-'}/km',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 16,
-                                    color: const Color(0xFF10B981),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ] else ...[
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  'AMOUNT (₹)',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 9,
-                                    color: const Color(0xFF64748B),
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 100,
-                                  height: 28,
-                                  child: TextFormField(
-                                    controller: _amountController,
-                                    keyboardType: TextInputType.number,
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 16,
-                                      color: const Color(0xFF4F46E5),
-                                    ),
-                                    textAlign: TextAlign.right,
-                                    decoration: const InputDecoration(
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.zero,
-                                      hintText: '0',
-                                      prefixText: '₹',
-                                    ),
-                                    onChanged: (v) => setState(() {}),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (isOwnVehicle) ...[
-                        const SizedBox(height: 12),
-                        const Divider(),
-                        const SizedBox(height: 12),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'ODOMETER EXPENSE',
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 9,
-                                      color: const Color(0xFF64748B),
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                  Text(
-                                    '₹${odoTotal.toStringAsFixed(2)}',
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 18,
-                                      color: const Color(0xFF10B981),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        JobReportComposerScreen(
-                                          travelId: widget.tripId,
-                                          initialReport:
-                                              _jobReportController.text,
-                                          initialAttachments:
-                                              _jobReportAttachments,
-                                          onSave: (text, attachments) async {
-                                            setState(() {
-                                              _jobReportController.text = text;
-                                              _jobReportAttachments =
-                                                  attachments;
-                                            });
-                                          },
-                                        ),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(
-                                Icons.edit_note_rounded,
-                                size: 18,
-                              ),
-                              label: Text(
-                                'WRITE REPORT',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 11,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                              style: TextButton.styleFrom(
-                                foregroundColor: const Color(0xFF334155),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                backgroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: const BorderSide(
-                                    color: Color(0xFFE2E8F0),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                         ),
-                      ] else ...[
-                        const SizedBox(height: 12),
-                        const Divider(),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.info_outline_rounded,
-                              size: 14,
-                              color: Color(0xFF94A3B8),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    JobReportComposerScreen(
+                                      travelId: widget.tripId,
+                                      initialReport:
+                                          _jobReportController.text,
+                                      initialAttachments:
+                                          _jobReportAttachments,
+                                      onSave: (text, attachments) async {
+                                        setState(() {
+                                          _jobReportController.text = text;
+                                          _jobReportAttachments =
+                                              attachments;
+                                        });
+                                      },
+                                    ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(
+                            Icons.edit_note_rounded,
+                            size: 18,
+                          ),
+                          label: Text(
+                            'WRITE REPORT',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 11,
+                              letterSpacing: 0.5,
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Fare/cost amount to be entered manually for this travel type.',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 10,
-                                  color: const Color(0xFF94A3B8),
-                                  fontWeight: FontWeight.w500,
-                                ),
+                          ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: const Color(0xFF334155),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            backgroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: const BorderSide(
+                                color: Color(0xFFE2E8F0),
                               ),
                             ),
-                          ],
+                          ),
                         ),
                       ],
-                    ],
-                  ),
-                );
-              },
-            ),
-          ],
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 12),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline_rounded,
+                          size: 14,
+                          color: Color(0xFF94A3B8),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Fare/cost amount to be entered manually for this travel type.',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              color: const Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
         ),
-
+        
         // INCIDENTAL SECTION
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2159,13 +3066,16 @@ class _TripExpenseFormDetailedScreenState
                     color: Colors.transparent,
                     child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                      onTap: () => setState(
-                        () => _incidentals.add({
-                          'category': 'Toll',
-                          'amount': '',
-                          'bill': null,
-                        }),
-                      ),
+                      onTap: () {
+                        setState(() {
+                          _incidentals.add({
+                            'category': 'Toll',
+                            'amount': '',
+                            'bill': null,
+                          });
+                        });
+                        _updateFormTotal();
+                      },
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -2270,8 +3180,10 @@ class _TripExpenseFormDetailedScreenState
                           _buildIncidentalBillButton(index),
                           const SizedBox(width: 4),
                           IconButton(
-                            onPressed: () =>
-                                setState(() => _incidentals.removeAt(index)),
+                            onPressed: () {
+                              setState(() => _incidentals.removeAt(index));
+                              _updateFormTotal();
+                            },
                             icon: const Icon(
                               Icons.delete_outline_rounded,
                               color: Colors.redAccent,
@@ -2286,7 +3198,6 @@ class _TripExpenseFormDetailedScreenState
               }),
           ],
         ),
-
         const SizedBox(height: 32),
       ],
     );
@@ -2312,6 +3223,10 @@ class _TripExpenseFormDetailedScreenState
             fontSize: 13,
             fontWeight: FontWeight.w700,
           ),
+          onChanged: (v) {
+            _incidentals[index]['amount'] = v;
+            _updateFormTotal();
+          },
           decoration: InputDecoration(
             prefixText: '₹',
             filled: true,
@@ -2325,7 +3240,6 @@ class _TripExpenseFormDetailedScreenState
               vertical: 12,
             ),
           ),
-          onChanged: (v) => setState(() => _incidentals[index]['amount'] = v),
         ),
       ],
     );
@@ -2376,6 +3290,148 @@ class _TripExpenseFormDetailedScreenState
     );
   }
 
+  void _showDeviationDialog() {
+    final reasonCtrl = TextEditingController(text: _deviationReason);
+    final targetCtrl = TextEditingController(text: _deviationTarget);
+    final actualFromCtrl = TextEditingController(text: _originController.text);
+    final actualToCtrl = TextEditingController(text: _destController.text);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'RECORD DEVIATION',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900, fontSize: 16),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Provide details for the actual route taken.',
+                style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: reasonCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Reason for Deviation',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: targetCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Visited Person / Office',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: actualFromCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Actual From (Location)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: actualToCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Actual To (Location)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (reasonCtrl.text.trim().isEmpty) return;
+              setState(() {
+                _isDeviated = true;
+                _deviationReason = reasonCtrl.text.trim();
+                _deviationTarget = targetCtrl.text.trim();
+                _originController.text = actualFromCtrl.text.trim();
+                _destController.text = actualToCtrl.text.trim();
+              });
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Deviation recorded. Locations updated.')),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B)),
+            child: const Text('CONFIRM', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSkipDialog() {
+    final reasonCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'MARK AS NOT VISITED',
+          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.red),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Marking this stop as cancelled. Amount will be set to 0.',
+              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: reasonCtrl,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Reason for Cancellation',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (reasonCtrl.text.trim().isEmpty) return;
+              setState(() {
+                _isDeviated = true;
+                _deviationReason = '[Skipped] ${reasonCtrl.text.trim()}';
+                _travelStatus = 'Cancelled';
+                _amountController.text = '0';
+              });
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Stop marked as Not Visited.'), backgroundColor: Colors.red),
+              );
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('MARK CANCELLED', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOdoSegment({
     required String label,
     required Color color,
@@ -2389,6 +3445,7 @@ class _TripExpenseFormDetailedScreenState
     required Function(String) onImg,
     required bool isStart,
     required bool isEnabled,
+    bool isLocationEnabled = true,
   }) {
     final now = DateTime.now();
     final bool isDateToday =
@@ -2439,10 +3496,15 @@ class _TripExpenseFormDetailedScreenState
           children: [
             Expanded(
               flex: 3,
-              child: _buildTextFieldMini(
-                'LOCATION',
-                locationController,
+              child: SearchableDropdown(
+                label: 'LOCATION',
+                value: locationController.text,
                 hint: isStart ? 'Origin' : 'Destination',
+                icon: Icons.location_on_outlined,
+                enabled: isLocationEnabled,
+                isLocation: true,
+                initialOptions: _masterLocations,
+                onChanged: (v) => setState(() => locationController.text = v),
               ),
             ),
             const SizedBox(width: 8),
@@ -2556,250 +3618,585 @@ class _TripExpenseFormDetailedScreenState
   }
 
   Widget _buildFoodForm() {
+    final isSelfMeal = _mealCategory == 'Self Meal';
+    final sourceLower = _mealSource?.toLowerCase() ?? '';
+    final showSource = isSelfMeal;
+    final showProvider = isSelfMeal && sourceLower == 'online';
+    final showHotel = isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
+    final showRestaurant = isSelfMeal && sourceLower == 'restaurant';
+
+    return Column(
+      children: [
+        _buildWebCard(
+          title: 'DATE & TIME',
+          icon: Icons.calendar_today_rounded,
+          color: const Color(0xFF0D9488),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'DATE',
+                    _startDate,
+                    (d) => setState(() => _startDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'TIME',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'MEAL INFO',
+          icon: Icons.coffee_rounded,
+          color: const Color(0xFF0EA5E9),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'MEAL TYPE',
+                    _mealType,
+                    _masterMealTypes,
+                    (v) => setState(() => _mealType = v ?? ''),
+                    icon: Icons.restaurant_menu_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'MEAL TIME',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'MEAL CATEGORY & SOURCE',
+          icon: Icons.receipt_rounded,
+          color: const Color(0xFF0284C7),
+          children: [
+            _buildDropdownMini(
+              'CATEGORY',
+              _mealCategory,
+              _masterMealCategories,
+              (v) => setState(() {
+                _mealCategory = v ?? '';
+                if (v != 'Self Meal') {
+                  _amountController.text = '0.00';
+                }
+              }),
+              icon: Icons.category_rounded,
+            ),
+            if (showSource) ...[
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'SOURCE',
+                      _mealSource,
+                      _masterMealSources,
+                      (v) => setState(() => _mealSource = v ?? ''),
+                      icon: Icons.source_rounded,
+                    ),
+                  ),
+                  if (showProvider) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildDropdownMini(
+                        'PROVIDER',
+                        _mealProvider,
+                        _masterMealProviders,
+                        (v) => setState(() => _mealProvider = v ?? ''),
+                        icon: Icons.delivery_dining_rounded,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+            if (showHotel) ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                sourceLower == 'online' ? 'HOTEL / OUTLET NAME' : 'HOTEL NAME',
+                _hotelNameController,
+                icon: Icons.storefront_rounded,
+                hint: 'Enter name...',
+              ),
+            ],
+            if (showRestaurant) ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'RESTAURANT NAME',
+                _restaurantController,
+                icon: Icons.restaurant_rounded,
+                hint: 'Enter restaurant name...',
+              ),
+            ],
+            if (_mealCategory == 'Working Meal' ||
+                _mealCategory == 'Client Hosted') ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'NO. OF PERSONS (PAX)',
+                _personsController,
+                keyboardType: TextInputType.number,
+                icon: Icons.people_outline,
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'EXPENSE',
+          icon: Icons.currency_rupee_rounded,
+          color: const Color(0xFF0369A1),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTextFieldMini(
+                    'INVOICE NO',
+                    _invoiceNoController,
+                    hint: 'Optional',
+                    icon: Icons.receipt_long_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTextFieldMini(
+                    'AMOUNT',
+                    _amountController,
+                    prefix: '₹',
+                    keyboardType: TextInputType.number,
+                    icon: Icons.payments_outlined,
+                    enabled: isSelfMeal,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+
+  Widget _buildAccommodationForm() {
+    final showBookingId = _bookingType == 'Online Booking';
+    final showBookingSource = _bookingType != 'Walkin' && _bookingType != null;
+
+    return Column(
+      children: [
+        _buildWebCard(
+          title: 'STAY TIMELINE',
+          icon: Icons.history_edu_rounded,
+          color: const Color(0xFF64748B),
+          children: [
+            Text(
+              'SCHEDULED',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF64748B),
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'CHECK-IN DATE',
+                    _scheduledStartDate,
+                    (d) => setState(() => _scheduledStartDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'CHECK-IN TIME',
+                    _scheduledStartTime,
+                    (t) => setState(() => _scheduledStartTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'CHECK-OUT DATE',
+                    _scheduledEndDate,
+                    (d) => setState(() => _scheduledEndDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'CHECK-OUT TIME',
+                    _scheduledEndTime,
+                    (t) => setState(() => _scheduledEndTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 20),
+            Text(
+              'ACTUAL',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF0D9488),
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'CHECK-IN DATE',
+                    _startDate,
+                    (d) => setState(() {
+                      _startDate = d;
+                      _calculateNights();
+                    }),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'CHECK-IN TIME',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'CHECK-OUT DATE',
+                    _endDate,
+                    (d) => setState(() {
+                      _endDate = d;
+                      _calculateNights();
+                    }),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'CHECK-OUT TIME',
+                    _endTime,
+                    (t) => setState(() => _endTime = t),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.nights_stay_rounded,
+                      size: 14, color: Color(0xFF64748B)),
+                  const SizedBox(width: 8),
+                  Text(
+                    'NIGHTS: ',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF64748B),
+                    ),
+                  ),
+                  Text(
+                    _nightsController.text,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'LODGING INFO',
+          icon: Icons.hotel_rounded,
+          color: const Color(0xFF0EA5E9),
+          children: [
+            _buildDropdownMini(
+              'STAY TYPE',
+              _accomType,
+              _masterStayTypes,
+              (v) => setState(() => _accomType = v ?? ''),
+              icon: Icons.hotel_rounded,
+            ),
+            const SizedBox(height: 20),
+            if (['Hotel Stay', 'Guest House'].contains(_accomType)) ...[
+              _buildTextFieldMini(
+                _accomType == 'Guest House' ? 'GUEST HOUSE INFO' : 'HOTEL NAME',
+                _hotelNameController,
+                icon: Icons.store_mall_directory_rounded,
+                hint: 'Enter name...',
+              ),
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'CITY',
+                _cityController,
+                icon: Icons.location_city_rounded,
+                hint: 'Enter city',
+              ),
+              const SizedBox(height: 20),
+            ],
+            _buildTextFieldMini(
+              'REMARKS',
+              _jobReportController,
+              icon: Icons.edit_note_rounded,
+              hint: 'Enter remarks',
+              maxLines: 2,
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'BOOKING DETAILS',
+          icon: Icons.confirmation_number_rounded,
+          color: const Color(0xFF0284C7),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'BOOKING TYPE',
+                    _bookingType,
+                    _masterStayBookingTypes,
+                    (v) => setState(() {
+                      _bookingType = v ?? '';
+                      if (v == 'Company Booking') {
+                        _baseFareController.text = '0.00';
+                        _earlyCheckInController.text = '0.00';
+                        _lateCheckOutController.text = '0.00';
+                        _updateFormTotal();
+                      }
+                    }),
+                    icon: Icons.book_online_rounded,
+                  ),
+                ),
+                if (showBookingSource) ...[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'BOOKING SOURCE',
+                      _bookingSource,
+                      _masterStayBookingSources,
+                      (v) => setState(() => _bookingSource = v ?? ''),
+                      icon: Icons.source_outlined,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            if (showBookingId) ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'BOOKING ID',
+                _bookingIdController,
+                icon: Icons.confirmation_number_outlined,
+                hint: 'Enter Online Booking ID',
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildWebCard(
+          title: 'EXPENSE & BILLING',
+          icon: Icons.currency_rupee_rounded,
+          color: const Color(0xFF0369A1),
+          children: [
+            _buildTextFieldMini(
+              'BASE AMOUNT',
+              _baseFareController,
+              prefix: '₹',
+              keyboardType: TextInputType.number,
+              icon: Icons.payments_outlined,
+              enabled: _bookingType != 'Company Booking',
+              onChanged: (v) => _updateFormTotal(),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildTextFieldMini(
+                    'EARLY CHECK-IN',
+                    _earlyCheckInController,
+                    prefix: '₹',
+                    keyboardType: TextInputType.number,
+                    icon: Icons.more_time_rounded,
+                    onChanged: (v) => _updateFormTotal(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTextFieldMini(
+                    'LATE CHECK-OUT',
+                    _lateCheckOutController,
+                    prefix: '₹',
+                    keyboardType: TextInputType.number,
+                    icon: Icons.history_rounded,
+                    onChanged: (v) => _updateFormTotal(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0FDFA),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFCCFBF1)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'TOTAL AMOUNT',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF134E4A),
+                    ),
+                  ),
+                  Text(
+                    '₹${_amountController.text}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF0D9488),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+
+
+  Widget _buildIncidentalForm() {
+    final showOtherReason = _incidentalType?.toLowerCase() == 'others';
+
+    // Pick the right subset based on which form we're in, matching web app logic:
+    //   - Outstation / Business Trip  → general_incidental
+    //   - Local Travel               → local_conveyance
+    //   - otherwise fallback to all
+    List<String> incidentalOptions;
+    final cat = widget.category.toLowerCase();
+    if (cat.contains('local')) {
+      incidentalOptions = _masterLocalIncidentalTypes.isNotEmpty
+          ? _masterLocalIncidentalTypes
+          : _masterIncidentalTypes;
+    } else if (cat.contains('outstation') || cat.contains('travel')) {
+      incidentalOptions = _masterTravelIncidentalTypes.isNotEmpty
+          ? _masterTravelIncidentalTypes
+          : _masterIncidentalTypes;
+    } else {
+      // General / Incidental category
+      incidentalOptions = _masterGeneralIncidentalTypes.isNotEmpty
+          ? _masterGeneralIncidentalTypes
+          : _masterIncidentalTypes;
+    }
+
     return _buildWebCard(
-      title: 'FOOD & REFRESHMENTS',
-      icon: Icons.restaurant_rounded,
-      color: Colors.pink,
+      title: 'INCIDENTAL EXPENSE',
+      icon: Icons.miscellaneous_services_rounded,
+      color: Colors.blueGrey,
       children: [
         Row(
           children: [
             Expanded(
-              child: SearchableDropdown(
-                label: 'CATEGORY',
-                value: _mealCategory,
-                icon: Icons.category_rounded,
-                initialOptions: _masterMealCategories.isNotEmpty
-                    ? _masterMealCategories
-                    : ['Self Meal', 'Working Meal', 'Client Hosted'],
-                onChanged: (v) => setState(() => _mealCategory = v),
+              child: _buildDatePickerMini(
+                'DATE',
+                _startDate,
+                (d) => setState(() => _startDate = d),
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(
-              child: SearchableDropdown(
-                label: 'MEAL TYPE',
-                value: _mealType,
-                icon: Icons.restaurant_menu_rounded,
-                initialOptions: _masterMealTypes.isNotEmpty
-                    ? _masterMealTypes
-                    : ['Breakfast', 'Lunch', 'Dinner', 'Snacks'],
-                onChanged: (v) => setState(() => _mealType = v),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextFieldMini(
-                'RESTAURANT / HOTEL',
-                _restaurantController,
-                icon: Icons.storefront_rounded,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextFieldMini(
-                'ADDRESS',
-                _addressController,
-                icon: Icons.location_on_outlined,
-                hint: 'Location Address',
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
             Expanded(
               child: _buildTimePickerMini(
-                'MEAL TIME',
+                'TIME',
                 _startTime,
                 (t) => setState(() => _startTime = t),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextFieldMini(
-                'AMOUNT',
-                _amountController,
-                prefix: '₹',
-                keyboardType: TextInputType.number,
-                icon: Icons.payments_outlined,
-              ),
-            ),
-          ],
-        ),
-        if (_mealCategory == 'Working Meal' ||
-            _mealCategory == 'Client Hosted') ...[
-          const SizedBox(height: 20),
-          _buildTextFieldMini(
-            'NO. OF PERSONS (PAX)',
-            _personsController,
-            keyboardType: TextInputType.number,
-            icon: Icons.people_outline,
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAccommodationForm() {
-    return _buildWebCard(
-      title: 'ACCOMMODATION',
-      icon: Icons.hotel_rounded,
-      color: Colors.orange,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: SearchableDropdown(
-                label: 'STAY TYPE',
-                value: _accomType,
-                icon: Icons.hotel_rounded,
-                initialOptions: _masterStayTypes,
-                onChanged: (v) => setState(() => _accomType = v),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SearchableDropdown(
-                label: 'ROOM TYPE',
-                value: _roomType,
-                icon: Icons.meeting_room_rounded,
-                initialOptions: _masterRoomTypes,
-                onChanged: (v) => setState(() => _roomType = v),
-              ),
-            ),
           ],
         ),
         const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextFieldMini(
-                'HOTEL / PROPERTY',
-                _hotelNameController,
-                icon: Icons.business_rounded,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SearchableDropdown(
-                label: 'CITY',
-                value: _cityController.text,
-                icon: Icons.location_city_rounded,
-                isLocation: true,
-                onChanged: (v) => setState(() => _cityController.text = v),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDatePickerMini('CHECK-IN', _startDate, (d) {
-                setState(() => _startDate = d);
-                _calculateNights();
-              }),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildDatePickerMini('CHECK-OUT', _endDate, (d) {
-                setState(() => _endDate = d);
-                _calculateNights();
-              }),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextFieldMini(
-                'NIGHTS',
-                _nightsController,
-                keyboardType: TextInputType.number,
-                icon: Icons.nights_stay_outlined,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextFieldMini(
-                'AMOUNT',
-                _amountController,
-                prefix: '₹',
-                keyboardType: TextInputType.number,
-                icon: Icons.payments_outlined,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(
-              child: _buildTextFieldMini(
-                'EARLY CHK-IN',
-                _earlyCheckInController,
-                keyboardType: TextInputType.number,
-                icon: Icons.access_time_rounded,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextFieldMini(
-                'LATE CHK-OUT',
-                _lateCheckOutController,
-                keyboardType: TextInputType.number,
-                icon: Icons.access_time_filled_rounded,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        _buildTextFieldMini(
-          'PURPOSE / ADDRESS',
-          _jobReportController,
-          maxLines: 2,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIncidentalForm() {
-    return _buildWebCard(
-      title: 'INCIDENTAL / OTHERS',
-      icon: Icons.receipt_long_rounded,
-      color: Colors.grey,
-      children: [
         Row(
           children: [
             Expanded(
               child: _buildDropdownMini(
-                'EXPENSE TYPE',
-                _mealCategory,
-                _masterIncidentalTypes,
-                (v) => setState(() => _mealCategory = v),
+                'INCIDENTAL TYPE',
+                _incidentalType,
+                incidentalOptions,
+                (v) => setState(() => _incidentalType = v ?? ''),
+                icon: Icons.category_outlined,
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: _buildTextFieldMini(
-                'LOCATION / DETAILS',
-                _originController,
-                icon: Icons.map_outlined,
+                'INVOICE NO',
+                _invoiceNoController,
+                icon: Icons.receipt_long_rounded,
+                hint: 'Optional',
               ),
             ),
           ],
         ),
         const SizedBox(height: 20),
         Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Expanded(
+              child: _buildTextFieldMini(
+                'LOCATION',
+                _cityController,
+                icon: Icons.location_on_rounded,
+                hint: 'Enter location',
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: _buildTextFieldMini(
                 'AMOUNT',
@@ -2809,15 +4206,24 @@ class _TripExpenseFormDetailedScreenState
                 icon: Icons.payments_outlined,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildTextFieldMini(
-                'DESCRIPTION / PURPOSE',
-                _jobReportController,
-                maxLines: 2,
-              ),
-            ),
           ],
+        ),
+        if (showOtherReason) ...[
+          const SizedBox(height: 20),
+          _buildTextFieldMini(
+            'REASON',
+            _reasonController,
+            icon: Icons.help_outline_rounded,
+            hint: 'Why this expense?',
+          ),
+        ],
+        const SizedBox(height: 20),
+        _buildTextFieldMini(
+          'REMARKS / DETAILS',
+          _jobReportController,
+          maxLines: 2,
+          icon: Icons.edit_note_rounded,
+          hint: 'Add a short note...',
         ),
       ],
     );
@@ -2935,46 +4341,82 @@ class _TripExpenseFormDetailedScreenState
           ),
           onChanged: (v) {
             if (onChanged != null) onChanged(v);
-            setState(() {}); // Trigger calc update
+            setState(() {});
           },
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: GoogleFonts.inter(
-              color: const Color(0xFF94A3B8),
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
             prefixText: prefix,
-            prefixStyle: GoogleFonts.plusJakartaSans(
-              color: const Color(0xFF134E4A),
-              fontWeight: FontWeight.w700,
-            ),
             prefixIcon: icon != null
-                ? Icon(icon, size: 18, color: const Color(0xFF0D9488))
+                ? Icon(icon, size: 18, color: const Color(0xFF0F766E))
                 : null,
             filled: true,
-            fillColor: const Color(0xFFF0FDFA),
+            fillColor: Colors.white,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide.none,
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(color: Color(0xFFCCFBF1)),
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(
-                color: Color(0xFF0D9488),
-                width: 1.5,
-              ),
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF0F766E), width: 1.5),
             ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 12,
+            errorStyle: GoogleFonts.plusJakartaSans(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModernTextField({
+    required String label,
+    required TextEditingController controller,
+    required IconData icon,
+    TextInputType keyboardType = TextInputType.text,
+    String? hint,
+    Function(String)? onChanged,
+    bool enabled = true,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          onChanged: onChanged,
+          enabled: enabled,
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.bold,
+            fontSize: 15,
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            prefixIcon: Icon(icon, size: 18),
+            filled: true,
+            fillColor: enabled ? Colors.white : Colors.grey.withOpacity(0.05),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          ),
         ),
       ],
     );
@@ -2984,8 +4426,9 @@ class _TripExpenseFormDetailedScreenState
     String label,
     String? value,
     List<String> options,
-    Function(String?) onChanged,
-  ) {
+    Function(String?) onChanged, {
+    IconData? icon,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3007,41 +4450,77 @@ class _TripExpenseFormDetailedScreenState
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0xFFCCFBF1)),
           ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: options.contains(value) ? value : null,
-              isExpanded: true,
-              dropdownColor: Colors.white,
-              icon: const Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: Color(0xFF0D9488),
-              ),
-              hint: Text(
-                'Select',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 14,
-                  color: const Color(0xFF94A3B8),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: const Color(0xFF134E4A),
-              ),
-              onChanged: onChanged,
-              items: options
-                  .map(
-                    (String val) => DropdownMenuItem(
-                      value: val,
-                      child: Text(
-                        val,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+          child: InkWell(
+            onTap: () {}, // Handled by PopupMenuButton
+            borderRadius: BorderRadius.circular(16),
+            child: Row(
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 16, color: const Color(0xFF0D9488)),
+                  const SizedBox(width: 8),
+                ],
+                Expanded(
+                  child: Theme(
+                    data: Theme.of(context).copyWith(
+                      hoverColor: Colors.transparent,
+                      splashColor: Colors.transparent,
+                      highlightColor: Colors.transparent,
                     ),
-                  )
-                  .toList(),
+                    child: PopupMenuButton<String>(
+                      initialValue: value,
+                      tooltip: 'Select $label',
+                      onSelected: onChanged,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 150),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      offset: const Offset(0, 48), // Opens right below the field
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              (value == null || value!.isEmpty) ? 'Select' : value!,
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 14,
+                                fontWeight: (value == null || value!.isEmpty)
+                                    ? FontWeight.w500
+                                    : FontWeight.w700,
+                                color: (value == null || value!.isEmpty)
+                                    ? const Color(0xFF94A3B8)
+                                    : const Color(0xFF134E4A),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            color: Color(0xFF0D9488),
+                            size: 18,
+                          ),
+                        ],
+                      ),
+                      itemBuilder: (context) => options
+                          .map(
+                            (String val) => PopupMenuItem(
+                              value: val,
+                              child: Text(
+                                val,
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFF134E4A),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -3628,4 +5107,5 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
+
 }

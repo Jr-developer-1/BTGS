@@ -7,7 +7,17 @@ def _is_hr(user):
     user_role = (user.role.name.lower() if user.role else '')
     dept = (user.department or '').lower()
     desig = (user.designation or '').lower()
-    return 'hr' in user_role or 'hr' in dept or 'hr' in desig
+    return (
+        'hr' in user_role
+        or 'human resources' in user_role
+        or 'human resource' in user_role
+        or 'hr' in dept
+        or 'human resources' in dept
+        or 'human resource' in dept
+        or 'hr' in desig
+        or 'human resources' in desig
+        or 'human resource' in desig
+    )
 
 def _get_hr_users():
     """Returns a list of users who should be treated as HR."""

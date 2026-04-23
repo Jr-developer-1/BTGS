@@ -64,7 +64,7 @@
     .requests-kanban {
         grid-template-columns: 1fr;
     }
-    
+
     .kanban-col {
         height: auto !important;
         max-height: 500px;
@@ -291,6 +291,72 @@
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.req-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(226, 232, 240, 0.8);
+    padding-top: 16px;
+    margin-top: auto;
+}
+
+.req-amount {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    letter-spacing: -0.02em;
+}
+
+.req-date {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    font-weight: 600;
+}
+
+.empty-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    height: 100%;
+    color: var(--text-light);
+    gap: 16px;
+    padding: 60px 20px;
+}
+
+.empty-col p {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.loading-state .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--primary-light);
+    border-top: 3px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}

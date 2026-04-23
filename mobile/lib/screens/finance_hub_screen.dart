@@ -97,6 +97,24 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
     String paymentDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
     String remarks = '';
 
+    final details = rec['details'] ?? {};
+    double totalAmt =
+        double.tryParse(details['total_amount']?.toString() ?? '0') ??
+        double.tryParse(details['requested_amount']?.toString() ?? '0') ??
+        0;
+    if (totalAmt == 0) {
+      String costStr =
+          rec['cost']?.toString().replaceAll('₹', '').replaceAll(',', '') ??
+          '0';
+      totalAmt = double.tryParse(costStr) ?? 0;
+    }
+    double adv =
+        double.tryParse(details['total_advance_taken']?.toString() ?? '0') ?? 0;
+    double wallet =
+        double.tryParse(details['wallet_balance_used']?.toString() ?? '0') ?? 0;
+    double netPayout = totalAmt - adv - wallet;
+    bool needsTransferFields = netPayout > 0 || _selectedTab == 'completed';
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -134,54 +152,50 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
 
               Row(
                 children: [
-                  Expanded(
-                    child: _buildModalField(
-                      'Amount',
-                      '₹${rec['cost'] ?? rec['cost_estimate'] ?? '0'}',
-                      isHighlight: true,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'MODE',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black26,
+                  Expanded(child: _buildAmountArea(rec)),
+                  if (needsTransferFields) ...[
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'MODE',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.black26,
+                            ),
                           ),
-                        ),
-                        DropdownButton<String>(
-                          value: paymentMode,
-                          isExpanded: true,
-                          underline: const SizedBox(),
-                          items: ['NEFT', 'Bank Transfer', 'UPI', 'Cash']
-                              .map(
-                                (m) => DropdownMenuItem(
-                                  value: m,
-                                  child: Text(
-                                    m,
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
+                          DropdownButton<String>(
+                            value: paymentMode,
+                            isExpanded: true,
+                            underline: const SizedBox(),
+                            items: ['NEFT', 'Bank Transfer', 'UPI', 'Cash']
+                                .map(
+                                  (m) => DropdownMenuItem(
+                                    value: m,
+                                    child: Text(
+                                      m,
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) =>
-                              setModalState(() => paymentMode = v!),
-                        ),
-                      ],
+                                )
+                                .toList(),
+                            onChanged: (v) =>
+                                setModalState(() => paymentMode = v!),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
               const SizedBox(height: 24),
-              if (paymentMode != 'Cash') ...[
+              if (needsTransferFields && paymentMode != 'Cash') ...[
                 TextField(
                   onChanged: (v) => transactionId = v,
                   decoration: _modalInputDecoration(
@@ -203,7 +217,9 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () async {
-                    if (paymentMode != 'Cash' && transactionId.isEmpty) {
+                    if (needsTransferFields &&
+                        paymentMode != 'Cash' &&
+                        transactionId.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Transaction ID is required'),
@@ -255,7 +271,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                     ),
                   ),
                   child: Text(
-                    'CONFIRM TRANSFER',
+                    _getSubmitButtonText(rec),
                     style: GoogleFonts.plusJakartaSans(
                       fontWeight: FontWeight.w900,
                       fontSize: 13,
@@ -942,7 +958,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          '₹${rec['cost'] ?? rec['cost_estimate'] ?? '0'}',
+                          _formatAmount(rec),
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 14,
                             fontWeight: FontWeight.w900,
@@ -1090,5 +1106,154 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
         ),
       ),
     );
+  }
+
+  double _cleanParse(dynamic val) {
+    if (val == null) return 0.0;
+    String s = val.toString().replaceAll(RegExp(r'[^0-9.]'), '');
+    return double.tryParse(s) ?? 0.0;
+  }
+
+  String _formatAmount(Map<String, dynamic> rec) {
+    final details = rec['details'] ?? {};
+    final status = rec['status']?.toString().toLowerCase() ?? '';
+    final isSettled =
+        status == 'settled' ||
+        status == 'transfer completed' ||
+        status == 'completed';
+
+    // Try multiple fields for actual approved/requested amounts
+    double dValue = _cleanParse(details['net_payout']) > 0
+        ? _cleanParse(details['net_payout'])
+        : (_cleanParse(details['executive_approved_amount']) > 0
+              ? _cleanParse(details['executive_approved_amount'])
+              : (_cleanParse(details['total_amount']) > 0
+                    ? _cleanParse(details['total_amount'])
+                    : _cleanParse(details['requested_amount'])));
+
+    if (dValue > 0) {
+      return '₹${dValue.toStringAsFixed(0)}';
+    }
+
+    // Fallback to top-level cost fields if detail fields are empty
+    String costRaw =
+        rec['cost']?.toString() ?? rec['cost_estimate']?.toString() ?? '';
+    double costD = _cleanParse(costRaw);
+    if (costD > 0) return '₹${costD.toStringAsFixed(0)}';
+
+    // Final check for settled records that legitimately have 0 or are missing data
+    if (isSettled) return '₹--';
+
+    return '₹0';
+  }
+
+  Widget _buildAmountArea(Map<String, dynamic> rec) {
+    final details = rec['details'] ?? {};
+    double totalAmt = _cleanParse(details['net_payout']) > 0
+        ? _cleanParse(details['net_payout'])
+        : (_cleanParse(details['executive_approved_amount']) > 0
+              ? _cleanParse(details['executive_approved_amount'])
+              : (_cleanParse(details['total_amount']) > 0
+                    ? _cleanParse(details['total_amount'])
+                    : _cleanParse(details['requested_amount'])));
+
+    // Fallback to cost if details are missing
+    if (totalAmt == 0) {
+      totalAmt = _cleanParse(rec['cost'] ?? rec['cost_estimate']);
+    }
+
+    double adv = _cleanParse(details['total_advance_taken']);
+    double wallet = _cleanParse(details['wallet_balance_used']);
+    double net = totalAmt - adv - wallet;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'AMOUNT',
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 9,
+            fontWeight: FontWeight.w900,
+            color: Colors.black26,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '₹${totalAmt.toStringAsFixed(2)}',
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+            color: const Color(0xFFBB0633),
+          ),
+        ),
+        if (adv > 0 || wallet > 0) ...[
+          const SizedBox(height: 8),
+          if (adv > 0)
+            _breakdownRow(
+              'Advance Recovery',
+              '-₹${adv.toStringAsFixed(2)}',
+              Colors.red,
+            ),
+          if (wallet > 0)
+            _breakdownRow(
+              'Wallet adjustment',
+              '-₹${wallet.toStringAsFixed(2)}',
+              Colors.red,
+            ),
+          const Divider(height: 12),
+          _breakdownRow(
+            'Net Payout',
+            '₹${(net > 0 ? net : 0).toStringAsFixed(2)}',
+            Colors.green,
+            isBold: true,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _breakdownRow(
+    String label,
+    String value,
+    Color color, {
+    bool isBold = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 10, color: Colors.grey[600]),
+          ),
+          Text(
+            value,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 10,
+              fontWeight: isBold ? FontWeight.w800 : FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getSubmitButtonText(Map<String, dynamic> rec) {
+    final details = rec['details'] ?? {};
+    double totalAmt =
+        double.tryParse(details['total_amount']?.toString() ?? '0') ??
+        double.tryParse(details['requested_amount']?.toString() ?? '0') ??
+        0;
+    double adv =
+        double.tryParse(details['total_advance_taken']?.toString() ?? '0') ?? 0;
+    double wallet =
+        double.tryParse(details['wallet_balance_used']?.toString() ?? '0') ?? 0;
+
+    if (totalAmt > 0 && (totalAmt - adv - wallet) <= 0) {
+      return 'CONFIRM RECONCILIATION';
+    }
+    return 'CONFIRM TRANSFER';
   }
 }

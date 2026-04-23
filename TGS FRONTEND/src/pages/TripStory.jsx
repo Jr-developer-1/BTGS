@@ -622,7 +622,11 @@ const TripStory = () => {
                             startDate={trip.start_date}
                             endDate={trip.end_date}
                             initialExpenses={trip.expenses || []}
-                            totalAdvance={trip.total_approved_advance || 0}
+                            totalAdvance={
+                                trip.status === 'Settled'
+                                    ? (parseFloat(trip.user_carry_forward || 0) + parseFloat(trip.total_expenses || 0))
+                                    : (parseFloat(trip.total_approved_advance || 0) + parseFloat(trip.user_carry_forward || 0))
+                            }
                             onUpdate={fetchTripStory}
                             tripStatus={trip.status}
                             claimStatus={trip.claim?.status}

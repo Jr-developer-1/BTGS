@@ -23,12 +23,27 @@ class _SplashScreenState extends State<SplashScreen> {
   void initState() {
     super.initState();
 
-    _videoController = VideoPlayerController.asset('assets/logo_video.mp4')
-      ..initialize().then((_) {
+    try {
+      _videoController = VideoPlayerController.asset(
+        'assets/logo_video.mp4',
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+      
+      _videoController.initialize().then((_) {
+        if (!mounted) return;
         _videoController.setVolume(0.0);
         _videoController.setLooping(false);
-        _videoController.play();
+        _videoController.play().catchError((e) {
+          debugPrint('Video play error: $e');
+        });
+        
         _videoController.addListener(() {
+          if (!mounted) return;
+          if (_videoController.value.hasError) {
+             debugPrint('Video player error: ${_videoController.value.errorDescription}');
+             _videoCompleted = true; // Skip video if it errors out
+             return;
+          }
           if (_videoController.value.isInitialized &&
               !_videoCompleted &&
               _videoController.value.position >= _videoController.value.duration) {
@@ -37,10 +52,18 @@ class _SplashScreenState extends State<SplashScreen> {
             });
           }
         });
+        
         setState(() {
           _isVideoReady = true;
         });
+      }).catchError((e) {
+        debugPrint('Video init error: $e');
+        if (mounted) setState(() => _videoCompleted = true);
       });
+    } catch (e) {
+      debugPrint('Video controller setup error: $e');
+      _videoCompleted = true;
+    }
 
     // Start background services and navigate after a brief pause
     _initializeAndNavigate();
@@ -112,8 +135,11 @@ class _SplashScreenState extends State<SplashScreen> {
     final duration = _videoController.value.duration;
     if (duration == Duration.zero) return;
 
-    while (mounted && !_videoCompleted) {
+    // Safety timeout: don't wait more than 6 seconds total
+    int attempts = 0;
+    while (mounted && !_videoCompleted && attempts < 30) {
       await Future.delayed(const Duration(milliseconds: 200));
+      attempts++;
     }
   }
 

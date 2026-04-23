@@ -144,7 +144,11 @@ const Login = () => {
                                     type="text"
                                     placeholder="Enter your username"
                                     value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
+                                    onChange={(e) => {
+                                        const val = e.target.value.replace(/[^a-zA-Z0-9\-]/g, '');
+                                        setUsername(val.toUpperCase());
+                                    }}
+                                    maxLength={20}
                                     required
                                 />
                             </div>
@@ -159,6 +163,9 @@ const Login = () => {
                                     placeholder="••••••••"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
+                                    maxLength={15}
+                                    onPaste={(e) => e.preventDefault()}
+                                    onCopy={(e) => e.preventDefault()}
                                     required
                                 />
                                 <button
@@ -181,7 +188,7 @@ const Login = () => {
                     </form>
 
                     <div className="login-footer">
-                        <p className="login-contact-text">Don't have an account? <a href="#">Contact HR</a></p>
+                        <p className="login-contact-text">Don't have an account? <strong>Contact HR</strong></p>
                     </div>
                 </div>
             </div>

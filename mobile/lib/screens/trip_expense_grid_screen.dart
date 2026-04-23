@@ -31,63 +31,113 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     _fetchExpenses();
   }
 
-  Future<void> _fetchExpenses() async {
+  bool _hasChanged = false;
+
+  Future<void> _fetchExpenses({bool showLoader = true, bool isUpdate = false}) async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    if (isUpdate) _hasChanged = true;
+    if (showLoader) setState(() => _isLoading = true);
     try {
       final trip = await _tripService.fetchTripDetails(widget.tripId);
+      final manualExpenses = await _tripService.fetchExpenses(tripId: widget.tripId);
+
       if (!mounted) return;
       setState(() {
-        _expenses = trip.expenses ?? [];
+        _expenses = manualExpenses.isNotEmpty ? manualExpenses : (trip.expenses ?? []);
         _claimStatus = trip.claimStatus;
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0FDFA),
-      appBar: AppBar(
-        title: Text('Trip Expense Grid', 
-          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16)),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        elevation: 0,
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded, size: 20),
-            onPressed: _fetchExpenses,
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-        : RefreshIndicator(
-            onRefresh: _fetchExpenses,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              child: Column(
-                children: [
-                  if (_isLocked) _buildLockedBanner(),
-                  _buildCategorySection('OUTSTATION TRAVEL', 'Travel', const Color(0xFF0D9488), Icons.flight_takeoff_rounded),
-                  _buildCategorySection('LOCAL CONVEYANCE', 'Local Travel', const Color(0xFF0891B2), Icons.directions_car_filled_rounded),
-                  _buildCategorySection('FOOD & REFRESHMENTS', 'Food', const Color(0xFF0EA5E9), Icons.restaurant_rounded),
-                  _buildCategorySection('ACCOMMODATION', 'Accommodation', const Color(0xFF0284C7), Icons.hotel_rounded),
-                  _buildCategorySection('INCIDENTAL / OTHERS', 'Incidental', const Color(0xFF0369A1), Icons.receipt_long_rounded),
-                  const SizedBox(height: 40),
-                ],
-              ),
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.pop(context, _hasChanged);
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF0FDFA),
+        appBar: AppBar(
+          title: Text(
+            'Trip Expense Grid',
+            style: GoogleFonts.plusJakartaSans(
+              fontWeight: FontWeight.w800,
+              fontSize: 16,
             ),
           ),
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
+          centerTitle: true,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+            onPressed: () => Navigator.pop(context, _hasChanged),
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              onPressed: () => _fetchExpenses(showLoader: false),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+            : RefreshIndicator(
+                onRefresh: () => _fetchExpenses(showLoader: false),
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 20,
+                  ),
+                  child: Column(
+                    children: [
+                      if (_isLocked) _buildLockedBanner(),
+                      _buildCategorySection(
+                        'OUTSTATION TRAVEL',
+                        'Travel',
+                        const Color(0xFF0D9488),
+                        Icons.flight_takeoff_rounded,
+                      ),
+                      _buildCategorySection(
+                        'LOCAL CONVEYANCE',
+                        'Local Travel',
+                        const Color(0xFF0891B2),
+                        Icons.directions_car_filled_rounded,
+                      ),
+                      _buildCategorySection(
+                        'FOOD & REFRESHMENTS',
+                        'Food',
+                        const Color(0xFF0EA5E9),
+                        Icons.restaurant_rounded,
+                      ),
+                      _buildCategorySection(
+                        'ACCOMMODATION',
+                        'Accommodation',
+                        const Color(0xFF0284C7),
+                        Icons.hotel_rounded,
+                      ),
+                      _buildCategorySection(
+                        'INCIDENTAL / OTHERS',
+                        'Incidental',
+                        const Color(0xFF0369A1),
+                        Icons.receipt_long_rounded,
+                      ),
+                      const SizedBox(height: 40),
+                    ],
+                  ),
+                ),
+              ),
+      ),
     );
   }
 
@@ -119,12 +169,45 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     );
   }
 
-  Widget _buildCategorySection(String title, String category, Color color, IconData icon) {
+  Widget _buildCategorySection(
+    String title,
+    String category,
+    Color color,
+    IconData icon,
+  ) {
     final filteredExpenses = _expenses.where((e) {
-      final nature = (e['nature'] ?? e['category'])?.toString().toLowerCase();
-      if (category == 'Local Travel') return nature == 'fuel' || nature == 'local travel';
-      if (category == 'Incidental') return nature == 'others' || nature == 'incidental' || nature == 'miscellaneous';
-      if (category == 'Travel') return nature == 'travel' || nature == 'outstation' || nature == 'outstation travel';
+      String nature = (e['nature'] ?? e['category'])?.toString().toLowerCase() ?? '';
+      
+      // Look into description to see if it's actually Travel data stored as Others
+      Map<String, dynamic> details = {};
+      try {
+        if (e['description'] is String && e['description'].toString().startsWith('{')) {
+          details = jsonDecode(e['description']);
+        } else if (e['description'] is Map) {
+          details = e['description'];
+        }
+      } catch (_) {}
+
+      bool isOthers = nature == 'others' || nature == 'other' || nature == 'miscellaneous';
+      bool hasTravelData = details['origin'] != null && details['destination'] != null && details['mode'] != null;
+
+      if (category == 'Travel') {
+        return nature == 'travel' || 
+               nature == 'outstation' || 
+               nature == 'outstation travel' ||
+               (isOthers && hasTravelData);
+      }
+      
+      if (category == 'Local Travel') {
+        bool isFuel = nature == 'fuel' || nature == 'local travel';
+        return isFuel;
+      }
+      
+      if (category == 'Incidental') {
+        // Only include in Incidental if it's NOT Travel data
+        return (nature == 'others' || nature == 'incidental' || nature == 'miscellaneous') && !hasTravelData;
+      }
+      
       return nature == category.toLowerCase();
     }).toList();
 
@@ -139,7 +222,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
             color: Colors.black.withOpacity(0.04),
             blurRadius: 15,
             offset: const Offset(0, 4),
-          )
+          ),
         ],
       ),
       child: Column(
@@ -162,17 +245,17 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                     Icon(icon, color: color, size: 18),
                     const SizedBox(width: 12),
                     Text(
-                      title, 
+                      title,
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 11, 
-                        fontWeight: FontWeight.w900, 
-                        color: color, 
-                        letterSpacing: 0.8
-                      )
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        color: color,
+                        letterSpacing: 0.8,
+                      ),
                     ),
                   ],
                 ),
-                 if (!_isLocked)
+                if (!_isLocked)
                   Material(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -180,17 +263,25 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                       borderRadius: BorderRadius.circular(12),
                       onTap: () => _openAddForm(category),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         child: Row(
                           children: [
-                            Icon(Icons.add_circle_outline_rounded, size: 14, color: color),
+                            Icon(
+                              Icons.add_circle_outline_rounded,
+                              size: 14,
+                              color: color,
+                            ),
                             const SizedBox(width: 4),
-                            Text('ADD', 
+                            Text(
+                              'ADD',
                               style: GoogleFonts.plusJakartaSans(
-                                fontWeight: FontWeight.w800, 
+                                fontWeight: FontWeight.w800,
                                 fontSize: 10,
-                                color: color
-                              )
+                                color: color,
+                              ),
                             ),
                           ],
                         ),
@@ -199,21 +290,29 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                   )
                 else
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF1F5F9),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.lock_outline_rounded, size: 12, color: Color(0xFF94A3B8)),
+                        const Icon(
+                          Icons.lock_outline_rounded,
+                          size: 12,
+                          color: Color(0xFF94A3B8),
+                        ),
                         const SizedBox(width: 4),
-                        Text('LOCKED',
+                        Text(
+                          'LOCKED',
                           style: GoogleFonts.plusJakartaSans(
                             fontWeight: FontWeight.w800,
                             fontSize: 10,
                             color: const Color(0xFF94A3B8),
-                          )
+                          ),
                         ),
                       ],
                     ),
@@ -225,12 +324,13 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
             Padding(
               padding: const EdgeInsets.all(32),
               child: Center(
-                child: Text('No entries found for $category', 
+                child: Text(
+                  'No entries found for $category',
                   style: GoogleFonts.plusJakartaSans(
-                    fontSize: 11, 
+                    fontSize: 11,
                     color: const Color(0xFF94A3B8),
-                    fontWeight: FontWeight.w500
-                  )
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             )
@@ -241,7 +341,12 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
               itemCount: filteredExpenses.length,
               itemBuilder: (context, index) {
                 final exp = filteredExpenses[index];
-                return _buildExpenseRow(category, exp, color, index == filteredExpenses.length - 1);
+                return _buildExpenseRow(
+                  category,
+                  exp,
+                  color,
+                  index == filteredExpenses.length - 1,
+                );
               },
             ),
         ],
@@ -249,7 +354,12 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     );
   }
 
-  Widget _buildExpenseRow(String category, dynamic exp, Color themeColor, bool isLast) {
+  Widget _buildExpenseRow(
+    String category,
+    dynamic exp,
+    Color themeColor,
+    bool isLast,
+  ) {
     Map<String, dynamic> desc = {};
     try {
       if (exp['description'] is String) {
@@ -259,8 +369,13 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
       }
     } catch (e) {}
 
-    final amount = double.tryParse(exp['amount']?.toString() ?? '0') ?? 0;
-    final date = DateTime.tryParse(exp['date']?.toString() ?? DateTime.now().toString()) ?? DateTime.now();
+    final amountStr = exp['amount']?.toString() ?? '0';
+    final amount = double.tryParse(amountStr.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final date =
+        DateTime.tryParse(
+          exp['date']?.toString() ?? DateTime.now().toString(),
+        ) ??
+        DateTime.now();
 
     return Material(
       color: Colors.transparent,
@@ -269,7 +384,9 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            border: isLast ? null : Border(bottom: BorderSide(color: const Color(0xFFF1F5F9))),
+            border: isLast
+                ? null
+                : Border(bottom: BorderSide(color: const Color(0xFFF1F5F9))),
           ),
           child: Row(
             children: [
@@ -280,7 +397,11 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                   color: themeColor.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(_getIconForExp(category, desc), size: 16, color: themeColor),
+                child: Icon(
+                  _getIconForExp(category, desc),
+                  size: 16,
+                  color: themeColor,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -290,9 +411,9 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                     Text(
                       _getExpenseMainDisplay(exp),
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12, 
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1E293B)
+                        color: const Color(0xFF1E293B),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -301,27 +422,53 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                         Text(
                           DateFormat('dd MMM yyyy').format(date),
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10, 
+                            fontSize: 10,
                             color: const Color(0xFF94A3B8),
-                            fontWeight: FontWeight.w500
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                         if (desc['subType'] != null) ...[
-                          Text(' • ', style: TextStyle(color: Colors.grey.withOpacity(0.3), fontSize: 10)),
-                          Text(desc['subType'].toString().toUpperCase(),
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 9, 
-                              color: themeColor,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5
+                          Text(
+                            ' • ',
+                            style: TextStyle(
+                              color: Colors.grey.withOpacity(0.3),
+                              fontSize: 10,
                             ),
                           ),
-                        ]
+                            Text(
+                              desc['subType'].toString().toUpperCase(),
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 9,
+                                color: themeColor,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (desc['is_deviated'] == true) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFEF2F2),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFFFECACA)),
+                          ),
+                          child: Text(
+                            'FLAGGED DEVIATION',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              color: const Color(0xFFDC2626),
+                            ),
+                          ),
+                        ),
                       ],
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -329,15 +476,23 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                   Text(
                     '₹${amount.toStringAsFixed(0)}',
                     style: GoogleFonts.plusJakartaSans(
-                      fontWeight: FontWeight.w900, 
+                      fontWeight: FontWeight.w900,
                       fontSize: 14,
-                      color: const Color(0xFF0F172A)
+                      color: const Color(0xFF0F172A),
                     ),
                   ),
                   if (_isLocked)
-                    const Icon(Icons.lock_outline_rounded, size: 14, color: Color(0xFFD97706))
+                    const Icon(
+                      Icons.lock_outline_rounded,
+                      size: 14,
+                      color: Color(0xFFD97706),
+                    )
                   else
-                    const Icon(Icons.chevron_right_rounded, size: 16, color: Color(0xFFCBD5E1)),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: Color(0xFFCBD5E1),
+                    ),
                 ],
               ),
             ],
@@ -351,13 +506,14 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     if (category == 'Food') return Icons.lunch_dining_rounded;
     if (category == 'Accommodation') return Icons.meeting_room_rounded;
     if (category == 'Incidental') return Icons.more_horiz_rounded;
-    
+
     final mode = desc['mode']?.toString().toLowerCase() ?? '';
     if (mode.contains('flight')) return Icons.flight_rounded;
     if (mode.contains('train')) return Icons.train_rounded;
-    if (mode.contains('car') || mode.contains('cab')) return Icons.directions_car_rounded;
+    if (mode.contains('car') || mode.contains('cab'))
+      return Icons.directions_car_rounded;
     if (mode.contains('bike')) return Icons.directions_bike_rounded;
-    
+
     return Icons.receipt_long_rounded;
   }
 
@@ -370,18 +526,48 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
         desc = exp['description'] ?? {};
       }
 
-      if (exp['category']?.toString().toLowerCase() == 'fuel' || exp['category']?.toString().toLowerCase() == 'local travel') {
-         return '${desc['origin'] ?? 'Start'} → ${desc['destination'] ?? 'End'}';
+      final category = (exp['category'] ?? exp['nature'] ?? '').toString().toLowerCase();
+      final remarks = exp['remarks']?.toString() ?? '';
+
+      // 1. Local Travel / Fuel
+      if (category == 'fuel' || category == 'local travel') {
+        final origin = desc['origin']?.toString() ?? '';
+        final dest = desc['destination']?.toString() ?? '';
+        if (origin.isNotEmpty || dest.isNotEmpty) {
+          return '${origin.isNotEmpty ? origin : 'Start'} → ${dest.isNotEmpty ? dest : 'End'}';
+        }
+        return remarks.isNotEmpty ? remarks : 'Local Movement';
       }
+
+      // 2. Outstation Travel
       if (desc['origin'] != null && desc['destination'] != null) {
-        return '${desc['origin']} → ${desc['destination']}';
+        final origin = desc['origin']?.toString() ?? '';
+        final dest = desc['destination']?.toString() ?? '';
+        if (origin.isNotEmpty || dest.isNotEmpty) {
+          if (desc['is_deviated'] == true && desc['deviation_target'] != null) {
+            return '${origin} → ${desc['deviation_target']}';
+          }
+          return '${origin.isNotEmpty ? origin : 'Start'} → ${dest.isNotEmpty ? dest : 'End'}';
+        }
       }
-      if (desc['hotelName'] != null) return desc['hotelName'];
-      if (desc['restaurant'] != null) return desc['restaurant'];
+
+      // 3. Hotel / Restaurant specific fallbacks
+      if (desc['hotelName'] != null && desc['hotelName'].toString().trim().isNotEmpty) {
+        return desc['hotelName'].toString();
+      }
+      if (desc['restaurant'] != null && desc['restaurant'].toString().trim().isNotEmpty) {
+        return desc['restaurant'].toString();
+      }
+
+      // 4. Default fallbacks
+      if (remarks.trim().isNotEmpty) return remarks.trim();
       
-      return exp['remarks'] ?? exp['category'] ?? 'Trip Expense';
+      final String catName = exp['category']?.toString() ?? exp['nature']?.toString() ?? '';
+      if (catName.trim().isNotEmpty) return catName.trim();
+
+      return 'Trip Expense';
     } catch (e) {
-      return exp['remarks'] ?? exp['category'] ?? 'Trip Expense';
+      return 'Trip Expense';
     }
   }
 
@@ -389,17 +575,26 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
-          builder: (context) => TripExpenseFormDetailedScreen(
-              category: category, tripId: widget.tripId)),
+        builder: (context) => TripExpenseFormDetailedScreen(
+          category: category,
+          tripId: widget.tripId,
+        ),
+      ),
     );
-    if (result == true) _fetchExpenses();
+    if (result == true) _fetchExpenses(isUpdate: true);
   }
 
   void _openEditForm(String category, dynamic exp) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (context) => TripExpenseFormDetailedScreen(category: category, tripId: widget.tripId, expenseData: exp)),
+      MaterialPageRoute(
+        builder: (context) => TripExpenseFormDetailedScreen(
+          category: category,
+          tripId: widget.tripId,
+          expenseData: exp,
+        ),
+      ),
     );
-    if (result == true) _fetchExpenses();
+    if (result == true) _fetchExpenses(isUpdate: true);
   }
 }

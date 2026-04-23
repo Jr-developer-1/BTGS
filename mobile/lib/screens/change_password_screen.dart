@@ -68,7 +68,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
     if (_newPasswordController.text != _confirmPasswordController.text) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('New passwords do not match.'), backgroundColor: Colors.red),
+        const SnackBar(
+          content: Text('New passwords do not match.'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -87,7 +90,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password changed successfully!'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('Password changed successfully!'),
+          backgroundColor: Colors.green,
+        ),
       );
 
       if (widget.isForced) {
@@ -126,7 +132,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             size: 18,
           ),
           const SizedBox(width: 8),
-          Text(text, style: GoogleFonts.inter(fontSize: 12, color: Colors.black87)),
+          Text(
+            text,
+            style: GoogleFonts.inter(fontSize: 12, color: Colors.black87),
+          ),
         ],
       ),
     );
@@ -139,10 +148,15 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: widget.isForced ? const SizedBox() : IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF134E4A)),
-          onPressed: () => Navigator.pop(context),
-        ),
+        leading: widget.isForced
+            ? const SizedBox()
+            : IconButton(
+                icon: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: Color(0xFF134E4A),
+                ),
+                onPressed: () => Navigator.pop(context),
+              ),
         title: Text(
           widget.isForced ? 'Secure Your Account' : 'Change Password',
           style: GoogleFonts.plusJakartaSans(
@@ -161,7 +175,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               Text(
                 'For your protection, please replace your temporary auto-generated password with a strong, permanent one.',
                 textAlign: TextAlign.center,
-                style: GoogleFonts.inter(color: Colors.red.shade900, fontSize: 13, fontWeight: FontWeight.w600),
+                style: GoogleFonts.inter(
+                  color: Colors.red.shade900,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 16),
             ],
@@ -181,29 +199,60 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildPasswordField('Current / Temporary Password', _currentPasswordController, _obscureCurrent, () => setState(() => _obscureCurrent = !_obscureCurrent)),
+                  _buildPasswordField(
+                    'Current / Temporary Password',
+                    _currentPasswordController,
+                    _obscureCurrent,
+                    () => setState(() => _obscureCurrent = !_obscureCurrent),
+                  ),
                   const SizedBox(height: 24),
-                  _buildPasswordField('New Secure Password', _newPasswordController, _obscureNew, () => setState(() => _obscureNew = !_obscureNew)),
-                  
+                  _buildPasswordField(
+                    'New Secure Password',
+                    _newPasswordController,
+                    _obscureNew,
+                    () => setState(() => _obscureNew = !_obscureNew),
+                  ),
+
                   if (_newPasswordController.text.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _buildRuleItem('Between 8 and 12 characters completely', _hasLength),
-                          _buildRuleItem('At least one uppercase letter (A-Z)', _hasUpper),
-                          _buildRuleItem('At least one numeric digit (0-9)', _hasNumber),
-                          _buildRuleItem('At least one special character (!@#\$%^&*)', _hasSpecial),
+                          _buildRuleItem(
+                            'Between 8 and 12 characters completely',
+                            _hasLength,
+                          ),
+                          _buildRuleItem(
+                            'At least one uppercase letter (A-Z)',
+                            _hasUpper,
+                          ),
+                          _buildRuleItem(
+                            'At least one numeric digit (0-9)',
+                            _hasNumber,
+                          ),
+                          _buildRuleItem(
+                            'At least one special character (!@#\$%^&*)',
+                            _hasSpecial,
+                          ),
                         ],
                       ),
                     ),
                   ],
 
                   const SizedBox(height: 24),
-                  _buildPasswordField('Confirm New Password', _confirmPasswordController, _obscureConfirm, () => setState(() => _obscureConfirm = !_obscureConfirm)),
+                  _buildPasswordField(
+                    'Confirm New Password',
+                    _confirmPasswordController,
+                    _obscureConfirm,
+                    () => setState(() => _obscureConfirm = !_obscureConfirm),
+                  ),
                 ],
               ),
             ),
@@ -216,14 +265,27 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF134E4A),
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
                   elevation: 8,
                 ),
-                child: _isLoading 
-                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
                     : Text(
                         'UPDATE PASSWORD',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 1),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1,
+                        ),
                       ),
               ),
             ),
@@ -233,27 +295,61 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     );
   }
 
-  Widget _buildPasswordField(String label, TextEditingController controller, bool obscureText, VoidCallback onToggle) {
+  Widget _buildPasswordField(
+    String label,
+    TextEditingController controller,
+    bool obscureText,
+    VoidCallback onToggle,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label.toUpperCase(),
-          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 11, color: const Color(0xFF94A3B8), letterSpacing: 1),
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w800,
+            fontSize: 11,
+            color: const Color(0xFF94A3B8),
+            letterSpacing: 1,
+          ),
         ),
         const SizedBox(height: 10),
         Container(
-          decoration: BoxDecoration(color: const Color(0xFFF0FDFA), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFCCFBF1))),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0FDFA),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFCCFBF1)),
+          ),
           child: TextField(
             controller: controller,
             obscureText: obscureText,
-            style: GoogleFonts.plusJakartaSans(color: const Color(0xFF134E4A), fontWeight: FontWeight.w700, fontSize: 15),
+            style: GoogleFonts.plusJakartaSans(
+              color: const Color(0xFF134E4A),
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+            ),
             decoration: InputDecoration(
               hintText: '••••••••',
-              hintStyle: GoogleFonts.inter(color: const Color(0xFF94A3B8), fontSize: 14, fontWeight: FontWeight.w500),
+              hintStyle: GoogleFonts.inter(
+                color: const Color(0xFF94A3B8),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
               border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              suffixIcon: IconButton(icon: Icon(obscureText ? Icons.visibility_off_rounded : Icons.visibility_rounded, color: const Color(0xFF64748B), size: 20), onPressed: onToggle),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 18,
+              ),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  obscureText
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                  color: const Color(0xFF64748B),
+                  size: 20,
+                ),
+                onPressed: onToggle,
+              ),
             ),
           ),
         ),

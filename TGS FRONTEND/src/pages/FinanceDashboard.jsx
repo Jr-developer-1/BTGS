@@ -50,6 +50,24 @@ const FinanceDashboard = () => {
     });
     const [rejectReason, setRejectReason] = useState('');
 
+    // Auto-reset forms when modals are closed
+    useEffect(() => {
+        if (!isTransferModalOpen) {
+            setTransferData({
+                payment_mode: 'NEFT',
+                transaction_id: '',
+                payment_date: new Date().toISOString().split('T')[0],
+                remarks: ''
+            });
+        }
+    }, [isTransferModalOpen]);
+
+    useEffect(() => {
+        if (!isRejectModalOpen) {
+            setRejectReason('');
+        }
+    }, [isRejectModalOpen]);
+
     const fetchFinanceData = async () => {
         try {
             setLoading(true);
@@ -59,7 +77,9 @@ const FinanceDashboard = () => {
                 id: item.id,
                 trip: item.details?.trip_id || 'N/A',
                 employee: item.requester,
-                amount: item.cost,
+                amount: (item.details?.executive_approved_amount && parseFloat(item.details.executive_approved_amount) > 0)
+                    ? `₹${parseFloat(item.details.executive_approved_amount).toLocaleString()}`
+                    : item.cost,
                 type: item.type,
                 status: item.status,
                 date: item.date,
@@ -103,10 +123,16 @@ const FinanceDashboard = () => {
             showToast("Action failed", "error");
         }
     };
-
     const handleTransfer = async () => {
-        if (transferData.payment_mode !== 'Cash' && !transferData.transaction_id) {
-            showToast("Transaction ID is required", "warning");
+        if (!selectedRecord) return;
+
+        const amtVal = parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0);
+        const advVal = parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0);
+        const walletVal = parseFloat(selectedRecord?.raw?.details?.wallet_balance_used || 0);
+        const netToPay = amtVal - advVal - walletVal;
+
+        if (netToPay > 0 && transferData.payment_mode !== 'Cash' && !transferData.transaction_id) {
+            showToast("Transaction ID is required for payouts", "warning");
             return;
         }
 
@@ -343,6 +369,7 @@ const FinanceDashboard = () => {
             <Modal
                 isOpen={isTransferModalOpen}
                 onClose={() => setIsTransferModalOpen(false)}
+                closeOnOverlayClick={false}
                 title={activeTab === 'completed' ? "Transfer Details" : "Fund Transfer Details"}
                 type="success"
                 actions={
@@ -352,13 +379,16 @@ const FinanceDashboard = () => {
                         </button>
                         {activeTab !== 'completed' && (
                             <button className="btn-primary" onClick={handleTransfer}>
-                                <Send size={18} /> Confirm Transfer
+                                <Send size={18} />
+                                {(parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0)) > 0
+                                    ? " Confirm Transfer"
+                                    : " Confirm Reconciliation"}
                             </button>
                         )}
                     </div>
                 }
             >
-                <div className="transfer-form">
+                <div className="transfer-form" onClick={(e) => e.stopPropagation()}>
                     <div className="form-summary-row">
                         <div className="summary-item">
                             <label>Transfer To</label>
@@ -366,48 +396,83 @@ const FinanceDashboard = () => {
                         </div>
                         <div className="summary-item">
                             <label>Amount</label>
-                            <p className="highlight-text">{selectedRecord?.amount}</p>
+                            <div className="amount-payout-wrapper">
+                                <p className="highlight-text">{selectedRecord?.amount}</p>
+                                {selectedRecord?.type === 'Expense Claim' && ((selectedRecord?.raw?.details?.total_advance_taken && parseFloat(selectedRecord.raw.details.total_advance_taken) > 0) || (selectedRecord?.raw?.details?.wallet_balance_used && parseFloat(selectedRecord.raw.details.wallet_balance_used) > 0)) && (
+                                    <div className="payout-breakdown-mini" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem' }}>
+                                        {parseFloat(selectedRecord.raw.details.total_advance_taken || 0) > 0 && (
+                                            <div className="breakdown-row sub" style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
+                                                <span>Advance Recovery:</span>
+                                                <span>-₹{parseFloat(selectedRecord.raw.details.total_advance_taken).toLocaleString()}</span>
+                                            </div>
+                                        )}
+                                        {parseFloat(selectedRecord.raw.details.wallet_balance_used || 0) > 0 && (
+                                            <div className="breakdown-row sub" style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444', marginTop: '4px' }}>
+                                                <span>Wallet Adjustment:</span>
+                                                <span>-₹{parseFloat(selectedRecord.raw.details.wallet_balance_used).toLocaleString()}</span>
+                                            </div>
+                                        )}
+                                        <div className="breakdown-row net" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#10b981', marginTop: '6px', paddingTop: '4px', borderTop: '1px solid #f1f5f9' }}>
+                                            <span>Net Payout to Bank:</span>
+                                            <span>₹{Math.max(0, parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord.raw.details.total_advance_taken || 0) - parseFloat(selectedRecord.raw.details.wallet_balance_used || 0)).toLocaleString()}</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
 
-                    <div className="form-grid-2">
-                        <div className="form-group">
-                            <label className="form-label">Mode of Payment</label>
-                            <select
-                                className="form-input"
-                                value={activeTab === 'completed' ? selectedRecord?.raw.payment_mode : transferData.payment_mode}
-                                onChange={(e) => setTransferData({ ...transferData, payment_mode: e.target.value })}
-                                disabled={activeTab === 'completed'}
-                            >
-                                <option value="NEFT">NEFT</option>
-                                <option value="Bank Transfer">Bank Transfer</option>
-                                <option value="UPI">UPI</option>
-                                <option value="Cash">Cash</option>
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Transfer Date</label>
-                            <input
-                                type="date"
-                                className="form-input"
-                                value={activeTab === 'completed' ? (selectedRecord?.raw.details?.payment_date?.split('T')[0] || '') : transferData.payment_date}
-                                onChange={(e) => setTransferData({ ...transferData, payment_date: e.target.value })}
-                                disabled={activeTab === 'completed'}
-                            />
-                        </div>
-                    </div>
+                    {/* Only show payment fields if there is actually a net amount to pay */}
+                    {(activeTab === 'completed' || (parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0) - parseFloat(selectedRecord?.raw?.details?.wallet_balance_used || 0)) > 0) ? (
+                        <>
+                            <div className="form-grid-2">
+                                <div className="form-group">
+                                    <label className="form-label">Mode of Payment</label>
+                                    <select
+                                        className="form-input"
+                                        value={activeTab === 'completed' ? selectedRecord?.raw.payment_mode : transferData.payment_mode}
+                                        onChange={(e) => setTransferData({ ...transferData, payment_mode: e.target.value })}
+                                        disabled={activeTab === 'completed'}
+                                    >
+                                        <option value="NEFT">NEFT</option>
+                                        <option value="Bank Transfer">Bank Transfer</option>
+                                        <option value="UPI">UPI</option>
+                                        <option value="Cash">Cash</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">Transfer Date</label>
+                                    <input
+                                        type="date"
+                                        className="form-input"
+                                        value={activeTab === 'completed' ? (selectedRecord?.raw.details?.payment_date?.split('T')[0] || '') : transferData.payment_date}
+                                        onChange={(e) => setTransferData({ ...transferData, payment_date: e.target.value })}
+                                        disabled={activeTab === 'completed'}
+                                    />
+                                </div>
+                            </div>
 
-                    {(activeTab === 'completed' ? selectedRecord?.raw.payment_mode : transferData.payment_mode) !== 'Cash' && (
-                        <div className="form-group">
-                            <label className="form-label">Transaction ID / Reference</label>
-                            <input
-                                type="text"
-                                className="form-input"
-                                placeholder="Enter NEFT Ref or UPI ID"
-                                value={activeTab === 'completed' ? selectedRecord?.raw.transaction_id : transferData.transaction_id}
-                                onChange={(e) => setTransferData({ ...transferData, transaction_id: e.target.value })}
-                                disabled={activeTab === 'completed'}
-                            />
+                            {(activeTab === 'completed' ? selectedRecord?.raw.payment_mode : transferData.payment_mode) !== 'Cash' && (
+                                <div className="form-group">
+                                    <label className="form-label">Transaction ID / Reference</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Enter NEFT Ref or UPI ID"
+                                        value={activeTab === 'completed' ? selectedRecord?.raw.transaction_id : transferData.transaction_id}
+                                        onChange={(e) => setTransferData({ ...transferData, transaction_id: e.target.value })}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
+                                        disabled={activeTab === 'completed'}
+                                    />
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="reconciliation-alert" style={{ background: '#f0fdf4', padding: '1rem', borderRadius: '12px', border: '1px solid #bbf7d0', marginBottom: '1.5rem', color: '#166534', fontSize: '0.9rem' }}>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', fontWeight: 'bold', marginBottom: '4px' }}>
+                                <CheckCircle size={18} /> Fully Adjusted from Advance
+                            </div>
+                            This claim is completely covered by the employee's existing advance balance. No bank transfer is required.
                         </div>
                     )}
 
@@ -418,6 +483,7 @@ const FinanceDashboard = () => {
                             placeholder="Add payment notes..."
                             value={activeTab === 'completed' ? selectedRecord?.raw.finance_remarks : transferData.remarks}
                             onChange={(e) => setTransferData({ ...transferData, remarks: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) e.preventDefault(); }}
                             disabled={activeTab === 'completed'}
                         />
                     </div>
@@ -428,6 +494,7 @@ const FinanceDashboard = () => {
             <Modal
                 isOpen={isRejectModalOpen}
                 onClose={() => setIsRejectModalOpen(false)}
+                closeOnOverlayClick={false}
                 title="Reject Financial Request"
                 type="error"
                 actions={

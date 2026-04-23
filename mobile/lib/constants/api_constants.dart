@@ -8,7 +8,7 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  static const String baseUrl = 'http://10.2.1.16:4567';
+  static const String baseUrl = 'https://one.bhspl.in/tgs/';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -22,6 +22,7 @@ class ApiConstants {
   static const String travels = '$baseUrl/api/travels/';
   static const String tripDetails = '$baseUrl/api/trips/{id}/';
   static const String travelDetails = '$baseUrl/api/travels/{id}/';
+  static const String historicalStops = '$baseUrl/api/historical_stops/';
   static const String tripApprovals = '$baseUrl/api/trips/approvals/';
   static const String settlement = '$baseUrl/api/settlement/';
   static const String UserAdvances = '$baseUrl/api/advances/';

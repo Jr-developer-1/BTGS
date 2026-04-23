@@ -10,7 +10,8 @@ class OutboxScreen extends StatefulWidget {
   State<OutboxScreen> createState() => _OutboxScreenState();
 }
 
-class _OutboxScreenState extends State<OutboxScreen> with SingleTickerProviderStateMixin {
+class _OutboxScreenState extends State<OutboxScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override

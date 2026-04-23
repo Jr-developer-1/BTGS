@@ -111,10 +111,12 @@ export default function AdminMasterManagement() {
             }
 
             const res = await api.get(url);
-            setData(res.data);
+            const rawData = res.data?.results || (Array.isArray(res.data) ? res.data : []);
+            setData(rawData);
         } catch (error) {
             console.error("Fetch failed", error);
             showToast("Failed to load table data", "error");
+            setData([]);
         } finally {
             setLoading(false);
         }
@@ -187,222 +189,261 @@ export default function AdminMasterManagement() {
         }
     };
 
+    const regFields = visibleFields.filter(f => !(fieldMetadata[f]?.type === 'boolean' || typeof formData[f] === 'boolean' || f.startsWith('is_') || f === 'status'));
+    const boolFields = visibleFields.filter(f => (fieldMetadata[f]?.type === 'boolean' || typeof formData[f] === 'boolean' || f.startsWith('is_') || f === 'status'));
+
     return (
         <div className="admin-mgmt-module animate-fade-in" style={{ padding: '0', background: 'transparent' }}>
             <div className="master-page-header" style={{ padding: '20px 40px 0 40px', background: 'transparent', border: 'none' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                         <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px', letterSpacing: '-0.02em' }}>Master Management</h1>
-                        {/* <p style={{ color: 'var(--text-muted)', fontSize: '1rem', fontWeight: 500 }}>Global configuration for system-wide master tables.</p> */}
                     </div>
                 </div>
             </div>
 
             <div className="content-inner-wrapper" style={{ padding: '20px 40px', maxWidth: '1600px', margin: '0 auto' }}>
                 <div className="module-nav">
-                {CONFIG_GROUPS.map(group => (
-                    <button
-                        key={group.id}
-                        className={`module-btn ${activeGroup.id === group.id ? 'active' : ''}`}
-                        onClick={() => {
-                            setActiveGroup(group);
-                            setActiveTab(group.tables[0]);
-                        }}
-                    >
-                        {group.icon}
-                        {group.label}
-                    </button>
-                ))}
-            </div>
-
-            <div className="admin-content-grid">
-                {/* Sidebar */}
-                <div className="sidebar-panel">
-                    <h3 className="sidebar-title">Available Tables</h3>
-                    <div className="master-selector-list">
-                        {activeGroup.tables.map(table => (
-                            <button
-                                key={table.id}
-                                className={`master-selector-btn ${activeTab.id === table.id ? 'active' : ''}`}
-                                onClick={() => setActiveTab(table)}
-                            >
-                                <AlignLeft size={16} style={{ marginRight: '10px' }} />
-                                {table.name}
-                            </button>
-                        ))}
-                    </div>
+                    {CONFIG_GROUPS.map(group => (
+                        <button
+                            key={group.id}
+                            className={`module-btn ${activeGroup.id === group.id ? 'active' : ''}`}
+                            onClick={() => {
+                                setActiveGroup(group);
+                                setActiveTab(group.tables[0]);
+                            }}
+                        >
+                            {group.icon}
+                            {group.label}
+                        </button>
+                    ))}
                 </div>
 
-                {/* Main Data Panel */}
-                <div className="main-table-panel">
-                    <div className="panel-header">
-                        <h2>{activeTab.name} Registry</h2>
-                        <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                            <button
-                                className={`action-btn ${showDeleted ? 'active' : ''}`}
-                                style={{
-                                    width: 'auto',
-                                    padding: '0 12px',
-                                    fontSize: '12px',
-                                    height: '40px',
-                                    display: 'flex',
-                                    gap: '6px',
-                                    alignItems: 'center',
-                                    background: showDeleted ? 'var(--primary-light)' : '#f8fafc',
-                                    border: `1.5px solid ${showDeleted ? 'var(--primary)' : '#e2e8f0'}`,
-                                    color: showDeleted ? 'var(--primary)' : 'var(--text-muted)',
-                                    borderRadius: '10px',
-                                    fontWeight: '600'
-                                }}
-                                onClick={() => setShowDeleted(!showDeleted)}
-                                title={showDeleted ? "Hide inactive records" : "Show deleted/inactive records"}
-                            >
-                                {showDeleted ? <EyeOff size={16} /> : <Eye size={16} />}
-                                {showDeleted ? "Hide Inactive" : "Show Inactive"}
-                            </button>
-                            <button className="add-btn" onClick={() => handleOpenForm()}>
-                                <Plus size={20} />
-                                Define Record
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="data-table-container">
-                        {loading ? (
-                            <div className="loading-state">
-                                <div className="loader"></div>
-                                <p>Fetching data...</p>
-                            </div>
-                        ) : (
-                            <table className="modern-table">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        {visibleFields.map(f => (
-                                            <th key={f}>{f.replace(/_/g, ' ').toUpperCase()}</th>
-                                        ))}
-                                        <th style={{ textAlign: 'right' }}>ACTIONS</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {data.length > 0 ? data.map(item => (
-                                        <tr key={item.id} style={{ opacity: item.is_deleted ? 0.6 : 1 }}>
-                                            <td><span className="id-badge">#{item.id}</span></td>
-                                            {visibleFields.map(f => (
-                                                <td key={f}>
-                                                    {fieldMetadata[f]?.type === 'boolean' || typeof item[f] === 'boolean' || f === 'status' || f.startsWith('is_') ? (
-                                                        <span className={`status-badge ${item[f] ? 'status-active' : 'status-inactive'}`}>
-                                                            {item[f] ? 'ACTIVE' : 'INACTIVE'}
-                                                        </span>
-                                                    ) : f === 'category' ? (
-                                                        <span className="badge-secondary" style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', background: '#f1f5f9', color: 'var(--text-muted)', fontWeight: '600' }}>
-                                                            {String(item[f] || '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                                                        </span>
-                                                    ) : (
-                                                        <span style={{ fontWeight: '500' }}>
-                                                            {item[f] === null || item[f] === undefined ? '—' : String(item[f])}
-                                                        </span>
-                                                    )}
-                                                </td>
-                                            ))}
-                                            <td style={{ textAlign: 'right' }}>
-                                                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                    {item.is_deleted ? (
-                                                        <button className="action-btn" style={{ color: 'var(--primary)' }} title="Restore" onClick={() => handleRestore(item.id)}>
-                                                            <RotateCcw size={16} />
-                                                        </button>
-                                                    ) : (
-                                                        <>
-                                                            <button className="action-btn edit-btn" title="Edit" onClick={() => handleOpenForm(item)}>
-                                                                <Edit2 size={16} />
-                                                            </button>
-                                                            <button className="action-btn delete-btn" title="Delete" onClick={() => confirmDelete(item.id)}>
-                                                                <Trash2 size={16} />
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )) : (
-                                        <tr>
-                                            <td colSpan={visibleFields.length + 2} className="empty-row">No matching records found.</td>
-                                        </tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* Modal for Add / Edit */}
-            {isFormOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-content animate-pop-in">
-                        <h2 className="modal-title">{editingItem ? 'Update Registry' : 'Define New Entry'}</h2>
-                        <form onSubmit={handleSave}>
-                            {visibleFields.map(field => (
-                                <div key={field} className="form-field">
-                                    <label>{field.replace(/_/g, ' ').toUpperCase()}</label>
-                                    {field === 'category' ? (
-                                        <select
-                                            className="form-select"
-                                            value={formData[field] || ''}
-                                            onChange={e => setFormData({ ...formData, [field]: e.target.value })}
-                                            required
-                                        >
-                                            <option value="">Select Category</option>
-                                            <option value="local_conveyance">Local Conveyance</option>
-                                            <option value="travel_incidental">Travel Incidental</option>
-                                            <option value="general_incidental">General Incidental</option>
-                                        </select>
-                                    ) : fieldMetadata[field]?.type === 'boolean' || typeof formData[field] === 'boolean' || field.startsWith('is_') || field === 'status' ? (
-                                        <div className="checkbox-field">
-                                            <label className="custom-checkbox">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1}
-                                                    onChange={e => setFormData({ ...formData, [field]: e.target.checked })}
-                                                />
-                                                <span>Mark as Active/Enabled</span>
-                                            </label>
-                                        </div>
-                                    ) : (
-                                        <input
-                                            type="text"
-                                            className="form-input"
-                                            value={formData[field] || ''}
-                                            onChange={e => setFormData({ ...formData, [field]: e.target.value })}
-                                            placeholder={`Enter value for ${field.replace(/_/g, ' ')}...`}
-                                            required
-                                        />
-                                    )}
-                                </div>
+                <div className="admin-content-grid">
+                    {/* Sidebar */}
+                    <div className="sidebar-panel">
+                        <h3 className="sidebar-title">Available Tables</h3>
+                        <div className="master-selector-list">
+                            {activeGroup.tables.map(table => (
+                                <button
+                                    key={table.id}
+                                    className={`master-selector-btn ${activeTab.id === table.id ? 'active' : ''}`}
+                                    onClick={() => setActiveTab(table)}
+                                >
+                                    <AlignLeft size={16} style={{ marginRight: '10px' }} />
+                                    {table.name}
+                                </button>
                             ))}
-                            <div className="modal-actions">
-                                <button type="button" className="cancel-btn" onClick={() => setIsFormOpen(false)}>Discard</button>
-                                <button type="submit" className="save-btn">{editingItem ? 'Save Changes' : 'Create Entry'}</button>
-                            </div>
-                        </form>
+                        </div>
                     </div>
-                </div>
-            )}
 
-            {/* Confirm Delete Form */}
-            {isConfirmOpen && (
-                <div className="modal-overlay">
-                    <div className="modal-content confirm-modal">
-                        <div className="confirm-icon"><AlertCircle size={32} /></div>
-                        <h2>Confirm Deletion</h2>
-                        <p style={{ color: '#64748b', marginBottom: '32px' }}>Are you sure you want to delete this record?</p>
-                        <div className="modal-actions">
-                            <button className="cancel-btn" onClick={() => setIsConfirmOpen(false)}>No, Keep it</button>
-                            <button className="save-btn" style={{ background: '#CB6040' }} onClick={handleDelete}>Yes, Delete</button>
+                    {/* Main Data Panel */}
+                    <div className="main-table-panel">
+                        <div className="panel-header">
+                            <h2>{activeTab.name} Registry</h2>
+                            <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                                <button
+                                    className={`action-btn ${showDeleted ? 'active' : ''}`}
+                                    style={{
+                                        width: 'auto',
+                                        padding: '0 12px',
+                                        fontSize: '12px',
+                                        height: '40px',
+                                        display: 'flex',
+                                        gap: '6px',
+                                        alignItems: 'center',
+                                        background: showDeleted ? 'var(--primary-light)' : '#f8fafc',
+                                        border: `1.5px solid ${showDeleted ? 'var(--primary)' : '#e2e8f0'}`,
+                                        color: showDeleted ? 'var(--primary)' : 'var(--text-muted)',
+                                        borderRadius: '10px',
+                                        fontWeight: '600'
+                                    }}
+                                    onClick={() => setShowDeleted(!showDeleted)}
+                                >
+                                    {showDeleted ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    {showDeleted ? "Hide Inactive" : "Show Inactive"}
+                                </button>
+                                <button className="add-btn" onClick={() => handleOpenForm()}>
+                                    <Plus size={20} />
+                                    Define Record
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="data-table-container">
+                            {loading ? (
+                                <div className="loading-state">
+                                    <div className="loader"></div>
+                                    <p>Fetching data...</p>
+                                </div>
+                            ) : (
+                                <table className="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            {visibleFields.map(f => (
+                                                <th key={f}>{f.replace(/_/g, ' ').toUpperCase()}</th>
+                                            ))}
+                                            <th style={{ textAlign: 'right' }}>ACTIONS</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {data.length > 0 ? data.map(item => (
+                                            <tr key={item.id} style={{ opacity: item.is_deleted ? 0.6 : 1 }}>
+                                                <td><span className="id-badge">#{item.id}</span></td>
+                                                {visibleFields.map(f => (
+                                                    <td key={f}>
+                                                        {fieldMetadata[f]?.type === 'boolean' || typeof item[f] === 'boolean' || f === 'status' || f.startsWith('is_') ? (
+                                                            <span className={`status-badge ${item[f] ? 'status-active' : 'status-inactive'}`}>
+                                                                {item[f] ? 'ACTIVE' : 'INACTIVE'}
+                                                            </span>
+                                                        ) : f === 'category' ? (
+                                                            <span className="badge-secondary" style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', background: '#f1f5f9', color: 'var(--text-muted)', fontWeight: '600' }}>
+                                                                {String(item[f] || '').split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ fontWeight: '500' }}>
+                                                                {item[f] === null || item[f] === undefined ? '—' : String(item[f])}
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                ))}
+                                                <td style={{ textAlign: 'right' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                        {item.is_deleted ? (
+                                                            <button className="action-btn" style={{ color: 'var(--primary)' }} title="Restore" onClick={() => handleRestore(item.id)}>
+                                                                <RotateCcw size={16} />
+                                                            </button>
+                                                        ) : (
+                                                            <>
+                                                                <button className="action-btn edit-btn" title="Edit" onClick={() => handleOpenForm(item)}>
+                                                                    <Edit2 size={16} />
+                                                                </button>
+                                                                <button className="action-btn delete-btn" title="Delete" onClick={() => confirmDelete(item.id)}>
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )) : (
+                                            <tr>
+                                                <td colSpan={visibleFields.length + 2} className="empty-row">No matching records found.</td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            )}
                         </div>
                     </div>
                 </div>
-            )}
+
+                {/* Modal for Add / Edit */}
+                {isFormOpen && (
+                    <div className="modal-overlay">
+                        <div className="modal-content animate-pop-in" style={{ padding: '0', borderRadius: '32px', maxWidth: '650px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                            <div style={{ padding: '32px 40px', borderBottom: '1px solid #f1f5f9', background: 'white', position: 'sticky', top: 0, zIndex: 10 }}>
+                                <h2 className="modal-title" style={{ fontSize: '1.75rem', fontWeight: 900, marginBottom: 0 }}>{editingItem ? 'Update Registry' : 'Define New Entry'}</h2>
+                            </div>
+                            <div style={{ padding: '40px', overflowY: 'auto' }}>
+                                <form onSubmit={handleSave} id="master-form">
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '24px' }}>
+                                        {/* Regular Fields */}
+                                        {regFields.map((field, idx) => (
+                                            <div key={field} className="form-field" style={{ marginBottom: '0', gridColumn: regFields.length === 1 || idx === regFields.length - 1 && regFields.length % 2 !== 0 ? 'span 2' : 'auto' }}>
+                                                <label style={{ fontSize: '0.8rem', fontWeight: 800, color: '#64748b', marginBottom: '8px', display: 'block' }}>{field.replace(/_/g, ' ').toUpperCase()}</label>
+                                                {field === 'category' ? (
+                                                    <select
+                                                        className="form-select"
+                                                        value={formData[field] || ''}
+                                                        onChange={e => setFormData({ ...formData, [field]: e.target.value })}
+                                                        required
+                                                    >
+                                                        <option value="">Select Category</option>
+                                                        <option value="local_conveyance">Local Conveyance</option>
+                                                        <option value="travel_incidental">Travel Incidental</option>
+                                                        <option value="general_incidental">General Incidental</option>
+                                                    </select>
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        className="form-input"
+                                                        value={formData[field] || ''}
+                                                        onChange={e => setFormData({ ...formData, [field]: e.target.value })}
+                                                        placeholder={`Enter value...`}
+                                                        required
+                                                    />
+                                                )}
+                                            </div>
+                                        ))}
+                                        {/* Boolean Toggles Grid */}
+                                        <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '10px' }}>
+                                            {boolFields.map(field => (
+                                                <div key={field} className="checkbox-field" style={{ 
+                                                    background: '#f8fafc', 
+                                                    padding: '12px 16px', 
+                                                    borderRadius: '16px', 
+                                                    border: '1.5px solid #e2e8f0',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between'
+                                                }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>{field.replace(/^is_/, '').replace(/_/g, ' ')}</label>
+                                                    </div>
+                                                    <div 
+                                                        onClick={() => setFormData({ ...formData, [field]: !formData[field] })}
+                                                        style={{ 
+                                                            width: '44px', 
+                                                            height: '24px', 
+                                                            borderRadius: '24px', 
+                                                            backgroundColor: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? 'var(--primary)' : '#cbd5e1', 
+                                                            position: 'relative', 
+                                                            cursor: 'pointer', 
+                                                            transition: 'background-color 0.3s ease' 
+                                                        }}
+                                                    >
+                                                        <div style={{ 
+                                                            position: 'absolute', 
+                                                            height: '18px', 
+                                                            width: '18px', 
+                                                            left: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? '23px' : '3px', 
+                                                            top: '3px', 
+                                                            backgroundColor: 'white', 
+                                                            transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                                                            borderRadius: '50%',
+                                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                                                        }}></div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                            <div style={{ padding: '24px 40px', background: '#f8fafc', borderTop: '1px solid #f1f5f9', display: 'flex', gap: '16px', position: 'sticky', bottom: 0, zIndex: 10 }}>
+                                <button type="button" className="cancel-btn" onClick={() => setIsFormOpen(false)} style={{ flex: 1, borderRadius: '100px' }}>Discard</button>
+                                <button type="submit" form="master-form" className="save-btn" style={{ flex: 2, borderRadius: '100px' }}>{editingItem ? 'Save Changes' : 'Create Entry'}</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Confirm Delete Form */}
+                {isConfirmOpen && (
+                    <div className="modal-overlay">
+                        <div className="modal-content confirm-modal">
+                            <div className="confirm-icon"><AlertCircle size={32} /></div>
+                            <h2>Confirm Deletion</h2>
+                            <p style={{ color: '#64748b', marginBottom: '32px' }}>Are you sure you want to delete this record?</p>
+                            <div className="modal-actions">
+                                <button className="cancel-btn" onClick={() => setIsConfirmOpen(false)}>No, Keep it</button>
+                                <button className="save-btn" style={{ background: '#CB6040' }} onClick={handleDelete}>Yes, Delete</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

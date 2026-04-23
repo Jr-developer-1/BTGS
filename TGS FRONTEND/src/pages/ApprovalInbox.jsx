@@ -102,10 +102,10 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             setLoading(true);
             const url = `/api/approvals/?tab=${tab}&type=${type}&page=${page}`;
             const response = await api.get(url);
-            
+
             const data = response.data.results || response.data || [];
             setTasks(data);
-            
+
             if (response.data.count !== undefined) {
                 setPagination({
                     count: response.data.count,
@@ -155,7 +155,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             const all = resp.data.results || resp.data || [];
             // Filter to show ONLY batches where the current user is the approver
             const pendingForMe = all.filter(b =>
-                ['Submitted', 'Manager Approved'].includes(b.status) &&
+                ['Submitted', 'Manager Approved', 'Resubmitted'].includes(b.status) &&
                 String(b.current_approver) === String(user?.id)
             );
             setBatches(pendingForMe);
@@ -391,10 +391,32 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             <span>Submitted Date</span>
                             <p>{task.date}</p>
                         </div>
-                        {isFinanceHead && (
-                            <div className="info-block highlight">
+                        {isFinance && (
+                            <div className="info-block highlight" style={{ minWidth: '220px' }}>
                                 <span>Executive Recommendation</span>
                                 <p className="text-blue-600 font-bold">₹{task.details?.executive_approved_amount || '0.00'}</p>
+                                {task.type === 'Expense Claim' && ((task.details?.total_advance_taken !== undefined && parseFloat(task.details?.total_advance_taken) > 0) || (task.details?.wallet_balance_used !== undefined && parseFloat(task.details?.wallet_balance_used) > 0)) && (
+                                    <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem' }}>
+                                        {parseFloat(task.details.total_advance_taken || 0) > 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b' }}>
+                                                <span>Advance Recovered:</span>
+                                                <span style={{ color: '#ef4444' }}>-₹{task.details.total_advance_taken}</span>
+                                            </div>
+                                        )}
+                                        {parseFloat(task.details.wallet_balance_used || 0) > 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b', marginTop: '2px' }}>
+                                                <span>Wallet Adjusted:</span>
+                                                <span style={{ color: '#ef4444' }}>-₹{task.details.wallet_balance_used}</span>
+                                            </div>
+                                        )}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#0f172a', marginTop: '6px', paddingTop: '4px', borderTop: '1px solid #f1f5f9' }}>
+                                            <span>Net Payout to Bank:</span>
+                                            <span style={{ color: '#10b981' }}>
+                                                ₹{task.details.net_payout || Math.max(0, parseFloat(task.details.executive_approved_amount || 0) - parseFloat(task.details.total_advance_taken || 0) - parseFloat(task.details.wallet_balance_used || 0)).toFixed(2)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -481,6 +503,44 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                     )}
 
+                    {task.type === 'Expense Claim' && isFinanceExec && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE'].includes(task.status)) && (
+                        <div className="detail-section animate-fade-in" style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
+                            <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1e293b' }}>
+                                < IndianRupee size={18} className="text-indigo-600" /> Audit Finalization
+                            </h4>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginTop: '12px' }}>
+                                <div className="info-block" style={{ background: '#ffffff', padding: '12px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                                    <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.025em' }}>Claimed Amount</span>
+                                    <p style={{ fontWeight: 800, fontSize: '1.25rem', color: '#0f172a', margin: '4px 0 0 0' }}>₹{parseFloat(task.details?.total_amount || 0).toLocaleString()}</p>
+                                </div>
+                                <div className="exec-amount-editor" style={{ background: '#ffffff', padding: '12px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
+                                    <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.025em' }}>Total Valid Expense (Gross)</label>
+                                    <div className="amount-input-wrapper" style={{ marginTop: '8px', display: 'flex', alignItems: 'center', background: '#f8fafc', border: '2px solid #e2e8f0', borderRadius: '8px', padding: '0 12px' }}>
+                                        <span className="currency-prefix" style={{ fontWeight: 700, color: '#64748b', marginRight: '4px' }}>₹</span>
+                                        <input
+                                            type="number"
+                                            value={execAmount}
+                                            onChange={(e) => setExecAmount(e.target.value)}
+                                            placeholder="0.00"
+                                            style={{ background: 'transparent', border: 'none', padding: '8px 0', width: '100%', fontWeight: 700, fontSize: '1.1rem', color: '#10b981', outline: 'none' }}
+                                        />
+                                    </div>
+                                    <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#64748b', marginBottom: '4px' }}>
+                                            <span>Wallet/Advance Deductions:</span>
+                                            <span>-₹{(parseFloat(task.details?.total_advance_taken || 0) + parseFloat(task.details?.wallet_balance_used || 0)).toFixed(2)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', fontWeight: 800, color: '#0f172a' }}>
+                                            <span>Net Payout to Bank:</span>
+                                            <span style={{ color: '#ef4444' }}>₹{Math.max(0, parseFloat(execAmount || 0) - parseFloat(task.details?.total_advance_taken || 0) - parseFloat(task.details?.wallet_balance_used || 0)).toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                    <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '6px' }}>* Enter the total approved expenses. Deductions are handled automatically.</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {task.details?.expenses?.length > 0 && (
                         <div className="detail-section">
                             <div className="section-header-row" onClick={() => setShowBreakdown(!showBreakdown)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -513,8 +573,23 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                     if (displayDesc.startsWith('{')) {
                                                         try {
                                                             parsedDetails = JSON.parse(displayDesc);
-                                                            displayDesc = `${parsedDetails.origin || ''}${parsedDetails.origin ? ' → ' : ''}${parsedDetails.destination || parsedDetails.location || parsedDetails.hotelName || parsedDetails.hotel_name || parsedDetails.hotel_location || ''}`;
-                                                            if (parsedDetails.remarks) displayDesc += ` (${parsedDetails.remarks})`;
+                                                            const plannedRoute = `${parsedDetails.plannedOrigin || parsedDetails.origin || ''}${(parsedDetails.plannedOrigin || parsedDetails.origin) ? ' → ' : ''}${parsedDetails.plannedDestination || parsedDetails.destination || parsedDetails.location || parsedDetails.hotelName || parsedDetails.hotel_name || parsedDetails.hotel_location || ''}`;
+
+                                                            const isDeviated = exp.is_deviated || parsedDetails.is_deviated;
+                                                            const devReason = exp.deviation_reason || parsedDetails.deviation_reason;
+                                                            const actualFrom = parsedDetails.actualFrom || "";
+                                                            const actualTo = parsedDetails.actualTo || "";
+
+                                                            let routeText = "";
+                                                            if (isDeviated) {
+                                                                routeText = `[DEVIATED] ${actualFrom || parsedDetails.origin || 'Start'} → ${actualTo || parsedDetails.destination || 'End'} (Planned: ${plannedRoute})`;
+                                                            } else {
+                                                                routeText = plannedRoute;
+                                                            }
+
+                                                            displayDesc = routeText;
+                                                            if (parsedDetails.remarks) displayDesc += ` [Note: ${parsedDetails.remarks}]`;
+                                                            if (devReason) displayDesc += ` (Why: ${devReason})`;
                                                         } catch (e) {
                                                             displayDesc = exp.description;
                                                         }
@@ -523,7 +598,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                     // Inline job report from new system (stored in description JSON)
                                                     const inlineJobReport = parsedDetails.jobReport || null;
                                                     let inlineJobFiles = parsedDetails.jobReportFiles || [];
-                                                    
+
                                                     // Map jobReportAttachments from mobile if jobReportFiles is empty
                                                     if ((!inlineJobFiles || inlineJobFiles.length === 0) && parsedDetails.jobReportAttachments) {
                                                         inlineJobFiles = parsedDetails.jobReportAttachments.map(url => ({
@@ -538,11 +613,16 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                     const isExpanded = expandedExpenseId === exp.id;
 
                                                     // Mapping incidentals for both structured and legacy/simple formats
-                                                    const incidentals = parsedDetails.incidentals || 
+                                                    const incidentals = parsedDetails.incidentals ||
                                                         ((parsedDetails.incidentalAmount && parseFloat(parsedDetails.incidentalAmount) > 0) ? [{
                                                             category: parsedDetails.incidentalCategory || 'Incidental',
                                                             amount: parsedDetails.incidentalAmount
                                                         }] : []);
+
+                                                    const isDeviated = exp.is_deviated || parsedDetails.is_deviated;
+                                                    const devReason = exp.deviation_reason || parsedDetails.deviation_reason;
+                                                    const actualFrom = parsedDetails.actualFrom || "";
+                                                    const actualTo = parsedDetails.actualTo || "";
 
                                                     return (
                                                         <React.Fragment key={exp.id || index}>
@@ -790,6 +870,37 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                     </div>
                                                                                 </div>
 
+                                                                                {/* Deviation Information Section */}
+                                                                                {isDeviated && (
+                                                                                    <div className="exp-section" style={{ marginTop: '16px' }}>
+                                                                                        <h5 className="exp-section-header" style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                            <AlertTriangle size={14} /> Deviation Insight
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white" style={{ borderLeft: '4px solid #ef4444', background: '#fffafb' }}>
+                                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                                                                                                    <span style={{ color: '#64748b', fontWeight: 600 }}>Planned Strategy:</span>
+                                                                                                    <span style={{ fontWeight: 600, color: '#475569' }}>{parsedDetails.plannedOrigin || parsedDetails.origin} → {parsedDetails.plannedDestination || parsedDetails.destination}</span>
+                                                                                                </div>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', background: '#fef2f2', padding: '10px', borderRadius: '8px', border: '1px solid #fee2e2' }}>
+                                                                                                    <span style={{ color: '#b91c1c', fontWeight: 700 }}>Actual Execution:</span>
+                                                                                                    <span style={{ fontWeight: 800, color: '#b91c1c' }}>{actualFrom || 'Not Specified'} → {actualTo || 'Not Specified'}</span>
+                                                                                                </div>
+                                                                                                {(parsedDetails.visitedPerson || devReason) && (
+                                                                                                    <div style={{ fontSize: '0.8rem', padding: '0 4px' }}>
+                                                                                                        <span style={{ color: '#64748b', display: 'block', marginBottom: '2px' }}>Visited Person/Office:</span>
+                                                                                                        <p style={{ fontWeight: 700, color: '#1e293b' }}>{parsedDetails.visitedPerson || '---'}</p>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                <div style={{ fontSize: '0.8rem', padding: '0 4px', borderTop: '1px dashed #fee2e2', paddingTop: '8px' }}>
+                                                                                                    <span style={{ color: '#64748b', display: 'block', marginBottom: '2px' }}>Reason for Deviation:</span>
+                                                                                                    <p style={{ fontWeight: 700, color: '#b91c1c', fontStyle: 'italic' }}>"{devReason || 'No specific reason provided'}"</p>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+
                                                                                 {/* Incidental Breakdown Section */}
                                                                                 {incidentals.length > 0 && (
                                                                                     <div className="exp-section">
@@ -970,13 +1081,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
                 <div className="modern-navigation-bar" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                     <div className="view-type-tabs">
-                        <button 
+                        <button
                             className={`view-type-btn ${viewType === 'special' ? 'active' : ''}`}
                             onClick={() => setViewType('special')}
                         >
                             Special Requests
                         </button>
-                        <button 
+                        <button
                             className={`view-type-btn ${viewType === 'monthly' ? 'active' : ''}`}
                             onClick={() => setViewType('monthly')}
                         >
@@ -1354,7 +1465,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                     setSelectedTask(task);
                                                                     const amt = task.details?.executive_approved_amount && parseFloat(task.details.executive_approved_amount) > 0
                                                                         ? task.details.executive_approved_amount
-                                                                        : (task.details?.requested_amount || task.cost?.replace('₹', '') || '');
+                                                                        : (task.details?.requested_amount || task.cost?.replace(/[₹,]/g, '') || '');
                                                                     setExecAmount(amt);
                                                                 }}
                                                             >
@@ -1368,7 +1479,14 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                         <span className="task-date">• {task.date}</span>
                                                                     </div>
                                                                 </div>
-                                                                <div className="task-amount">{task.cost}</div>
+                                                                <div className="task-amount">
+                                                                    {task.cost}
+                                                                    {task.type === 'Expense Claim' && parseFloat(task.details?.total_amount || 0) > parseFloat(task.details?.net_payout || 0) && (
+                                                                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'normal', marginTop: '2px' }}>
+                                                                            (Adjusted)
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>

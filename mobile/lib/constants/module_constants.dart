@@ -23,6 +23,7 @@ import '../screens/route_master_screen.dart';
 import '../screens/admin_master_management_screen.dart';
 import '../screens/admin_masters_screen.dart';
 import '../screens/location_codes_screen.dart';
+import '../screens/advance_request_screen.dart';
 
 /// Module constants matching the Header.jsx navigation structure
 class ModuleConstants {

@@ -72,6 +72,7 @@ class _LoginScreenState extends State<LoginScreen> {
           'employee_id':
               username, // Backend accepts both 'username' and 'employee_id'; web uses 'employee_id'
           'password': password,
+          'is_mobile': true,
         },
       );
 
@@ -111,7 +112,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final userEmail = (userDetails['email'] ?? '').toString();
       final isFaceEnrolled = userDetails['is_face_enrolled'] == true;
-      final bool requiresChange = userDetails['requires_password_change'] == true;
+      final bool requiresChange =
+          userDetails['requires_password_change'] == true;
 
       if (requiresChange) {
         Navigator.pushReplacement(
@@ -518,11 +520,17 @@ class _LoginScreenState extends State<LoginScreen> {
         controller: controller,
         obscureText: isPassword ? obscureText : false,
         enableInteractiveSelection: !isPassword,
-        textCapitalization: forceUpperCase ? TextCapitalization.characters : TextCapitalization.none,
+        textCapitalization: forceUpperCase
+            ? TextCapitalization.characters
+            : TextCapitalization.none,
         inputFormatters: [
           if (forceUpperCase) UpperCaseTextFormatter(),
           if (forceUpperCase) FilteringTextInputFormatter.deny(RegExp(r'\s')),
+          if (forceUpperCase)
+            FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9\-]')),
+          if (!isPassword) LengthLimitingTextInputFormatter(20),
           if (isPassword) NoPasteTextInputFormatter(),
+          if (isPassword) LengthLimitingTextInputFormatter(15),
         ],
         style: GoogleFonts.plusJakartaSans(
           fontSize: 15,

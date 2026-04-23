@@ -17,7 +17,6 @@ class User(models.Model):
     requires_password_change = models.BooleanField(default=False)
     reset_otp = models.CharField(max_length=6, blank=True, null=True)
     reset_otp_expiry = models.DateTimeField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
     theme = models.CharField(max_length=50, default='classic', choices=[
         ('classic', 'Classic Burgundy'),
         ('ocean', 'Ocean Blue'),
@@ -31,6 +30,11 @@ class User(models.Model):
         ('slate', 'Slate Elegance'),
         ('tropical', 'Tropical Teal')
     ])
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Finance Reconcilition Wallet
+    carry_forward_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     # FRS Fields (Stored as base64 in DB as requested)
     is_face_enrolled = models.BooleanField(default=False)

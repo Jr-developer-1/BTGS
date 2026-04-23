@@ -158,7 +158,9 @@ const PolicyCenter = () => {
         };
         const suffix = langMap[language];
 
-        if (!policy[`file_content_${suffix}`]) {
+        // Check availability using file metadata (size) rather than the content blob 
+        // which is only fetched in the detail view.
+        if (!policy[`file_size_${suffix}`]) {
             showToast(`This policy is not available in ${language}`, "warning");
             return;
         }
@@ -351,6 +353,184 @@ const PolicyCenter = () => {
                     color: #ef4444;
                     border-color: #fee2e2;
                 }
+
+                /* Modal Specific Styles */
+                .fm-modal {
+                    background: white;
+                    width: 100%;
+                    max-width: 650px;
+                    height: 90vh;
+                    border-radius: 28px;
+                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+                    position: relative;
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
+                    animation: modalPop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+                @keyframes modalPop {
+                    from { transform: scale(0.9) translateY(20px); opacity: 0; }
+                    to { transform: scale(1) translateY(0); opacity: 1; }
+                }
+                .fm-modal-header {
+                    padding: 2.5rem 2.5rem 1.5rem;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                }
+                .fm-modal-body { 
+                    flex: 1;
+                    overflow-y: auto !important;
+                    min-height: 0;
+                    padding: 2rem 2.5rem;
+                }
+                .fm-modal-body::-webkit-scrollbar {
+                    display: block !important;
+                    width: 8px !important;
+                }
+                .fm-modal-body::-webkit-scrollbar-track {
+                    background: #f1f5f9;
+                    border-radius: 10px;
+                }
+                .fm-modal-body::-webkit-scrollbar-thumb {
+                    background: #cbd5e1;
+                    border: 2px solid #f1f5f9;
+                    border-radius: 10px;
+                }
+                .fm-modal-body::-webkit-scrollbar-thumb:hover {
+                    background: #64748b;
+                }
+                
+                .fm-input-group { margin-bottom: 2rem; }
+                .fm-input-group label {
+                    display: block;
+                    font-size: 0.75rem;
+                    font-weight: 800;
+                    color: var(--text-muted);
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                    margin-bottom: 0.75rem;
+                }
+                
+                .fm-modern-input {
+                    display: flex;
+                    align-items: center;
+                    background: #f8fafc;
+                    border: 1.5px solid var(--admin-border);
+                    border-radius: 16px;
+                    padding: 0 1.25rem;
+                    transition: all 0.2s;
+                }
+                .fm-modern-input:focus-within {
+                    border-color: #0f766e;
+                    background: white;
+                    box-shadow: 0 0 0 4px #f0fdfa;
+                }
+                .fm-modern-input svg { color: #64748b; flex-shrink: 0; }
+                .fm-modern-input input, .fm-modern-input select {
+                    border: none;
+                    background: transparent;
+                    width: 100%;
+                    padding: 1rem 0.75rem;
+                    font-weight: 600;
+                    font-size: 0.95rem;
+                    outline: none;
+                    color: #1e293b;
+                }
+
+                .fm-file-upload-box {
+                    padding: 1.25rem;
+                    border-radius: 18px;
+                    border: 2px dashed #e2e8f0;
+                    background: #f8fafc;
+                    display: flex;
+                    align-items: center;
+                    gap: 1.25rem;
+                    transition: all 0.2s;
+                    cursor: pointer;
+                }
+                .fm-file-upload-box:hover {
+                    border-color: #0f766e;
+                    background: #f0fdfa;
+                }
+                .fm-file-upload-box.has-file {
+                    border-color: #10b981;
+                    background: #ecfdf5;
+                }
+                .fm-file-upload-box input[type="file"] {
+                    display: none;
+                }
+                .fm-upload-icon {
+                    width: 44px;
+                    height: 44px;
+                    border-radius: 12px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: white;
+                    color: #64748b;
+                    border: 1px solid #e2e8f0;
+                    flex-shrink: 0;
+                }
+                .fm-file-upload-box.has-file .fm-upload-icon {
+                    background: #10b981;
+                    color: white;
+                    border-color: #10b981;
+                }
+                .fm-file-info {
+                    display: flex;
+                    flex-direction: column;
+                    min-width: 0;
+                }
+                .fm-file-info .main-text {
+                    font-size: 0.9rem;
+                    font-weight: 700;
+                    color: #1e293b;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .fm-file-info .sub-text {
+                    font-size: 0.7rem;
+                    font-weight: 700;
+                    color: #94a3b8;
+                    text-transform: uppercase;
+                    letter-spacing: 0.02em;
+                }
+
+                .fm-modal-footer {
+                    padding: 1.5rem 2.5rem;
+                    border-top: 1px solid #f1f5f9;
+                    display: flex;
+                    justify-content: flex-end;
+                    background: #f8fafc;
+                    border-radius: 0 0 28px 28px;
+                    flex-shrink: 0;
+                    position: sticky;
+                    bottom: 0;
+                    z-index: 10;
+                }
+
+                .fm-btn-group { 
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 1rem;
+                }
+                .fm-btn {
+                    padding: 0.75rem 2rem;
+                    border-radius: 12px;
+                    font-weight: 800;
+                    font-size: 0.85rem;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    border: none;
+                    white-space: nowrap;
+                }
+                .fm-btn.cancel { background: white; color: #64748b; border: 1.5px solid #e2e8f0; }
+                .fm-btn.confirm { background: #0f766e; color: white; box-shadow: 0 4px 12px rgba(15, 118, 110, 0.2); }
+                .fm-btn:hover { transform: translateY(-2px); }
+                .fm-btn.cancel:hover { background: #f8fafc; border-color: #cbd5e1; }
+                .fm-btn.confirm:hover { background: #0d9488; box-shadow: 0 8px 20px rgba(15, 118, 110, 0.3); }
             `}</style>
 
             <div className="pc-header">
@@ -443,9 +623,9 @@ const PolicyCenter = () => {
 
             {/* Upload Modal */}
             {showUploadModal && (
-                <div className="modal-overlay fixed inset-0 bg-slate-900/40 backdrop-blur-[6px] z-[999] flex items-center justify-center p-4">
-                    <div className="fm-modal" style={{ maxWidth: '650px' }}>
-                        <div className="fm-modal-header border-b border-slate-50">
+                <div className="modal-overlay fixed inset-0 bg-slate-900/60 backdrop-blur-[8px] z-[999] flex items-center justify-center p-6">
+                    <div className="fm-modal" style={{ height: '85vh' }}>
+                        <div className="fm-modal-header border-b border-slate-50 shrink-0">
                             <div>
                                 <h2 className="text-2xl font-black text-slate-800 tracking-tight">{editingPolicyId ? 'Revise Regulation' : 'Publish New Protocol'}</h2>
                                 <p className="text-slate-500 font-medium text-sm">Update corporate library with latest compliance standards</p>
@@ -458,8 +638,8 @@ const PolicyCenter = () => {
                                 <X size={24} className="text-slate-400" />
                             </button>
                         </div>
-                        <div className="fm-modal-body py-8">
-                            <form onSubmit={handleUpload}>
+                        <div className="fm-modal-body">
+                            <form id="policy-upload-form" onSubmit={handleUpload}>
                                 <div className="grid grid-cols-2 gap-6 mb-8">
                                     <div className="fm-input-group mb-0">
                                         <label>Document Title</label>
@@ -489,47 +669,53 @@ const PolicyCenter = () => {
                                     </div>
                                 </div>
 
-                                <div className="space-y-4 mb-8">
+                                <div className="space-y-4 mb-2">
                                     {['en', 'te', 'hi'].map(lang => (
                                         <div key={lang}>
                                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 px-1">
                                                 {lang === 'en' ? 'International Standard (English)' : lang === 'te' ? 'Regional Standard (Telugu)' : 'National Standard (Hindi)'}
                                             </label>
-                                            <div className={`p-4 rounded-2xl border-2 border-dashed transition-all cursor-pointer flex items-center gap-4 ${uploadData[`file_${lang}`] ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100 hover:border-slate-200'}`}>
+                                            <div 
+                                                className={`fm-file-upload-box ${uploadData[`file_${lang}`] ? 'has-file' : ''}`}
+                                                onClick={() => document.getElementById(`file-${lang}`).click()}
+                                            >
                                                 <input 
                                                     type="file" 
                                                     id={`file-${lang}`}
                                                     accept="application/pdf"
                                                     onChange={e => handleFileChange(lang, e.target.files[0])}
-                                                    className="hidden"
                                                 />
-                                                <label htmlFor={`file-${lang}`} className="cursor-pointer flex items-center gap-4 flex-1">
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${uploadData[`file_${lang}`] ? 'bg-emerald-500 text-white' : 'bg-white text-slate-400 border border-slate-100'}`}>
-                                                        <Upload size={18} />
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-sm font-bold text-slate-700">
-                                                            {uploadData[`file_${lang}`] ? uploadData[`file_${lang}`].name : `Select ${lang === 'en' ? 'English' : lang === 'te' ? 'Telugu' : 'Hindi'} PDF Document`}
-                                                        </span>
-                                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">MAX SIZE: 10MB • FORMAT: PDF</span>
-                                                    </div>
-                                                </label>
+                                                <div className="fm-upload-icon">
+                                                    <Upload size={18} />
+                                                </div>
+                                                <div className="fm-file-info">
+                                                    <span className="main-text">
+                                                        {uploadData[`file_${lang}`] ? uploadData[`file_${lang}`].name : `Select ${lang === 'en' ? 'English' : lang === 'te' ? 'Telugu' : 'Hindi'} PDF Document`}
+                                                    </span>
+                                                    <span className="sub-text">MAX SIZE: 10MB • FORMAT: PDF</span>
+                                                </div>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
-
-                                <div className="fm-btn-group">
-                                    <button type="button" className="fm-btn cancel" onClick={() => {
-                                        setShowUploadModal(false);
-                                        setEditingPolicyId(null);
-                                        setUploadData({ title: '', category: 'General', file_en: null, file_te: null, file_hi: null });
-                                    }}>Discard</button>
-                                    <button type="submit" className="fm-btn confirm" style={{ background: '#0f766e' }} disabled={isUploading}>
-                                        {isUploading ? 'INDEXING DOCUMENT...' : (editingPolicyId ? 'UPDATE REGULATION' : 'PUBLISH TO CENTER')}
-                                    </button>
-                                </div>
                             </form>
+                        </div>
+                        <div className="fm-modal-footer">
+                            <div className="fm-btn-group">
+                                <button type="button" className="fm-btn cancel" onClick={() => {
+                                    setShowUploadModal(false);
+                                    setEditingPolicyId(null);
+                                    setUploadData({ title: '', category: 'General', file_en: null, file_te: null, file_hi: null });
+                                }}>Discard</button>
+                                <button 
+                                    type="submit" 
+                                    form="policy-upload-form"
+                                    className="fm-btn confirm" 
+                                    disabled={isUploading}
+                                >
+                                    {isUploading ? 'INDEXING...' : (editingPolicyId ? 'UPDATE REGULATION' : 'PUBLISH TO CENTER')}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

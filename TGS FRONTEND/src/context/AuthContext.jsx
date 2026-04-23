@@ -26,8 +26,8 @@ export const AuthProvider = ({ children }) => {
 
       // 1. Validate response structure to prevent "partial login" white pages
       if (!token || !userDetails || typeof userDetails !== 'object') {
-          console.error("Invalid login response structure:", response.data);
-          throw new Error('CORRUPT_RESPONSE');
+        console.error("Invalid login response structure:", response.data);
+        throw new Error('CORRUPT_RESPONSE');
       }
 
       const userData = {
@@ -48,19 +48,19 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-        if (user && user.token) {
-            await api.post('/api/auth/logout', {}, {
-                headers: {
-                    'Authorization': `Bearer ${user.token}`
-                }
-            });
-        }
+      if (user && user.token) {
+        await api.post('/api/auth/logout', {}, {
+          headers: {
+            'Authorization': `Bearer ${user.token}`
+          }
+        });
+      }
     } catch (error) {
-        console.error('Logout failed:', error);
-        showToast('Logout failed on server', 'error');
+      console.error('Logout failed:', error);
+      showToast('Logout failed on server', 'error');
     } finally {
-        setUser(null);
-        sessionStorage.removeItem('tgs_user');
+      setUser(null);
+      sessionStorage.removeItem('tgs_user');
     }
   };
 
@@ -81,14 +81,14 @@ export const AuthProvider = ({ children }) => {
           } catch (error) {
             console.error('Session verification failed:', error);
             if (!error.response) {
-                // Network error - backend is down
-                showToast('Backend server is unreachable. Working in offline mode.', 'warning');
-                // We keep the limited session data we have to prevent immediate logout if possible, 
-                // but mark as offline or just let subsequent requests fail gracefully.
-                setUser(parsedUser); 
+              // Network error - backend is down
+              showToast('Backend server is unreachable. Working in offline mode.', 'warning');
+              // We keep the limited session data we have to prevent immediate logout if possible, 
+              // but mark as offline or just let subsequent requests fail gracefully.
+              setUser(parsedUser);
             } else {
-                sessionStorage.removeItem('tgs_user');
-                setUser(null);
+              sessionStorage.removeItem('tgs_user');
+              setUser(null);
             }
           }
         }
@@ -115,6 +115,30 @@ export const AuthProvider = ({ children }) => {
       const interval = setInterval(fetchHeartbeat, 60000); // 1 minute
       return () => clearInterval(interval);
     }
+  }, [user]);
+
+  // 1-Hour Inactivity Timeout for Web Application
+  useEffect(() => {
+    if (!user) return;
+    let timeoutId;
+    
+    // Auto logout after 1 hour (3600000 ms)
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        logout();
+        showToast('Session expired due to inactivity.', 'warning');
+      }, 3600000);
+    };
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach(event => window.addEventListener(event, resetTimer));
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
   }, [user]);
 
   return (

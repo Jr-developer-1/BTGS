@@ -188,6 +188,22 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
 
         return matchesFilter && matchesSearch && matchesType;
       }).toList();
+
+      // Final sort for priority: Approved/Completed first, Settled last
+      _visibleTrips.sort((a, b) {
+        int getPriority(String status) {
+          final s = status.toLowerCase();
+          if (['approved', 'completed'].contains(s)) return 1;
+          if (['settled', 'paid', 'transferred', 'completed & settled'].any((term) => s.contains(term))) return 3;
+          return 2;
+        }
+
+        final pA = getPriority(a.status);
+        final pB = getPriority(b.status);
+        if (pA != pB) return pA.compareTo(pB);
+        // Use created_at if available for newest first, otherwise maintain stability
+        return b.createdAt.compareTo(a.createdAt);
+      });
     });
   }
 

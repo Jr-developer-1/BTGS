@@ -15,18 +15,18 @@ const Outbox = () => {
                         {/* <p style={{ color: 'var(--text-muted)', fontSize: '1rem', fontWeight: 500 }}>Check your past approvals and active requests.</p> */}
                     </div>
                 </div>
-                
+
                 <div className="outbox-header-tabs" style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
                     <button
                         onClick={() => setView('approvals')}
                         className={`tab-switcher-btn ${view === 'approvals' ? 'active' : ''}`}
-                        style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '10px', 
-                            padding: '12px 24px', 
-                            borderRadius: '16px', 
-                            fontWeight: 700, 
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '12px 24px',
+                            borderRadius: '16px',
+                            fontWeight: 700,
                             fontSize: '0.95rem',
                             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                             background: view === 'approvals' ? 'var(--primary)' : 'white',
@@ -41,13 +41,13 @@ const Outbox = () => {
                     <button
                         onClick={() => setView('requests')}
                         className={`tab-switcher-btn ${view === 'requests' ? 'active' : ''}`}
-                        style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '10px', 
-                            padding: '12px 24px', 
-                            borderRadius: '16px', 
-                            fontWeight: 700, 
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '12px 24px',
+                            borderRadius: '16px',
+                            fontWeight: 700,
                             fontSize: '0.95rem',
                             transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                             background: view === 'requests' ? '#9333ea' : 'white',

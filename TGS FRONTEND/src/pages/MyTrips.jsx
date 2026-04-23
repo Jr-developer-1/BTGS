@@ -172,7 +172,19 @@ const MyTrips = () => {
             const tripsData = tripsRes.data.results || tripsRes.data || [];
             const travelsData = travelsRes.data.results || travelsRes.data || [];
 
-            const allData = [...tripsData, ...travelsData];
+            const allData = [...tripsData, ...travelsData].sort((a, b) => {
+                const getPriority = (status) => {
+                    const s = (status || '').toLowerCase();
+                    if (['approved', 'completed'].includes(s)) return 1;
+                    if (['settled', 'paid', 'transferred', 'completed & settled'].some(term => s.includes(term))) return 3;
+                    return 2;
+                };
+                const pA = getPriority(a.status);
+                const pB = getPriority(b.status);
+                if (pA !== pB) return pA - pB;
+                // Secondary sort: Newest first within same priority
+                return new Date(b.created_at) - new Date(a.created_at);
+            });
 
             // Update pagination state - calculate next/previous based on merged count
             const totalCount = Math.max(tripsRes.data.count || 0, travelsRes.data.count || 0);
@@ -257,7 +269,7 @@ const MyTrips = () => {
         const s = (t.status || '').toLowerCase();
 
         // Comprehensive list of states to hide as per user request (Pending/Processing states)
-        const hideStates = ['pending', 'submitted', 'forwarded', 'draft', 'under process', 'in progress', 'ongoing'];
+        const hideStates = ['pending', 'submitted', 'forwarded', 'draft', 'under process', 'in progress', 'ongoing', 'rejected'];
         const isHidden = hideStates.some(state => s === state || s.includes('pending'));
 
         if (isHidden) return false;

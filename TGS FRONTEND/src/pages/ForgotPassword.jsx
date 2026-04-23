@@ -398,7 +398,7 @@ const ForgotPassword = () => {
                     color: #be123c;
                 }
             `}</style>
-            
+
             <div className="cp-card">
                 <div className="cp-header">
                     <div className="cp-header-icon">
@@ -406,8 +406,8 @@ const ForgotPassword = () => {
                     </div>
                     <h2>Password Recovery</h2>
                     <p>
-                        {step === 1 
-                            ? "Enter your corporate Employee ID to receive a secure 6-digit OTP." 
+                        {step === 1
+                            ? "Enter your corporate Employee ID to receive a secure 6-digit OTP."
                             : `An OTP was sent to your email. Please verify and pick a strong password.`}
                     </p>
                 </div>
@@ -437,9 +437,9 @@ const ForgotPassword = () => {
                                 </div>
                             </div>
 
-                            <button 
-                                type="submit" 
-                                className="cp-submit-btn" 
+                            <button
+                                type="submit"
+                                className="cp-submit-btn"
                                 disabled={isLoading || !employeeId}
                             >
                                 {isLoading ? 'Sending OTP...' : (
@@ -539,9 +539,9 @@ const ForgotPassword = () => {
                                 </div>
                             </div>
 
-                            <button 
-                                type="submit" 
-                                className="cp-submit-btn" 
+                            <button
+                                type="submit"
+                                className="cp-submit-btn"
                                 disabled={isLoading || otp.length !== 6 || (newPassword.length > 0 && !allValid)}
                             >
                                 {isLoading ? 'Updating...' : (
@@ -551,11 +551,11 @@ const ForgotPassword = () => {
                                     </>
                                 )}
                             </button>
-                            
-                            <button 
-                                type="button" 
+
+                            <button
+                                type="button"
                                 onClick={() => setStep(1)}
-                                className="cp-back-link" 
+                                className="cp-back-link"
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', margin: '24px auto 0' }}
                             >
                                 <ArrowLeft size={16} />

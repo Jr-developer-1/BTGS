@@ -6,7 +6,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'name', 'employee_id', 'role', 'designation', 'department', 
-                  'is_face_enrolled', 'face_photo', 'allow_photo_reset', 'theme']
+                  'is_face_enrolled', 'face_photo', 'allow_photo_reset', 'theme', 'carry_forward_balance']
 
 class SessionSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.name', read_only=True)

@@ -38,17 +38,21 @@ const UserManagement = () => {
     const [totalPages, setTotalPages] = useState(1);
 
     useEffect(() => {
-        fetchEmployeesAndUsers(currentPage);
-    }, [currentPage]);
+        const debounceTimer = setTimeout(() => {
+            fetchEmployeesAndUsers(currentPage, searchTerm);
+        }, 500);
+        return () => clearTimeout(debounceTimer);
+    }, [currentPage, searchTerm]);
 
-    const fetchEmployeesAndUsers = async (page = 1) => {
+    const fetchEmployeesAndUsers = async (page = 1, search = '') => {
         setLoading(true);
         setApiKeyMissing(false);
         setError(null);
 
         try {
+            const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
             const [empResponse, usersResponse] = await Promise.allSettled([
-                api.get(`/api/employees/?page=${page}&page_size=20`),
+                api.get(`/api/employees/?page=${page}&page_size=20${searchParam}`),
                 api.get('/api/users/?all_pages=true')
             ]);
 
@@ -301,7 +305,10 @@ const UserManagement = () => {
                             type="text"
                             placeholder="Search by name, ID or department..."
                             value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
+                            onChange={(e) => {
+                                setSearchTerm(e.target.value);
+                                setCurrentPage(1);
+                            }}
                             style={{ width: '100%', padding: '12px 16px 12px 44px', borderRadius: '10px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '14px', outline: 'none', transition: 'border-color 0.2s', boxSizing: 'border-box' }}
                             onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
                             onBlur={(e) => e.target.style.borderColor = '#cbd5e1'}

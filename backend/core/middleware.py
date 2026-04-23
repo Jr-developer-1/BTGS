@@ -31,15 +31,16 @@ class CustomAuthMiddleware:
                 session = Session.objects.filter(token=token, is_active=True).first()
                 
                 if session and session.is_valid():
-                    # Only apply auto-logout timeout for WEB requests. 
-                    # Skip it for MOBILE (Android/Flutter) as requested.
-                    user_agent = request.headers.get('User-Agent', '').lower()
-                    is_mobile = 'dart' in user_agent or 'android' in user_agent
+                    # Check is_mobile flag from JWT payload if available, or fallback to User-Agent
+                    is_mobile = payload.get('is_mobile', False)
+                    if not is_mobile:
+                        user_agent = request.headers.get('User-Agent', '').lower()
+                        is_mobile = 'dart' in user_agent or 'android' in user_agent
                     
                     has_timed_out = False
                     if not is_mobile and session.last_activity:
                         idle_duration = timezone.now() - session.last_activity
-                        if idle_duration.total_seconds() > 900:  # 15 minute timeout
+                        if idle_duration.total_seconds() > 3600:  # 1 hour timeout for web
                             session.is_active = False
                             session.logged_out_at = timezone.now()
                             session.save()

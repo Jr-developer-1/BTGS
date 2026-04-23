@@ -44,6 +44,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   List<String> _masterMealTypes = [];
   List<String> _masterIncidentalTypes = [];
   List<String> _masterAccomTypes = [];
+  List<String> _masterMealSources = [];
+  List<String> _masterMealProviders = [];
 
   // Controllers and State
   final _formKey = GlobalKey<FormState>();
@@ -85,6 +87,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   // New Dropdown States
   String? _mealCategory;
   String? _mealType;
+  String? _mealSource;
+  String? _mealProvider;
   String? _accomType;
   String? _travelMode;
   String? _bookedBy;
@@ -174,6 +178,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                     ? {
                         'mealCategory': _mealCategory,
                         'mealType': _mealType,
+                        'mealSource': _mealSource,
+                        'provider': _mealProvider,
+                        'hotelName': _hotelNameController.text,
                         'restaurant': _restaurantController.text,
                         'mealTime': _startTime.format(context),
                         'invoiceNo': _invoiceNoController.text,
@@ -508,6 +515,10 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
       _mealCategory = details['mealCategory'];
       _mealType = details['mealType'];
+      _mealSource = details['mealSource'];
+      _mealProvider = details['provider'] ?? details['mealProvider'];
+      _hotelNameController.text = details['hotelName'] ?? '';
+      _restaurantController.text = details['restaurant'] ?? '';
       _accomType = details['accomType'];
       _travelMode = details['mode'] ?? details['travel_mode'];
       _bookedBy = details['bookedBy'] ?? details['booked_by'];
@@ -577,6 +588,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         _masterService.fetchMasterList('/api/meal-type-masters/', 'meal_type', 'results'),
         _masterService.fetchMasterList('/api/incidental-type-masters/', 'expense_type', 'results'),
         _masterService.fetchMasterList('/api/stay-type-masters/', 'stay_type', 'results'),
+        _masterService.fetchMasterList('/api/meal-source-masters/', 'source_name', 'results'),
+        _masterService.fetchMasterList('/api/meal-provider-masters/', 'provider_name', 'results'),
       ]);
 
       if (mounted) {
@@ -586,6 +599,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
           _masterMealTypes = results[2];
           _masterIncidentalTypes = results[3];
           _masterAccomTypes = results[4];
+          _masterMealSources = (results[5] as List).map((e) => e.toString()).toList();
+          _masterMealProviders = (results[6] as List).map((e) => e.toString()).toList();
         });
       }
     } catch (e) {
@@ -682,7 +697,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                             child: _buildDropdownMini(
                               'BOOKED BY',
                               _bookedBy,
-                              ['Self Paid', 'Company Paid'],
+                              ['Self Paid', 'Company Paid'], // Often hardcoded on web too, but keeping consistent
                               (v) => setState(() => _bookedBy = v),
                             ),
                           ),
@@ -901,13 +916,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                             child: _buildDropdownMini(
                               'CATEGORY',
                               _incidentalCategory,
-                              [
-                                'Parking Charges',
-                                'Toll',
-                                'Repairs',
-                                'Porter Charges',
-                                'Other',
-                              ],
+                              _masterIncidentalTypes,
                               (v) => setState(() => _incidentalCategory = v),
                             ),
                           ),
@@ -988,90 +997,146 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                       ],
                     ),
                   ),
-                ),
-              ] else if (widget.category == 'Food') ...[
-                _buildWebCard(
-                  title: 'MEAL TRANSACTION DETAILS',
-                  color: const Color(0xFF0D9488),
-                  children: [
-                    Row(
+                            ] else if (widget.category == 'Food') ...[
+                Builder(
+                  builder: (context) {
+                    final isSelfMeal = _mealCategory == 'Self Meal';
+                    final sourceLower = _mealSource?.toLowerCase() ?? '';
+                    final showSource = isSelfMeal;
+                    final showProvider = isSelfMeal && sourceLower == 'online';
+                    final showHotel = isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
+                    final showRestaurant = isSelfMeal && sourceLower == 'restaurant';
+
+                    return _buildWebCard(
+                      title: 'MEAL TRANSACTION DETAILS',
+                      color: const Color(0xFF0D9488),
                       children: [
-                        Expanded(
-                          child: _buildDatePickerMini(
-                            'DATE',
-                            _startDate,
-                            (d) => setState(() => _startDate = d),
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDatePickerMini(
+                                'DATE',
+                                _startDate,
+                                (d) => setState(() => _startDate = d),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildTimePickerMini(
+                                'TIME',
+                                _startTime,
+                                (t) => setState(() => _startTime = t),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildTimePickerMini(
-                            'TIME',
-                            _startTime,
-                            (t) => setState(() => _startTime = t),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDropdownMini(
+                                'CATEGORY',
+                                _mealCategory,
+                                _masterMealCategories,
+                                (v) => setState(() {
+                                  _mealCategory = v;
+                                  if (v != 'Self Meal') {
+                                    _amountController.text = '0.00';
+                                  }
+                                }),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildDropdownMini(
+                                'TYPE',
+                                _mealType,
+                                _masterMealTypes,
+                                (v) => setState(() => _mealType = v),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (showSource) ...[
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildDropdownMini(
+                                  'SOURCE',
+                                  _mealSource,
+                                  _masterMealSources,
+                                  (v) => setState(() => _mealSource = v),
+                                ),
+                              ),
+                              if (showProvider) ...[
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildDropdownMini(
+                                    'PROVIDER',
+                                    _mealProvider,
+                                    _masterMealProviders,
+                                    (v) => setState(() => _mealProvider = v),
+                                  ),
+                                ),
+                              ] else
+                                const Spacer(),
+                            ],
                           ),
+                        ],
+                        if (showHotel) ...[
+                          const SizedBox(height: 16),
+                          _buildTextFieldMini(
+                            sourceLower == 'online' ? 'HOTEL / OUTLET NAME' : 'HOTEL NAME',
+                            _hotelNameController,
+                            hint: 'Enter name...',
+                          ),
+                        ],
+                        if (showRestaurant) ...[
+                          const SizedBox(height: 16),
+                          _buildTextFieldMini(
+                            'RESTAURANT NAME',
+                            _restaurantController,
+                            hint: 'Enter restaurant name...',
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildTextFieldMini(
+                                'INVOICE NO',
+                                _invoiceNoController,
+                                hint: 'Optional',
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _buildTextFieldMini(
+                                'AMOUNT',
+                                _amountController,
+                                prefix: '₹',
+                                keyboardType: TextInputType.number,
+                                enabled: isSelfMeal,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _buildTextFieldMini(
+                          'PURPOSE / NOTES',
+                          _jobReportController,
+                          maxLines: 2,
+                        ),
+                        const SizedBox(height: 16),
+                        _buildImagePickerMini(
+                          'UPLOAD INVOICE / BILL',
+                          _image,
+                          () => _getImage(),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildDropdownMini(
-                            'CATEGORY',
-                            _mealCategory,
-                            _masterMealCategories,
-                            (v) => setState(() => _mealCategory = v),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildDropdownMini('TYPE', _mealType, 
-                            _masterMealTypes, 
-                            (v) => setState(() => _mealType = v)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildTextFieldMini(
-                      'RESTAURANT NAME',
-                      _restaurantController,
-                      hint: 'e.g. Hotel Grand...',
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildTextFieldMini(
-                            'INVOICE NO',
-                            _invoiceNoController,
-                            hint: 'Optional',
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildTextFieldMini(
-                            'AMOUNT',
-                            _amountController,
-                            prefix: '₹',
-                            keyboardType: TextInputType.number,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    _buildTextFieldMini(
-                      'PURPOSE / NOTES',
-                      _jobReportController,
-                      maxLines: 2,
-                    ),
-                    const SizedBox(height: 16),
-                    _buildImagePickerMini(
-                      'UPLOAD INVOICE / BILL',
-                      _image,
-                      () => _getImage(),
-                    ),
-                  ],
+                    );
+                  }
                 ),
               ] else if (widget.category == 'Accommodation') ...[
                 _buildWebCard(

@@ -8,6 +8,7 @@ import 'package:geocoding/geocoding.dart';
 import '../services/trip_service.dart';
 import '../models/trip_model.dart';
 import 'live_map_screen.dart';
+import 'history_map_screen.dart';
 
 class TeamTripDetailsScreen extends StatefulWidget {
   final String? tripId;
@@ -627,6 +628,69 @@ class _TeamTripDetailsScreenState extends State<TeamTripDetailsScreen> {
                   ],
                 ),
               ),
+            ),
+          ),
+          
+          // History View Button
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            decoration: const BoxDecoration(
+              color: Color(0xFFF8FAFC),
+              border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Need to audit past records?',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: const Color(0xFF64748B),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => HistoryMapScreen(
+                          trip: Trip(
+                            id: tripId,
+                            tripId: tripId,
+                            userId: employeeId,
+                            purpose: purpose,
+                            destination: destination,
+                            source: trip['source'] ?? trip['user_base_location'] ?? 'Origin',
+                            dates: '',
+                            startDate: '',
+                            endDate: '',
+                            status: 'Ongoing',
+                            costEstimate: '0',
+                            travelMode: '',
+                            vehicleType: '',
+                            employee: employeeName,
+                            title: purpose,
+                            members: [],
+                            lifecycleEvents: [],
+                          ),
+                          employeeId: employeeId,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.history_rounded, size: 16, color: Color(0xFFFF6B00)),
+                  label: Text(
+                    'VIEW HISTORY',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: const Color(0xFFFF6B00),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],

@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { X, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 
-const Modal = ({ isOpen, onClose, title, children, type = 'info', actions, size = 'md' }) => {
+const Modal = ({ isOpen, onClose, title, children, type = 'info', actions, size = 'md', closeOnOverlayClick = true }) => {
     useEffect(() => {
         if (isOpen) {
             document.body.style.overflow = 'hidden';
@@ -29,7 +29,9 @@ const Modal = ({ isOpen, onClose, title, children, type = 'info', actions, size 
     };
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay" onClick={(e) => { 
+            if (e.target === e.currentTarget && closeOnOverlayClick) onClose(); 
+        }}>
             <div className={`modal-container premium-card animate-scale-in ${size === 'lg' ? 'modal-lg' : ''} ${size === 'xl' ? 'modal-xl' : ''}`} onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
                     <div className="modal-title-row">

@@ -136,10 +136,18 @@ class TripService {
 
   Future<List<Map<String, dynamic>>> fetchExpenses({String? tripId}) async {
     String url = '${ApiConstants.baseUrl}/api/expenses/';
-    if (tripId != null) url += '?trip_id=$tripId';
+    if (tripId != null) {
+      final cleanId = tripId.trim();
+      url += '?trip_id=$cleanId';
+    }
     final response = await _apiService.get(url);
     if (response is List) {
       return List<Map<String, dynamic>>.from(response);
+    } else if (response is Map && response.containsKey('results')) {
+      final results = response['results'];
+      if (results is List) {
+        return List<Map<String, dynamic>>.from(results);
+      }
     }
     return [];
   }
@@ -149,6 +157,7 @@ class TripService {
     String type = 'all',
     String viewType = 'special',
     String? search,
+    String? date,
     int page = 1,
     String? source,
   }) async {
@@ -156,6 +165,9 @@ class TripService {
         '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType&page=$page';
     if (search != null && search.isNotEmpty) {
       url += '&search=$search';
+    }
+    if (date != null) {
+      url += '&date=$date';
     }
     if (source != null) {
       url += '&source=$source';
@@ -177,9 +189,12 @@ class TripService {
     return [];
   }
 
-  Future<Map<String, dynamic>> fetchApprovalCounts({String? source}) async {
+  Future<Map<String, dynamic>> fetchApprovalCounts({String? source, String? viewType}) async {
     String url = ApiConstants.approvalsCount;
-    if (source != null) url += '?source=$source';
+    List<String> params = [];
+    if (source != null) params.add('source=$source');
+    if (viewType != null) params.add('view_type=$viewType');
+    if (params.isNotEmpty) url += '?${params.join('&')}';
     final response = await _apiService.get(url);
     if (response is Map) {
       return Map<String, dynamic>.from(response);
@@ -573,10 +588,9 @@ class TripService {
 
   Future<Map<String, dynamic>?> fetchLatestTrackingPoint(String tripId) async {
     try {
-      final response = await _apiService.get('/api/trips/$tripId/tracking/');
-      if (response is List && response.isNotEmpty) {
-        // Return latest known point from the end of the history
-        return Map<String, dynamic>.from(response.last);
+      final response = await _apiService.get('/api/trips/$tripId/tracking/?latest=true');
+      if (response != null && response is Map) {
+        return Map<String, dynamic>.from(response);
       }
     } catch (e) {
       debugPrint('ERROR FETCHING TRACKING for $tripId: $e');
@@ -686,5 +700,18 @@ class TripService {
       return List<Map<String, dynamic>>.from(response);
     }
     return [];
+  }
+
+  Future<Map<String, dynamic>> fetchHistoricalStops(String date, {String? employeeId}) async {
+    try {
+      String url = '${ApiConstants.historicalStops}?date=$date';
+      if (employeeId != null) url += '&employee_id=$employeeId';
+      final response = await _apiService.get(url);
+      if (response is Map) return Map<String, dynamic>.from(response);
+      return {"stops": [], "breadcrumbs": []};
+    } catch (e) {
+      debugPrint('ERROR FETCHING HISTORICAL STOPS for $date: $e');
+      return {"stops": [], "breadcrumbs": []};
+    }
   }
 }

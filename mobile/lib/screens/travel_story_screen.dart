@@ -237,6 +237,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
     final purposeController = TextEditingController();
     String paymentMode = 'Bank Transfer';
     bool isSubmitting = false;
+    const double capacityLimit = 45000;
 
     showModalBottomSheet(
       context: context,
@@ -245,156 +246,405 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => Container(
           decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+            color: Color(0xFFF1F5F9),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(36)),
           ),
           padding: EdgeInsets.fromLTRB(
-            24,
+            0,
             12,
-            24,
-            MediaQuery.of(context).viewInsets.bottom + 24,
+            0,
+            MediaQuery.of(context).viewInsets.bottom,
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'REQUEST TOP-UP',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Request additional advance for this travel',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  color: const Color(0xFF64748B),
-                ),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: amountController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Amount (₹)',
-                  prefixIcon: const Icon(Icons.currency_rupee_rounded),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                ),
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: paymentMode,
-                decoration: InputDecoration(
-                  labelText: 'Payment Mode',
-                  prefixIcon: const Icon(Icons.payment_rounded),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                ),
-                items: ['Bank Transfer', 'NEFT', 'UPI', 'Cash']
-                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                    .toList(),
-                onChanged: (v) => setModalState(() => paymentMode = v!),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: purposeController,
-                decoration: InputDecoration(
-                  labelText: 'Reason for Top-up',
-                  prefixIcon: const Icon(Icons.description_outlined),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: isSubmitting
-                      ? null
-                      : () async {
-                          if (amountController.text.isEmpty ||
-                              purposeController.text.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Please fill all fields'),
-                              ),
-                            );
-                            return;
-                          }
-                          setModalState(() => isSubmitting = true);
-                          try {
-                            await _tripService.requestAdvance(
-                              widget.tripId,
-                              double.parse(amountController.text),
-                              purposeController.text,
-                              paymentMode: paymentMode,
-                            );
-                            if (mounted) {
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Top-up request submitted'),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                              _fetchDetails();
-                            }
-                          } catch (e) {
-                            if (mounted)
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Error: $e'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
-                          } finally {
-                            setModalState(() => isSubmitting = false);
-                          }
-                        },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0D9488),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 48,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(2.5),
                     ),
                   ),
-                  child: isSubmitting
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Text('SUBMIT REQUEST'),
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+
+                // Header with Close Icon
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFC01C2E).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              widget.tripId,
+                              style: GoogleFonts.inter(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFFC01C2E),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Trip Advance & Top-up',
+                            style: GoogleFonts.interTight(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              color: const Color(0xFF1E293B),
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                          ),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 20,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+
+                // Web-style Balance Card
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF991B1B), // Dark Red
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF991B1B).withOpacity(0.3),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          'AVAILABLE TRIP BALANCE',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white.withOpacity(0.7),
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '₹${_trip?.walletBalance?.toStringAsFixed(2) ?? '0.00'}',
+                          style: GoogleFonts.interTight(
+                            fontSize: 36,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.error_outline_rounded,
+                                color: Colors.white,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Low Balance Alert! Top up recommended.',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20),
+                          child: Divider(color: Colors.white24, height: 1),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _webStatItem(
+                                'Total Advances',
+                                '₹${_trip?.totalApprovedAdvance?.toStringAsFixed(2) ?? '0.00'}',
+                                Icons.arrow_upward_rounded,
+                              ),
+                            ),
+                            Container(
+                              width: 1,
+                              height: 30,
+                              color: Colors.white12,
+                            ),
+                            Expanded(
+                              child: _webStatItem(
+                                'Total Spent',
+                                '₹${_trip?.totalExpenses?.toStringAsFixed(2) ?? '0.00'}',
+                                Icons.arrow_downward_rounded,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Form Section
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'AMOUNT (INR)',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: amountController,
+                          keyboardType: TextInputType.number,
+                          onChanged: (val) => setModalState(() {}),
+                          decoration: _webInputDecoration(
+                            Icons.currency_rupee_rounded,
+                            'Enter amount',
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Text(
+                          'PURPOSE / DESCRIPTION',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: purposeController,
+                          maxLines: 3,
+                          decoration: _webInputDecoration(
+                            Icons.description_outlined,
+                            'Why do you need this top up?',
+                          ),
+                        ),
+
+                        const SizedBox(height: 32),
+
+                        SizedBox(
+                          width: double.infinity,
+                          height: 56,
+                          child: ElevatedButton(
+                            onPressed: isSubmitting
+                                ? null
+                                : () async {
+                                    if (amountController.text.isEmpty ||
+                                        purposeController.text.isEmpty) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Please fill all fields',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    setModalState(() => isSubmitting = true);
+                                    try {
+                                      await _tripService.requestAdvance(
+                                        widget.tripId,
+                                        double.parse(amountController.text),
+                                        purposeController.text,
+                                        paymentMode: paymentMode,
+                                      );
+                                      if (mounted) {
+                                        Navigator.pop(context);
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Top-up request submitted',
+                                            ),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                        _fetchDetails();
+                                      }
+                                    } catch (e) {
+                                      if (mounted)
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text('Error: $e'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                    } finally {
+                                      setModalState(() => isSubmitting = false);
+                                    }
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(
+                                0xFFC01C2E,
+                              ), // Crimson
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              elevation: 0,
+                            ),
+                            child: isSubmitting
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.send_rounded,
+                                        size: 18,
+                                        color: Colors.white,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Submit Request',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 32),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _webStatItem(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 12, color: Colors.white70),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.white70,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  InputDecoration _webInputDecoration(IconData icon, String hint) {
+    return InputDecoration(
+      hintText: hint,
+      prefixIcon: Icon(icon, size: 18, color: const Color(0xFF94A3B8)),
+      filled: true,
+      fillColor: const Color(0xFFF8FAFC),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: Color(0xFFC01C2E), width: 1.5),
       ),
     );
   }
@@ -834,10 +1084,11 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
         ),
         const SizedBox(height: 12),
         ..._trip!.advances!.map((adv) {
-          final status = adv['status']?.toString() ?? 'Pending';
-          final amount = adv['requested_amount']?.toString() ?? '0';
-          final date = adv['submitted_at']?.toString().split('T')[0] ?? '';
-          final mode = adv['payment_mode'] ?? 'N/A';
+          final status = adv.status;
+          final amount = adv.requestedAmount.toString();
+          final date = adv.submittedAt?.toIso8601String().split('T')[0] ?? '';
+          final mode =
+              'N/A'; // Advance model doesn't have paymentMode yet, or use a default
 
           Color statusColor = const Color(0xFF64748B);
           if (status.toLowerCase().contains('approved'))
@@ -1152,7 +1403,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           {
             'category': details['incidentalCategory'] ?? 'Incidental',
             'amount': details['incidentalAmount'],
-          }
+          },
         ];
       }
 
@@ -1180,10 +1431,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
             double.tryParse(exp['amount']?.toString() ?? '0') ?? 0;
         final baseAmt = (totalAmt - totalIncAmount).clamp(0, double.infinity);
 
-        sortedExpenses.add({
-          ...exp,
-          'amount': baseAmt,
-        });
+        sortedExpenses.add({...exp, 'amount': baseAmt});
 
         // Add the incidental cards immediately after
         sortedExpenses.addAll(subCards);
@@ -1454,7 +1702,38 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 letterSpacing: 1.2,
               ),
             ),
-            const SizedBox.shrink(),
+            _isOwner() &&
+                    !_trip!.isBulkUpload &&
+                    (_trip!.claim == null ||
+                        ['draft', 'pending'].contains(
+                          (_trip!.claim!['status'] ?? '')
+                              .toString()
+                              .toLowerCase(),
+                        ))
+                ? IconButton(
+                    onPressed: () async {
+                      final refresh = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => TripExpenseFormDetailedScreen(
+                            category: _trip!.considerAsLocal
+                                ? 'Local Travel'
+                                : 'Food',
+                            tripId: widget.tripId,
+                          ),
+                        ),
+                      );
+                      if (refresh == true) _fetchDetails();
+                    },
+                    icon: const Icon(
+                      Icons.add_circle_rounded,
+                      color: Color(0xFF0D9488),
+                      size: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  )
+                : const SizedBox.shrink(),
           ],
         ),
         const SizedBox(height: 16),
@@ -1581,13 +1860,22 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
 
     if (isSubItem) {
       routeText = 'Incidental: ${expense['sub_type']}';
-    } else if (hasLocalConveyanceData ||
-        normalizedNature.toLowerCase() == 'local travel') {
       // Local conveyance — show mode + route
       String route =
           (details['origin'] != null && details['destination'] != null)
           ? '${details['origin']} → ${details['destination']}'
           : (remarks ?? 'Local movement');
+
+      if (details['isPublicTransport'] == true ||
+          details['mode']?.toString().toLowerCase() == 'public transport' ||
+          details['mode']?.toString().toLowerCase() == 'others') {
+        String sub = details['subType'] ?? details['vehicle_type'] ?? 'Others';
+        route = "$route ($sub)";
+        if (details['remainingRoute'] != null &&
+            details['remainingRoute'].toString().isNotEmpty) {
+          route = "$route\n${details['remainingRoute']}";
+        }
+      }
       routeText = route;
     } else if (!hasLocalConveyanceData &&
         (nature.toLowerCase().contains('other') ||
@@ -1707,15 +1995,38 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                           normalizedNature.toLowerCase() == 'local travel')
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            "${details['date'] ?? details['startDate'] ?? expense['date'] ?? 'N/A'}  •  ${details['startTime'] ?? details['start_time'] ?? '--:--'} - ${details['endTime'] ?? details['reach_time'] ?? details['end_time'] ?? '--:--'}",
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 10,
-                              color: isRejected
-                                  ? const Color(0xFFEF4444).withOpacity(0.7)
-                                  : const Color(0xFF64748B),
-                              fontWeight: FontWeight.w700,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "${details['date'] ?? details['startDate'] ?? expense['date'] ?? 'N/A'}  •  ${details['startTime'] ?? details['start_time'] ?? '--:--'} - ${details['endTime'] ?? details['reach_time'] ?? details['end_time'] ?? '--:--'}",
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  color: isRejected
+                                      ? const Color(0xFFEF4444).withOpacity(0.7)
+                                      : const Color(0xFF64748B),
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (!(details['isPublicTransport'] == true ||
+                                      details['mode']
+                                              ?.toString()
+                                              .toLowerCase() ==
+                                          'public transport') &&
+                                  (details['odoStart'] != null ||
+                                      details['odo_start'] != null))
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    "ODO: ${details['odoStart'] ?? details['odo_start'] ?? '0'} → ${details['odoEnd'] ?? details['odo_end'] ?? '0'}",
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 9,
+                                      color: const Color(0xFF0D9488),
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       if (isRejected)
@@ -1736,8 +2047,11 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                 GestureDetector(
                   onTap: () async {
                     // Block editing when claim is submitted (unless the item is rejected)
-                    final claimStatus = (_trip!.claim?['status'] ?? '').toString().toLowerCase();
-                    final claimLocked = _trip!.claim != null &&
+                    final claimStatus = (_trip!.claim?['status'] ?? '')
+                        .toString()
+                        .toLowerCase();
+                    final claimLocked =
+                        _trip!.claim != null &&
                         claimStatus != 'draft' &&
                         claimStatus.isNotEmpty;
 
@@ -1803,7 +2117,14 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                             : isRejected
                             ? const Color(0xFFEF4444)
                             : const Color(0xFF4F46E5),
-                        decoration: (isApproved || isRejected || (_trip!.claim != null && (_trip!.claim!['status'] ?? '').toString().toLowerCase() != 'draft'))
+                        decoration:
+                            (isApproved ||
+                                isRejected ||
+                                (_trip!.claim != null &&
+                                    (_trip!.claim!['status'] ?? '')
+                                            .toString()
+                                            .toLowerCase() !=
+                                        'draft'))
                             ? TextDecoration.none
                             : TextDecoration.underline,
                         decorationColor: const Color(0xFF4F46E5),
@@ -1844,10 +2165,10 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
                                 MaterialPageRoute(
                                   builder: (context) =>
                                       TripExpenseFormDetailedScreen(
-                                    category: normalizedNature,
-                                    tripId: widget.tripId,
-                                    expenseData: expense,
-                                  ),
+                                        category: normalizedNature,
+                                        tripId: widget.tripId,
+                                        expenseData: expense,
+                                      ),
                                 ),
                               );
                               if (refresh == true) _fetchDetails();
@@ -1939,87 +2260,95 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               ),
             )
           else if (!isApproved && !isRejected)
-            Builder(builder: (context) {
-              // Hide Edit/Delete when claim is submitted
-              final claimStatus = (_trip!.claim?['status'] ?? '').toString().toLowerCase();
-              final claimLocked = _trip!.claim != null &&
-                  claimStatus != 'draft' &&
-                  claimStatus != 'pending' &&
-                  claimStatus.isNotEmpty;
-              if (claimLocked) return const SizedBox.shrink();
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
+            Builder(
+              builder: (context) {
+                // Hide Edit/Delete when claim is submitted
+                final claimStatus = (_trip!.claim?['status'] ?? '')
+                    .toString()
+                    .toLowerCase();
+                final claimLocked =
+                    _trip!.claim != null &&
+                    claimStatus != 'draft' &&
+                    claimStatus != 'pending' &&
+                    claimStatus.isNotEmpty;
+                if (claimLocked) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _isActionLoading
+                              ? null
+                              : () async {
+                                  final refresh = await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          TripExpenseFormDetailedScreen(
+                                            category: normalizedNature,
+                                            tripId: widget.tripId,
+                                            expenseData: expense,
+                                          ),
+                                    ),
+                                  );
+                                  if (refresh == true) _fetchDetails();
+                                },
+                          icon: const Icon(Icons.edit_rounded, size: 14),
+                          label: Text(
+                            'Edit',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF4F46E5),
+                            side: const BorderSide(color: Color(0xFFE0E7FF)),
+                            backgroundColor: const Color(0xFFF5F3FF),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            minimumSize: const Size(0, 36),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
                         onPressed: _isActionLoading
                             ? null
-                            : () async {
-                                final refresh = await Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        TripExpenseFormDetailedScreen(
-                                      category: normalizedNature,
-                                      tripId: widget.tripId,
-                                      expenseData: expense,
-                                    ),
-                                  ),
-                                );
-                                if (refresh == true) _fetchDetails();
-                              },
-                        icon: const Icon(Icons.edit_rounded, size: 14),
+                            : () => _confirmDeleteExpense(context, expense),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 14,
+                        ),
                         label: Text(
-                          'Edit',
+                          'Delete',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF4F46E5),
-                          side: const BorderSide(color: Color(0xFFE0E7FF)),
-                          backgroundColor: const Color(0xFFF5F3FF),
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          foregroundColor: const Color(0xFFEF4444),
+                          side: const BorderSide(color: Color(0xFFFEE2E2)),
+                          backgroundColor: const Color(0xFFFFF1F2),
+                          padding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                            horizontal: 12,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                           ),
                           minimumSize: const Size(0, 36),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      onPressed: _isActionLoading
-                          ? null
-                          : () => _confirmDeleteExpense(context, expense),
-                      icon: const Icon(Icons.delete_outline_rounded, size: 14),
-                      label: Text(
-                        'Delete',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFEF4444),
-                        side: const BorderSide(color: Color(0xFFFEE2E2)),
-                        backgroundColor: const Color(0xFFFFF1F2),
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 8,
-                          horizontal: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        minimumSize: const Size(0, 36),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
+                    ],
+                  ),
+                );
+              },
+            ),
 
           // EXPANDABLE DETAILS (For Audit / Internal Info)
           Theme(
@@ -2250,8 +2579,8 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               Expanded(
                 child: _settleGridItem(
                   'TRANSFERRED BY',
-                  (claim['processed_by'] is Map 
-                      ? claim['processed_by']['name'] 
+                  (claim['processed_by'] is Map
+                      ? claim['processed_by']['name']
                       : (claim['processed_by']?.toString() ?? 'Waiting')),
                 ),
               ),

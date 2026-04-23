@@ -35,9 +35,12 @@ def login_view(request):
         data = request.data
         employee_id = (data.get('employee_id') or '').strip()
         password = data.get('password')
+
+        # Prevent special characters in username (Allow only Alphanumeric and Hyphen)
+        if employee_id and not re.match(r'^[a-zA-Z0-9\-]+$', employee_id):
+             return Response({'error': 'Special characters are not allowed in username.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Strict case-sensitive lookup
-        employee_id = (data.get('employee_id') or '').strip()
         user = User.objects.filter(employee_id=employee_id).first()
         
         # Verify exact case match (handles case-insensitive DB collations)
@@ -45,7 +48,7 @@ def login_view(request):
             user = None
 
         if not user:
-             return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+             return Response({'error': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
         
         if not user.is_active:
              return Response({'error': 'Your account is currently inactive. Please contact support.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -61,12 +64,22 @@ def login_view(request):
                     details={'reason': 'Invalid password'}
                 )
             except: pass # Don't let audit logging crash the login failure response
-            return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response({'error': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
             
-        expiration = timezone.now() + datetime.timedelta(hours=8)
+        is_mobile = data.get('is_mobile', False)
+        if isinstance(is_mobile, str) and is_mobile.lower() == 'true':
+            is_mobile = True
+            
+        # Web: 1 hour, Mobile: practically never (10 years)
+        if is_mobile:
+            expiration = timezone.now() + datetime.timedelta(days=3650)
+        else:
+            expiration = timezone.now() + datetime.timedelta(hours=1)
+            
         payload = {
             'user_id': user.id,
             'role': user.role.name if user.role else 'Employee',
+            'is_mobile': is_mobile,
             'exp': expiration
         }
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')

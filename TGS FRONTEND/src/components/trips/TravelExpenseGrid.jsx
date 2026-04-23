@@ -130,6 +130,7 @@ const TravelExpenseGrid = ({
     allowedNatures = null,
     // whether to show the bulk upload button (default true)
     showBulkUpload = true,
+    isBulkUpload = false,
     onJobReportClick,
     dateFilter = 'Last 7 Days',
     onFilterChange
@@ -177,6 +178,7 @@ const TravelExpenseGrid = ({
     const prevCategoryRef = useRef('Travel'); // keep last known category across syncs
     const [isSaving, setIsSaving] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [deviationModal, setDeviationModal] = useState({ show: false, rowId: null, reason: '', target: '', actualFrom: '', actualTo: '' });
     const [isLocating, setIsLocating] = useState(false);
     const [carryingLuggage, setCarryingLuggage] = useState(false);
     const [luggageWeight, setLuggageWeight] = useState('');
@@ -393,7 +395,20 @@ const TravelExpenseGrid = ({
 
                 if (!details.auditTrail) details.auditTrail = [];
                 if (!details.travelStatus) details.travelStatus = 'Completed';
-                
+
+                // Map bulk/deviation flags from backend record
+                if (exp.from_bulk_upload) details.from_bulk_upload = true;
+                if (exp.is_deviated) {
+                    details.is_deviated = true;
+                    details.deviation_reason = exp.deviation_reason || details.deviation_reason;
+                    details.visitedPerson = exp.deviation_target || details.visitedPerson;
+                    // Preference for explicit actualFrom/To if they exist in description, 
+                    // otherwise check if backend top-level fields exist (if any)
+                    details.actualFrom = details.actualFrom || details.origin;
+                    details.actualTo = details.actualTo || details.destination;
+                }
+                if (exp.cancellation_status) details.travelStatus = exp.cancellation_status;
+
                 // Map jobReportAttachments from mobile to jobReportFiles for web UI
                 if (details.jobReportAttachments && !details.jobReportFiles) {
                     details.jobReportFiles = details.jobReportAttachments.map(url => ({
@@ -403,6 +418,15 @@ const TravelExpenseGrid = ({
                 }
 
                 const natureVal = exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category);
+                
+                // Initialize timeDetails with robust fallbacks for different data sources (mobile/web/bulk)
+                const timeDetails = details.time || { 
+                    boardingTime: details.startTime || details.start_time || '', 
+                    scheduledTime: '', 
+                    delay: 0, 
+                    actualTime: details.endTime || details.reach_time || '' 
+                };
+
                 // enforce fixed fields for non-TRP trip ids and local travel entries
                 if (isFixedLocal && natureVal === 'Local Travel') {
                     details.mode = 'Bike';
@@ -414,7 +438,7 @@ const TravelExpenseGrid = ({
                     date: exp.date || new Date().toISOString().split('T')[0],
                     nature: natureVal,
                     details: details,
-                    timeDetails: details.time || { boardingTime: '', scheduledTime: '', delay: 0, actualTime: '' },
+                    timeDetails: timeDetails,
                     amount: exp.amount || '',
                     remarks: details.remarks || exp.remarks || '',
                     bills: (() => {
@@ -432,7 +456,26 @@ const TravelExpenseGrid = ({
             });
             // Preserve rows that haven't been saved yet when syncing
             setRows(currentRows => {
-                const unsavedRows = currentRows.filter(r => !r.isSaved);
+                const syncedIds = new Set(syncedRows.map(r => r.id));
+                // Filter currentRows to keep only those that:
+                // 1. Are not yet saved (isSaved: false)
+                // 2. Are not already present in the new syncedRows (by ID)
+                // 3. Do not match any syncedRow by content (for new entries that got a real ID from backend)
+                const unsavedRows = currentRows.filter(r => {
+                    if (r.isSaved) return false;
+                    if (syncedIds.has(r.id)) return false;
+                    
+                    // Special case for newly created rows that just got a real ID in backend
+                    // but still have a temporary random ID in local state.
+                    const isAlreadyInBackend = syncedRows.some(sr => 
+                        sr.date === r.date && 
+                        sr.nature === r.nature && 
+                        Math.abs(parseFloat(sr.amount || 0) - parseFloat(r.amount || 0)) < 0.01 &&
+                        sr.details.origin === r.details.origin &&
+                        sr.details.destination === r.details.destination
+                    );
+                    return !isAlreadyInBackend;
+                });
                 return [...syncedRows, ...unsavedRows];
             });
         }
@@ -940,6 +983,11 @@ const TravelExpenseGrid = ({
                 };
 
                 const filteredDetails = { ...row.details };
+                if (row.details.isPublicTransport) {
+                    filteredDetails.mode = 'Public Transport';
+                    filteredDetails.vehicleType = row.details.remainingRoute;
+                    filteredDetails.subType = row.details.remainingRoute;
+                }
                 if (row.nature === 'Local Travel') {
                     const { mode, subType } = row.details;
                     // Remove fields not applicable for current mode/subtype
@@ -985,15 +1033,15 @@ const TravelExpenseGrid = ({
                     category: categoryMap[row.nature] || 'Others',
                     amount: parseFloat(row.amount || 0),
                     // New Database Fields
-                    travel_mode: row.nature === 'Travel' ? row.details.mode : (row.nature === 'Local Travel' ? row.details.mode : null),
+                    travel_mode: row.details.isPublicTransport ? 'Public Transport' : (row.nature === 'Travel' ? row.details.mode : (row.nature === 'Local Travel' ? row.details.mode : null)),
                     class_type: row.nature === 'Travel' ? row.details.classType : null,
                     booking_reference: row.nature === 'Travel' ? (row.details.pnr || row.details.bookingRef) : null,
                     refundable_flag: row.nature === 'Travel' ? row.details.refundable === 'Yes' : false,
                     meal_included_flag: row.nature === 'Travel' ? row.details.mealIncluded === true : false,
-                    vehicle_type: (row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.subType || row.details.vehicleType) : null,
-                    odo_start: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoStart) ? parseFloat(row.details.odoStart) : null,
-                    odo_end: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoEnd) ? parseFloat(row.details.odoEnd) : null,
-                    distance: (row.nature === 'Travel' || row.nature === 'Local Travel') ? parseFloat(row.details.totalKm || 0) : null,
+                    vehicle_type: row.details.isPublicTransport ? row.details.remainingRoute : ((row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.subType || row.details.vehicleType) : null),
+                    odo_start: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoStart && !row.details.isPublicTransport) ? parseFloat(row.details.odoStart) : null,
+                    odo_end: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoEnd && !row.details.isPublicTransport) ? parseFloat(row.details.odoEnd) : null,
+                    distance: (row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.isPublicTransport ? 0 : parseFloat(row.details.totalKm || 0)) : null,
                     cancellation_status: row.nature === 'Travel' ? (row.details.travelStatus || 'Completed') : null,
                     cancellation_date: row.nature === 'Travel' ? row.details.cancellationDate : null,
                     refund_amount: row.nature === 'Travel' ? parseFloat(row.details.refundAmount || 0) : null,
@@ -1008,6 +1056,11 @@ const TravelExpenseGrid = ({
                         natureOfVisit: row.details.natureOfVisit ? row.details.natureOfVisit.trim() : ''
                     }),
                     receipt_image: JSON.stringify(row.bills || []),
+                    is_deviated: !!row.details.is_deviated,
+                    deviation_reason: row.details.deviation_reason || null,
+                    deviation_target: row.details.visitedPerson || row.details.deviation_target || null,
+                    planned_origin: row.details.plannedOrigin || null,
+                    planned_destination: row.details.plannedDestination || null,
                 };
 
                 // enforce fixed values for local rows when trip id not starting with TRP
@@ -1262,13 +1315,15 @@ const TravelExpenseGrid = ({
 
                 const newDetails = { ...row.details, [detailField]: value };
 
-                if (detailField === 'odoStart' || detailField === 'odoEnd' || detailField === 'subType') {
+                if (detailField === 'odoStart' || detailField === 'odoEnd' || detailField === 'subType' || detailField === 'isPublicTransport') {
                     const start = parseFloat(newDetails.odoStart || 0);
                     const end = parseFloat(newDetails.odoEnd || 0);
                     newDetails.totalKm = end >= start ? (end - start).toFixed(2) : 0;
 
+                    const isOther = newDetails.isPublicTransport || newDetails.mode === 'Public Transport';
+
                     // KM Reimbursement for Own vehicles based on state rates
-                    if (row.nature === 'Local Travel' && ['Own Car', 'Own Bike'].includes(newDetails.subType)) {
+                    if (!isOther && row.nature === 'Local Travel' && ['Own Car', 'Own Bike'].includes(newDetails.subType)) {
                         const is4W = newDetails.subType === 'Own Car';
                         const vehicleKey = is4W ? '4 Wheeler' : '2 Wheeler';
                         const rate = fuelRates[vehicleKey];
@@ -1279,6 +1334,10 @@ const TravelExpenseGrid = ({
                             updatedAmount = (distKm * rate).toFixed(2);
                             newDetails.isAutoCalculated = true;
                         }
+                    } else if (isOther) {
+                        // If switching to "Others", we stop auto-calculating from ODO
+                        newDetails.isAutoCalculated = false;
+                        // We preserve current amount if it was manually edited, but if it was 0 we might want to prompt for fare
                     }
                 }
 
@@ -1720,10 +1779,12 @@ const TravelExpenseGrid = ({
                                     <span>Bulk Upload Rejections</span>
                                 </button>
                             )}
-                            <button className="add-cat-row-btn" onClick={() => addRow(nature)}>
-                                <Plus size={14} />
-                                <span>Add {title}</span>
-                            </button>
+                            {!isBulkUpload && (
+                                <button className="add-cat-row-btn" onClick={() => addRow(nature)}>
+                                    <Plus size={14} />
+                                    <span>Add {title}</span>
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1773,7 +1834,12 @@ const TravelExpenseGrid = ({
                                                                         <div style={{ width: '8px', height: '28px', background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)', borderRadius: '4px' }} />
                                                                         <div>
                                                                             <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Location &amp; Odometer Logs</div>
-                                                                            <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500 }}>{nature === 'Local Travel' ? 'Local Conveyance Entry' : 'Travel Entry'}</div>
+                                                                            <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                {nature === 'Local Travel' ? 'Local Conveyance Entry' : 'Travel Entry'}
+                                                                                {(isFixedLocal || row.details.from_bulk_upload) && (
+                                                                                    <span style={{ color: '#4f46e5', fontWeight: 800, background: '#eef2ff', border: '1px solid #e0e7ff', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem' }}>PLANNED STOP</span>
+                                                                                )}
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1783,10 +1849,57 @@ const TravelExpenseGrid = ({
                                                                             </span>
                                                                         )}
                                                                         {!isLocked && (
-                                                                            <button type="button" style={{ background: '#fee2e2', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '6px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center' }} onClick={() => deleteRow(row.id)} title="Remove entry">
-                                                                                <Trash2 size={15} />
-                                                                            </button>
+                                                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                                                {/* DEVIATE/NOT VISITED buttons for planned/bulk uploads */}
+                                                                                {(isFixedLocal || row.details.from_bulk_upload) && !row.is_deviated && (
+                                                                                    <>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            style={{ background: '#fef3c7', border: '1px solid #fcd34d', color: '#d97706', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                                                            onClick={() => setDeviationModal({ 
+                                                                                                show: true, 
+                                                                                                rowId: row.id, 
+                                                                                                reason: '', 
+                                                                                                target: '', 
+                                                                                                actualFrom: row.details.origin || '', 
+                                                                                                actualTo: row.details.destination || '' 
+                                                                                             })}
+                                                                                        >
+                                                                                            <AlertTriangle size={12} /> DEVIATE
+                                                                                        </button>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#dc2626', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                                                            onClick={() => setDeviationModal({ show: true, rowId: row.id, reason: '', target: '', isNotVisited: true })}
+                                                                                        >
+                                                                                            <X size={12} /> NOT VISITED
+                                                                                        </button>
+                                                                                    </>
+                                                                                )}
+                                                                                <button type="button" style={{ background: '#fee2e2', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '6px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center' }} onClick={() => deleteRow(row.id)} title="Remove entry">
+                                                                                    <Trash2 size={15} />
+                                                                                </button>
+                                                                            </div>
                                                                         )}
+                                                                            </div>
+                                                                        </div>
+                                                                    {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
+                                                                <div style={{ padding: '0 14px', marginBottom: '10px' }}>
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px' }}>
+                                                                        <button 
+                                                                            type="button" 
+                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', false)}
+                                                                            style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                        >
+                                                                            VEHICLE (ODOMETER)
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button" 
+                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', true)}
+                                                                            style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                        >
+                                                                            OTHERS (BUS/AUTO)
+                                                                        </button>
                                                                     </div>
                                                                 </div>
 
@@ -1806,21 +1919,38 @@ const TravelExpenseGrid = ({
                                                                             <label>Location</label>
                                                                             <input type="text" placeholder="Start location / Origin" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} className="cat-input" disabled={isLocked} />
                                                                         </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Odo Reading</label>
-                                                                            <input type="number" placeholder="0" value={row.details.odoStart || ''} onChange={e => updateDetails(row.id, 'odoStart', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
-                                                                        </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Odo Photo</label>
-                                                                            {(!isLocked && row.date === todayStr) ? (
-                                                                                <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoStart')}>
-                                                                                    {row.details.odoStartImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
-                                                                                    <span>{row.details.odoStartImg ? 'Captured' : 'Odo Pic'}</span>
-                                                                                </button>
-                                                                            ) : (
-                                                                                <div style={{ fontSize: '0.7rem', color: row.details.odoStartImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoStartImg ? '✓ Captured' : 'N/A'}</div>
-                                                                            )}
-                                                                        </div>
+                                                                        {!row.details.isPublicTransport ? (
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Odo Reading</label>
+                                                                                <input type="number" placeholder="0" value={row.details.odoStart || ''} onChange={e => updateDetails(row.id, 'odoStart', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
+                                                                                <label style={{ color: '#4f46e5' }}>Fare Paid (₹)</label>
+                                                                                <div style={{ display: 'flex', gap: '6px' }}>
+                                                                                    <input type="number" placeholder="0.00" value={row.amount || ''} onChange={e => updateRow(row.id, 'amount', e.target.value)} className="cat-input" style={{ borderColor: '#4f46e5', fontWeight: 700, flex: 1 }} disabled={isLocked} />
+                                                                                    {!isLocked && (
+                                                                                        <button type="button" className="upload-bill-btn" style={{ height: '34px', padding: '0 10px' }} onClick={() => document.getElementById(`f-pt-${row.id}`).click()}>
+                                                                                            <Upload size={14} />
+                                                                                        </button>
+                                                                                    )}
+                                                                                    <input type="file" id={`f-pt-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+                                                                        {!row.details.isPublicTransport && (
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Odo Photo</label>
+                                                                                {(!isLocked && row.date === todayStr) ? (
+                                                                                    <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoStart')}>
+                                                                                        {row.details.odoStartImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
+                                                                                        <span>{row.details.odoStartImg ? 'Captured' : 'Odo Pic'}</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <div style={{ fontSize: '0.7rem', color: row.details.odoStartImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoStartImg ? '✓ Captured' : 'N/A'}</div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
 
@@ -1840,21 +1970,42 @@ const TravelExpenseGrid = ({
                                                                             <label>Location</label>
                                                                             <input type="text" placeholder="End location / Destination" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} className="cat-input" disabled={isLocked} />
                                                                         </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Odo Reading</label>
-                                                                            <input type="number" placeholder="0" value={row.details.odoEnd || ''} onChange={e => updateDetails(row.id, 'odoEnd', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
-                                                                        </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Odo Photo</label>
-                                                                            {(!isLocked && row.date === todayStr) ? (
-                                                                                <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoEnd')}>
-                                                                                    {row.details.odoEndImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
-                                                                                    <span>{row.details.odoEndImg ? 'Captured' : 'Odo Pic'}</span>
-                                                                                </button>
-                                                                            ) : (
-                                                                                <div style={{ fontSize: '0.7rem', color: row.details.odoEndImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoEndImg ? '✓ Captured' : 'N/A'}</div>
-                                                                            )}
-                                                                        </div>
+                                                                        {!row.details.isPublicTransport ? (
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Odo Reading</label>
+                                                                                <input type="number" placeholder="0" value={row.details.odoEnd || ''} onChange={e => updateDetails(row.id, 'odoEnd', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
+                                                                                <label>Type / Public Mode</label>
+                                                                                <select 
+                                                                                    className="cat-input" 
+                                                                                    value={row.details.remainingRoute || 'Auto'} 
+                                                                                    onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)} 
+                                                                                    disabled={isLocked}
+                                                                                >
+                                                                                    <option value="Auto">Auto</option>
+                                                                                    <option value="Bus">Bus</option>
+                                                                                    <option value="Taxi">Taxi</option>
+                                                                                    <option value="Metro">Metro</option>
+                                                                                    <option value="Rickshaw">Rickshaw</option>
+                                                                                    <option value="Other">Other</option>
+                                                                                </select>
+                                                                            </div>
+                                                                        )}
+                                                                        {!row.details.isPublicTransport && (
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Odo Photo</label>
+                                                                                {(!isLocked && row.date === todayStr) ? (
+                                                                                    <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoEnd')}>
+                                                                                        {row.details.odoEndImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
+                                                                                        <span>{row.details.odoEndImg ? 'Captured' : 'Odo Pic'}</span>
+                                                                                    </button>
+                                                                                ) : (
+                                                                                    <div style={{ fontSize: '0.7rem', color: row.details.odoEndImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoEndImg ? '✓ Captured' : 'N/A'}</div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
 
@@ -1863,7 +2014,7 @@ const TravelExpenseGrid = ({
                                                                     {/* Calc bar */}
                                                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 14px', borderBottom: jobReportOpen[row.id] || row.details.jobReport ? '1px solid #e2e8f0' : 'none' }}>
                                                                         <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
-                                                                            Calc. Odo claim :&nbsp;
+                                                                            {row.details.isPublicTransport ? 'Calculated Fare claim : ' : 'Calc. Odo claim : '} &nbsp;
                                                                             <span style={{ color: '#4f46e5', fontWeight: 800, fontSize: '0.9rem' }}>₹{formatIndianCurrency(parseFloat(row.amount || 0).toFixed(2))}</span>
                                                                         </div>
                                                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -2008,7 +2159,7 @@ const TravelExpenseGrid = ({
                                                                                                     }
                                                                                                     return true;
                                                                                                 });
-                                                                                                
+
                                                                                                 const newFilesPromises = validFiles.map(file => {
                                                                                                     return new Promise(resolve => {
                                                                                                         const reader = new FileReader();
@@ -2173,12 +2324,35 @@ const TravelExpenseGrid = ({
                                                                 {row.details.mode === 'Flight' ? (
                                                                     <>
                                                                         <div className="field-group">
-                                                                            <div style={{ flex: 1 }}>
-                                                                                <input type="text" placeholder="From Airport" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} />
+                                                                            <div style={{ flex: 1, position: 'relative' }}>
+                                                                                <input
+                                                                                    type="text"
+                                                                                    placeholder="From Airport"
+                                                                                    value={row.details.origin || ''}
+                                                                                    onChange={e => updateDetails(row.id, 'origin', e.target.value)}
+                                                                                    disabled={isFixedLocal && !row.is_deviated}
+                                                                                    style={{ width: '100%', paddingRight: (isFixedLocal && !row.is_deviated) ? '70px' : '8px' }}
+                                                                                />
+                                                                                {isFixedLocal && !row.is_deviated && (
+                                                                                    <button
+                                                                                        className="deviate-mini-btn"
+                                                                                        onClick={() => setDeviationModal({ show: true, rowId: row.id, reason: '' })}
+                                                                                        style={{ position: 'absolute', right: '4px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.65rem', padding: '2px 6px', background: '#fee2e2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '2px' }}
+                                                                                    >
+                                                                                        <AlertTriangle size={10} /> Deviate
+                                                                                    </button>
+                                                                                )}
                                                                                 {errors[row.id]?.origin && <div className="text-danger" style={{ fontSize: '0.65rem' }}>{errors[row.id].origin}</div>}
                                                                             </div>
                                                                             <div style={{ flex: 1 }}>
-                                                                                <input type="text" placeholder="To Airport" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} />
+                                                                                <input
+                                                                                    type="text"
+                                                                                    placeholder="To Airport"
+                                                                                    value={row.details.destination || ''}
+                                                                                    onChange={e => updateDetails(row.id, 'destination', e.target.value)}
+                                                                                    disabled={isFixedLocal && !row.is_deviated}
+                                                                                    style={{ width: '100%' }}
+                                                                                />
                                                                                 {errors[row.id]?.destination && <div className="text-danger" style={{ fontSize: '0.65rem' }}>{errors[row.id].destination}</div>}
                                                                             </div>
                                                                         </div>
@@ -2212,8 +2386,8 @@ const TravelExpenseGrid = ({
                                                                 ) : row.details.mode === 'Intercity Cab' ? (
                                                                     <>
                                                                         <div className="field-group">
-                                                                            <input type="text" placeholder="From Location" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} />
-                                                                            <input type="text" placeholder="To Location" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} />
+                                                                            <input type="text" placeholder="From Location" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} disabled={isFixedLocal && !row.is_deviated} />
+                                                                            <input type="text" placeholder="To Location" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} disabled={isFixedLocal && !row.is_deviated} />
                                                                         </div>
                                                                         <div className="field-group mt-1">
                                                                             <input type="text" placeholder="Provider / Vendor" value={row.details.provider || ''} onChange={e => updateDetails(row.id, 'provider', e.target.value)} style={{ flex: 1.5 }} />
@@ -2232,11 +2406,11 @@ const TravelExpenseGrid = ({
                                                                         {/* Default (Train, Intercity Bus, Intercity Car etc.) */}
                                                                         <div className="field-group">
                                                                             <div style={{ flex: 1 }}>
-                                                                                <input type="text" placeholder="From" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} />
+                                                                                <input type="text" placeholder="From" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} disabled={isFixedLocal && !row.is_deviated} />
                                                                                 {errors[row.id]?.origin && <div className="text-danger" style={{ fontSize: '0.65rem' }}>{errors[row.id].origin}</div>}
                                                                             </div>
                                                                             <div style={{ flex: 1 }}>
-                                                                                <input type="text" placeholder="To" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} />
+                                                                                <input type="text" placeholder="To" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} disabled={isFixedLocal && !row.is_deviated} />
                                                                                 {errors[row.id]?.destination && <div className="text-danger" style={{ fontSize: '0.65rem' }}>{errors[row.id].destination}</div>}
                                                                             </div>
                                                                             {row.details.mode === 'Intercity Bus' && (
@@ -2271,6 +2445,37 @@ const TravelExpenseGrid = ({
                                                                             )}
                                                                         </div>
                                                                     </>
+                                                                )}
+                                                                {row.is_deviated && (
+                                                                    <div className="deviation-indicator mt-1" style={{ fontSize: '0.7rem', color: '#dc2626', background: '#fff5f5', padding: '4px 8px', borderRadius: '4px', border: '1px solid #feb2b2', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <Info size={10} />
+                                                                        <strong>Deviated:</strong> {row.deviation_target ? `${row.deviation_target} - ` : ''}{row.deviation_reason}
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                confirm({
+                                                                                    title: "Remove Deviation?",
+                                                                                    message: "Reset route to planned path?",
+                                                                                    onConfirm: () => {
+                                                                                        setRows(prev => prev.map(r => {
+                                                                                            if (r.id === row.id) {
+                                                                                                return {
+                                                                                                    ...r,
+                                                                                                    is_deviated: false,
+                                                                                                    deviation_reason: '',
+                                                                                                    deviation_target: '',
+                                                                                                    isSaved: false
+                                                                                                };
+                                                                                            }
+                                                                                            return r;
+                                                                                        }));
+                                                                                    }
+                                                                                });
+                                                                            }}
+                                                                            style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#dc2626', cursor: 'pointer', fontSize: '0.65rem', padding: '0 4px', fontWeight: 700 }}
+                                                                        >
+                                                                            RESET
+                                                                        </button>
+                                                                    </div>
                                                                 )}
                                                             </div>
                                                         </td>
@@ -2387,10 +2592,47 @@ const TravelExpenseGrid = ({
                                                         </td>
                                                         <td>
                                                             <div className="row-fields">
-                                                                <div className="field-group">
-                                                                    <input type="text" placeholder="From Location" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} style={{ flex: 1 }} />
-                                                                    <input type="text" placeholder="To Location" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} style={{ flex: 1 }} />
+                                                                <div className="field-group" style={{ position: 'relative' }}>
+                                                                    <div style={{ flex: 1, position: 'relative' }}>
+                                                                        <input
+                                                                            type="text"
+                                                                            placeholder="From Location"
+                                                                            value={row.details.origin || ''}
+                                                                            onChange={e => updateDetails(row.id, 'origin', e.target.value)}
+                                                                            disabled={isFixedLocal && !row.is_deviated}
+                                                                            style={{ width: '100%', paddingRight: isFixedLocal ? '80px' : '8px' }}
+                                                                        />
+                                                                        {isFixedLocal && !row.is_deviated && (
+                                                                            <button
+                                                                                className="deviate-mini-btn"
+                                                                                onClick={() => setDeviationModal({ 
+                                                                                    show: true, 
+                                                                                    rowId: row.id, 
+                                                                                    reason: '',
+                                                                                    actualFrom: row.details.origin || '',
+                                                                                    actualTo: row.details.destination || ''
+                                                                                })}
+                                                                                title="Report deviation from planned route"
+                                                                            >
+                                                                                <AlertTriangle size={12} /> Deviate
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="To Location"
+                                                                        value={row.details.destination || ''}
+                                                                        onChange={e => updateDetails(row.id, 'destination', e.target.value)}
+                                                                        disabled={isFixedLocal && !row.is_deviated}
+                                                                        style={{ flex: 1 }}
+                                                                    />
                                                                 </div>
+                                                                {row.is_deviated && (
+                                                                    <div className="deviation-indicator" title={row.deviation_reason}>
+                                                                        <Info size={10} />
+                                                                        <strong>Deviated:</strong> {row.deviation_target ? `${row.deviation_target} - ` : ''}{row.deviation_reason}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </td>
                                                         {/* TIME & TRACKING COLUMN */}
@@ -2406,7 +2648,25 @@ const TravelExpenseGrid = ({
                                                                 </div>
 
                                                                 <div className="odo-tracking mt-2" style={{ gridColumn: '1 / -1' }}>
-                                                                    {['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental'].includes(row.details.subType) && (
+                                                                    {/* TOGGLE FOR VEHICLE vs OTHERS */}
+                                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px', marginBottom: '12px' }}>
+                                                                        <button 
+                                                                            type="button" 
+                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', false)}
+                                                                            style={{ padding: '6px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                        >
+                                                                            VEHICLE (ODOMETER)
+                                                                        </button>
+                                                                        <button 
+                                                                            type="button" 
+                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', true)}
+                                                                            style={{ padding: '6px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                        >
+                                                                            OTHERS (BUS/AUTO)
+                                                                        </button>
+                                                                    </div>
+
+                                                                    {!row.details.isPublicTransport && ['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental'].includes(row.details.subType) && (
                                                                         <>
                                                                             {(() => {
                                                                                 const is4W = row.details.subType.includes('Car');
@@ -2454,6 +2714,64 @@ const TravelExpenseGrid = ({
                                                                                 </div>
                                                                             </div>
                                                                         </>
+                                                                    )}
+
+                                                                    {(row.details.isPublicTransport || row.details.mode === 'Public Transport') && (
+                                                                        <div className="pt-details mt-2" style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                                                                <div style={{ flex: 1, minWidth: '150px' }}>
+                                                                                    <label className="odo-label" style={{ display: 'block', marginBottom: '6px', fontSize: '0.65rem' }}>Type / Public Mode</label>
+                                                                                    <select 
+                                                                                        className="cat-input" 
+                                                                                        style={{ width: '100%', fontSize: '0.8rem', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                                                                                        value={row.details.remainingRoute || 'Auto'} 
+                                                                                        onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)} 
+                                                                                        disabled={isLocked}
+                                                                                    >
+                                                                                        <option value="Auto">Auto</option>
+                                                                                        <option value="Bus">Bus</option>
+                                                                                        <option value="Taxi">Taxi</option>
+                                                                                        <option value="Metro">Metro</option>
+                                                                                        <option value="Rickshaw">Rickshaw</option>
+                                                                                        <option value="Other">Other</option>
+                                                                                    </select>
+                                                                                </div>
+                                                                                <div style={{ width: '160px' }}>
+                                                                                    <label className="odo-label" style={{ display: 'block', marginBottom: '6px', fontSize: '0.65rem', color: '#4f46e5', fontWeight: 800 }}>Fare Amount (₹)</label>
+                                                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                                                        <input
+                                                                                            type="number"
+                                                                                            placeholder="0.00"
+                                                                                            value={row.amount || ''}
+                                                                                            onChange={e => updateRow(row.id, 'amount', e.target.value)}
+                                                                                            style={{ width: '100%', fontSize: '0.85rem', fontWeight: 700, padding: '8px', borderRadius: '6px', border: '1px solid #4f46e5', background: '#f5f3ff' }}
+                                                                                            disabled={isLocked}
+                                                                                        />
+                                                                                        {!isLocked && (
+                                                                                            <button type="button" className="upload-bill-btn" style={{ padding: '0 10px', height: '36px' }} onClick={() => document.getElementById(`f-pt-t-${row.id}`).click()}>
+                                                                                                <Upload size={14} />
+                                                                                            </button>
+                                                                                        )}
+                                                                                        <input type="file" id={`f-pt-t-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
+                                                                                    </div>
+                                                                                </div>
+                                                                                {(row.bills || []).length > 0 && (
+                                                                                    <div style={{ width: '100%', marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                                                        {row.bills.map((b, i) => (
+                                                                                            <div key={i} style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer', background: '#e0f2fe', borderRadius: '6px', padding: '4px 8px', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#0369a1', fontWeight: 600 }} onClick={() => previewBill(b)}>
+                                                                                                <FileText size={12} /> Bill {i + 1}
+                                                                                                {!isLocked && (
+                                                                                                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0, lineHeight: 1, marginLeft: '2px' }} onClick={e => { e.stopPropagation(); removeBill(row.id, i); }}>
+                                                                                                        <X size={10} />
+                                                                                                    </button>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                            <p style={{ fontSize: '0.65rem', color: '#64748b', marginTop: '8px', fontStyle: 'italic' }}>* Manual entry mode: Odometer calculations are disabled.</p>
+                                                                        </div>
                                                                     )}
 
                                                                     {/* Selfie Capture Section */}
@@ -3318,6 +3636,134 @@ const TravelExpenseGrid = ({
                     </div>
                 )}
             </div>
+
+            {/* Deviation Reason Modal */}
+            {deviationModal.show && (
+                <div className="custom-confirm-overlay">
+                    <div className="custom-confirm-modal" style={{ maxWidth: '400px' }}>
+                        <div className="modal-status-bar warning"></div>
+                        <div className="modal-content-p">
+                            <h3>{deviationModal.isNotVisited ? 'Mark as Not Visited' : 'Report Travel Deviation'}</h3>
+                            <p style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: 1.5 }}>
+                                {deviationModal.isNotVisited 
+                                    ? 'Please provide a reason for not visiting this planned location. This entry will be marked as cancelled and the amount will be set to zero.' 
+                                    : 'Please enter the reason for deviating from the planned route. This requires approval.'}
+                            </p>
+                            <textarea
+                                className="cat-input mt-3"
+                                style={{ width: '100%', height: '80px', padding: '10px' }}
+                                placeholder={deviationModal.isNotVisited ? "Enter cancellation reason (e.g., Client unavailable, Appointment postponed)..." : "Enter deviation reason (e.g., Client changed meeting location, Emergency detour etc.)"}
+                                value={deviationModal.reason}
+                                onChange={e => setDeviationModal(p => ({ ...p, reason: e.target.value }))}
+                            />
+                            {!deviationModal.isNotVisited && (
+                                <>
+                                    <input
+                                        type="text"
+                                        className="cat-input mt-2"
+                                        style={{ width: '100%', padding: '10px' }}
+                                        placeholder="Visited Person / Office"
+                                        value={deviationModal.target}
+                                        onChange={e => setDeviationModal(p => ({ ...p, target: e.target.value }))}
+                                    />
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                        <input
+                                            type="text"
+                                            className="cat-input mt-2"
+                                            style={{ width: '100%', padding: '10px' }}
+                                            placeholder="Actual From (Location)"
+                                            value={deviationModal.actualFrom}
+                                            onChange={e => setDeviationModal(p => ({ ...p, actualFrom: e.target.value }))}
+                                        />
+                                        <input
+                                            type="text"
+                                            className="cat-input mt-2"
+                                            style={{ width: '100%', padding: '10px' }}
+                                            placeholder="Actual To (Location)"
+                                            value={deviationModal.actualTo}
+                                            onChange={e => setDeviationModal(p => ({ ...p, actualTo: e.target.value }))}
+                                        />
+                                    </div>
+                                </>
+                            )}
+                            <div className="modal-actions-p mt-3">
+                                <button className="modal-btn cancel" onClick={() => setDeviationModal({ show: false, rowId: null, reason: '', target: '', actualFrom: '', actualTo: '' })}>Cancel</button>
+                                
+                                {!deviationModal.isNotVisited && (
+                                    <button
+                                        className="modal-btn confirm warning"
+                                        disabled={!deviationModal.reason.trim()}
+                                        onClick={() => {
+                                            setRows(prev => prev.map(r => {
+                                                if (r.id === deviationModal.rowId) {
+                                                    return {
+                                                        ...r,
+                                                        is_deviated: true,
+                                                        deviation_reason: deviationModal.reason,
+                                                        details: {
+                                                            ...r.details,
+                                                            is_deviated: true,
+                                                            // Preserve original as planned if not already done
+                                                            plannedOrigin: r.details.plannedOrigin || r.details.origin,
+                                                            plannedDestination: r.details.plannedDestination || r.details.destination,
+                                                            // Update display locations to actuals
+                                                            origin: deviationModal.actualFrom,
+                                                            destination: deviationModal.actualTo,
+                                                            // Store explicit actuals for audit
+                                                            actualFrom: deviationModal.actualFrom,
+                                                            actualTo: deviationModal.actualTo,
+                                                            visitedPerson: deviationModal.target
+                                                        },
+                                                        isSaved: false
+                                                    };
+                                                }
+                                                return r;
+                                            }));
+                                            setDeviationModal({ show: false, rowId: null, reason: '', target: '', actualFrom: '', actualTo: '' });
+                                            showToast("Deviation recorded. Locations updated.", "success");
+                                        }}
+                                    >
+                                        Confirm Deviation
+                                    </button>
+                                )}
+
+                                {deviationModal.isNotVisited && (
+                                    <button
+                                        className="modal-btn confirm danger"
+                                        disabled={!deviationModal.reason.trim()}
+                                        onClick={() => {
+                                            setRows(prev => prev.map(r => {
+                                                if (r.id === deviationModal.rowId) {
+                                                    return {
+                                                        ...r,
+                                                        is_deviated: true,
+                                                        deviation_reason: `[Cancelled/Skip] ${deviationModal.reason}`,
+                                                        amount: '0',
+                                                        details: {
+                                                            ...r.details,
+                                                            is_deviated: true,
+                                                            travelStatus: 'Cancelled',
+                                                            cancellationReason: deviationModal.reason,
+                                                            cancellationDate: r.date,
+                                                            isNotVisited: true
+                                                        },
+                                                        isSaved: false
+                                                    };
+                                                }
+                                                return r;
+                                            }));
+                                            setDeviationModal({ show: false, rowId: null, reason: '', target: '' });
+                                            showToast("Visit marked as Not Visited.", "warning");
+                                        }}
+                                    >
+                                        Confirm Not Visited
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Bulk Upload Modal */}
             {bulkModal.visible && (

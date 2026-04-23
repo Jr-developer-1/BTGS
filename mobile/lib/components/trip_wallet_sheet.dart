@@ -526,37 +526,6 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
     );
   }
 
-  Future<void> _handleRequestAdvance() async {
-    if (_advanceAmountController.text.isEmpty ||
-        _advancePurposeController.text.isEmpty)
-      return;
-
-    setState(() => _isSubmitting = true);
-    try {
-      await _tripService.requestAdvance(
-        _tripData.id,
-        double.parse(_advanceAmountController.text),
-        _advancePurposeController.text,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Advance request submitted!')),
-        );
-        setState(() {
-          _view = 'overview';
-          _isSubmitting = false;
-        });
-        _refreshTripData();
-        widget.onUpdate();
-      }
-    } catch (e) {
-      setState(() => _isSubmitting = false);
-      if (mounted)
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
-    }
-  }
 
   bool _isOdoForm() {
     if (_selectedCategory != 'Local') return false;
@@ -1106,13 +1075,15 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
         Container(
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            color: isLow ? const Color(0xFF991B1B) : const Color(0xFF0B2844),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF991B1B), Color(0xFF7F1D1D)],
+            ),
             borderRadius: BorderRadius.circular(24),
             boxShadow: [
               BoxShadow(
-                color:
-                    (isLow ? const Color(0xFF991B1B) : const Color(0xFF0B2844))
-                        .withOpacity(0.3),
+                color: const Color(0xFF991B1B).withOpacity(0.3),
                 blurRadius: 20,
                 offset: const Offset(0, 10),
               ),
@@ -1121,47 +1092,50 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
           child: Column(
             children: [
               Text(
-                'Available Trip Balance',
+                'AVAILABLE TRIP BALANCE',
                 style: GoogleFonts.inter(
-                  color: Colors.white70,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.2,
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Text(
                 '₹${balance.toStringAsFixed(0)}',
                 style: GoogleFonts.inter(
                   color: Colors.white,
-                  fontSize: 36,
+                  fontSize: 40,
                   fontWeight: FontWeight.w900,
+                  letterSpacing: -1.0,
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+                  horizontal: 14,
+                  vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white10,
+                  color: Colors.white.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(100),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      isLow ? Icons.error_outline : Icons.check_circle_outline,
+                      isLow ? Icons.warning_amber_rounded : Icons.verified_user_rounded,
                       color: Colors.white,
                       size: 14,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Text(
-                      isLow ? 'Low Balance Alert!' : 'Balance is healthy',
+                      isLow ? 'LOW BALANCE ALERT' : 'BALANCE IS HEALTHY',
                       style: GoogleFonts.inter(
                         color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
                       ),
                     ),
                   ],
@@ -1198,7 +1172,7 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
               child: _actionBtn(
                 Icons.currency_rupee_rounded,
                 'Top Up',
-                const Color(0xFF0B2844),
+                const Color(0xFFBB0633),
                 () => setState(() => _view = 'request_advance'),
               ),
             ),
@@ -1316,10 +1290,10 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
       for (var a in _tripData.advances!) {
         activities.add({
           'type': 'advance',
-          'title': 'Advance: ${a['purpose']}',
-          'date': a['created_at'] ?? 'N/A',
-          'amount': safeDouble(a['requested_amount']),
-          'status': a['status'] ?? 'Submitted',
+          'title': 'Advance: ${a.purpose}',
+          'date': a.submittedAt?.toIso8601String() ?? 'N/A',
+          'amount': a.requestedAmount,
+          'status': a.status,
         });
       }
     }
@@ -1726,73 +1700,506 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
     }
   }
 
-  Widget _buildRequestAdvance() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Future<void> _handleRequestAdvance() async {
+    if (_advanceAmountController.text.isEmpty ||
+        _advancePurposeController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill all fields')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      await _tripService.requestAdvance(
+        widget.tripId,
+        double.parse(_advanceAmountController.text),
+        _advancePurposeController.text,
+      );
+      if (mounted) {
+        setState(() {
+          _view = 'overview';
+          _advanceAmountController.clear();
+          _advancePurposeController.clear();
+        });
+        _refreshTripData();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Advance request submitted'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Widget _capacityRow(String label, String value, {bool isTotal = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: () => setState(() => _view = 'overview'),
-              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Request New Advance',
-              style: GoogleFonts.interTight(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        _formField(
-          'Amount (INR)',
-          TextField(
-            controller: _advanceAmountController,
-            keyboardType: TextInputType.number,
-            decoration: _inputDecoration(
-              Icons.currency_rupee_rounded,
-              'Enter amount',
-            ),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 13,
+            fontWeight: isTotal ? FontWeight.w800 : FontWeight.w600,
+            color: isTotal ? const Color(0xFF1E293B) : const Color(0xFF64748B),
           ),
         ),
-        const SizedBox(height: 20),
-        _formField(
-          'Purpose / Description',
-          TextField(
-            controller: _advancePurposeController,
-            maxLines: 4,
-            decoration: _inputDecoration(null, 'Why do you need this top up?'),
-          ),
-        ),
-        const SizedBox(height: 30),
-        SizedBox(
-          width: double.infinity,
-          height: 60,
-          child: ElevatedButton(
-            onPressed: _isSubmitting ? null : _handleRequestAdvance,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF7C1D1D),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
-              ),
-            ),
-            child: _isSubmitting
-                ? const CircularProgressIndicator(color: Colors.white)
-                : Text(
-                    'Submit Request',
-                    style: GoogleFonts.inter(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                    ),
-                  ),
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: isTotal ? 16 : 14,
+            fontWeight: FontWeight.w900,
+            color: isTotal ? const Color(0xFF0F172A) : const Color(0xFF334155),
           ),
         ),
       ],
     );
+  }
+
+  static const double _capacityLimit = 45000.0;
+
+  Widget _buildRequestAdvance() {
+    double? currentAmount = double.tryParse(_advanceAmountController.text);
+    bool showCfoAlert = currentAmount != null && currentAmount > _capacityLimit;
+
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: () => setState(() => _view = 'overview'),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Trip Advance & Top-up',
+                style: GoogleFonts.interTight(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF1E293B),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          
+          // Web-style Balance Card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF991B1B), Color(0xFF7F1D1D)],
+              ),
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF991B1B).withOpacity(0.2),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                )
+              ],
+            ),
+            child: Column(
+              children: [
+                Text(
+                  'AVAILABLE TRIP BALANCE',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white.withOpacity(0.7),
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '₹${widget.trip.walletBalance?.toStringAsFixed(2) ?? '0.00'}',
+                  style: GoogleFonts.interTight(
+                    fontSize: 32,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline_rounded, color: Colors.white, size: 12),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Low Balance Alert! Top up recommended.',
+                        style: GoogleFonts.inter(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Form Container
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: const Color(0xFFF1F5F9)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _formField(
+                  'AMOUNT (INR)',
+                  TextField(
+                    controller: _advanceAmountController,
+                    keyboardType: TextInputType.number,
+                    onChanged: (val) => setState(() {}),
+                    decoration: _inputDecoration(
+                      Icons.currency_rupee_rounded,
+                      'Enter amount',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                _formField(
+                  'PURPOSE / DESCRIPTION',
+                  TextField(
+                    controller: _advancePurposeController,
+                    maxLines: 4,
+                    decoration: _inputDecoration(
+                      Icons.description_outlined,
+                      'Why do you need this top up?',
+                    ),
+                  ),
+                ),
+                
+                if (showCfoAlert) ...[
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFFEE2E2)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.security_rounded,
+                          color: Color(0xFFB91C1C),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'CFO Approval Required',
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                  color: const Color(0xFF991B1B),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Request exceeds your capacity of ₹45,000.',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  color: const Color(0xFFB91C1C),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                
+                const SizedBox(height: 32),
+                
+                // Submit Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _handleRequestAdvance,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFBB0633), // High-fidelity Crimson
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.send_rounded, color: Colors.white, size: 18),
+                              const SizedBox(width: 8),
+                              Text(
+                                'SUBMIT REQUEST',
+                                style: GoogleFonts.inter(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: -0.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+          
+          // Recovery Capacity Card (Sidebar in web)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9).withOpacity(0.5),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0xFFF1F5F9)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.account_balance_wallet_rounded, 
+                      size: 20, color: Color(0xFF475569)),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Recovery Capacity Tracking',
+                      style: GoogleFonts.interTight(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF1E293B),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _capacityRow('F&F Payable', '₹25,000'),
+                const SizedBox(height: 12),
+                _capacityRow('Asset Value', '₹20,000'),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Divider(height: 1, color: Color(0xFFE2E8F0)),
+                ),
+                _capacityRow('Total Recovery Capacity', '₹45,000', isTotal: true),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline_rounded, 
+                        size: 14, color: Color(0xFF3B82F6)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Advance limits are calculated based on your final settlement capacity.',
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            color: const Color(0xFF64748B),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          Text(
+            'Recent Advances',
+            style: GoogleFonts.interTight(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF475569),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildAdvancesList(),
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
+
+  Widget _capacityRow(String label, String value, {bool isTotal = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 13,
+            fontWeight: isTotal ? FontWeight.w800 : FontWeight.w600,
+            color: isTotal ? const Color(0xFF1E293B) : const Color(0xFF64748B),
+          ),
+        ),
+        Text(
+          value,
+          style: GoogleFonts.inter(
+            fontSize: isTotal ? 16 : 14,
+            fontWeight: FontWeight.w900,
+            color: isTotal ? const Color(0xFF0F172A) : const Color(0xFF334155),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdvancesList() {
+    final advances = _tripData.advances ?? [];
+    if (advances.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Center(
+          child: Text(
+            'No recent advance requests.',
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: Colors.black38,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: advances.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final adv = advances[index];
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFF1F5F9)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '₹${adv.requestedAmount.toInt().toString()}',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      adv.submittedAt != null 
+                        ? DateFormat('dd MMM yyyy').format(adv.submittedAt!)
+                        : 'Unknown Date',
+                      style: GoogleFonts.inter(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black26,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _getAdvanceStatusColor(adv.status).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  adv.status.toUpperCase(),
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: _getAdvanceStatusColor(adv.status),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getAdvanceStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'approved':
+      case 'paid':
+        return Colors.green;
+      case 'submitted':
+      case 'pending':
+        return Colors.amber;
+      case 'rejected':
+        return Colors.red;
+      default:
+        return Colors.blue;
+    }
   }
 
   Widget _buildAddExpense() {

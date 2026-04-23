@@ -37,7 +37,7 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
             const d = new Date(trip.start_date);
             d.setDate(d.getDate() - 1);
             return d.toISOString().split('T')[0];
-        } catch(e) { return undefined; }
+        } catch (e) { return undefined; }
     };
 
     const getMaxDate = () => {
@@ -46,7 +46,7 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
             const d = new Date(trip.end_date);
             d.setDate(d.getDate() + 1);
             return d.toISOString().split('T')[0];
-        } catch(e) { return undefined; }
+        } catch (e) { return undefined; }
     };
 
     const minDate = getMinDate();
@@ -84,6 +84,9 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
     useEffect(() => {
         if (isOpen && trip) {
             refreshTripData();
+        } else if (!isOpen) {
+            setAdvanceForm({ amount: '', purpose: '' });
+            setView('overview');
         }
     }, [isOpen, trip]);
 
@@ -115,6 +118,7 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
             setView('overview');
             refreshTripData();
             if (onUpdate) onUpdate();
+            if (onClose) onClose();
         } catch (error) {
             showToast("Failed to submit request", "error");
         } finally {
@@ -124,6 +128,13 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
 
     const handleAddExpense = async (e) => {
         e.preventDefault();
+
+        const isBulkUpload = trip.is_bulk_upload || (trip.activity_batches && trip.activity_batches.length > 0);
+        if (isBulkUpload) {
+            showToast("Manual expense submissions are disabled for bulk-uploaded trips.", "error");
+            return;
+        }
+
         if (!expenseForm.receipt_image) {
             showToast("Physical receipt capture is mandatory!", "error");
             return;
@@ -216,7 +227,7 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
     const isLowBalance = balance < minBalance;
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay">
             <div className="wallet-modal glass animate-fade-in" onClick={e => e.stopPropagation()}>
                 <div className="modal-header-premium">
                     <div className="header-left-content">
@@ -451,7 +462,7 @@ const TripWalletModal = ({ isOpen, onClose, trip, onUpdate }) => {
                                 </div>
 
                                 <div className="form-actions-p">
-                                    <button type="submit" className="btn-wallet-submit" disabled={isSubmitting || isLocating}>
+                                    <button type="submit" className="btn-wallet-submit" disabled={isSubmitting || isLocating || (trip.is_bulk_upload || (trip.activity_batches && trip.activity_batches.length > 0))}>
                                         {isSubmitting ? <div className="spinner-mini" /> : <CheckCircle2 size={18} />}
                                         <span>Record Expense</span>
                                     </button>

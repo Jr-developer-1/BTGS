@@ -263,7 +263,13 @@ class Expense(SoftDeleteModel):
     longitude = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
     rm_remarks = models.TextField(blank=True, null=True)
     hr_remarks = models.TextField(blank=True, null=True)
+    is_deviated = models.BooleanField(default=False)
+    deviation_reason = models.TextField(blank=True, null=True)
+    deviation_target = models.CharField(max_length=255, blank=True, null=True)
+    planned_origin = models.CharField(max_length=255, blank=True, null=True)
+    planned_destination = models.CharField(max_length=255, blank=True, null=True)
     finance_remarks = models.TextField(blank=True, null=True)
+    row_index = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     # New fields for Long Distance Travel Enhancement
@@ -324,6 +330,10 @@ class TravelClaim(SoftDeleteModel):
     hierarchy_level = models.IntegerField(default=1)
     submitted_at = models.DateTimeField(null=True, blank=True)
     remarks = models.TextField(blank=True)
+    has_deviations = models.BooleanField(default=False)
+    deviation_summary = models.TextField(blank=True)
+    planned_origin = models.CharField(max_length=255, blank=True, null=True)
+    planned_destination = models.CharField(max_length=255, blank=True, null=True)
     
     # Finance/Payment fields
     payment_mode = models.CharField(max_length=50, blank=True, null=True)
@@ -724,4 +734,23 @@ class CustomMasterValue(SoftDeleteModel):
 
     def __str__(self):
         return f"{self.definition.table_name} - {self.name}"
+
+class HistoricalTripStop(models.Model):
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='historical_stops')
+    trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='historical_stops', null=True, blank=True)
+    location_name = models.CharField(max_length=255)
+    latitude = models.DecimalField(max_digits=20, decimal_places=10)
+    longitude = models.DecimalField(max_digits=20, decimal_places=10)
+    arrival_time = models.DateTimeField()
+    departure_time = models.DateTimeField(null=True, blank=True)
+    duration_minutes = models.IntegerField(default=0)
+    date = models.DateField(db_index=True)
+
+    class Meta:
+        ordering = ['arrival_time']
+        verbose_name = "Historical Trip Stop"
+        verbose_name_plural = "Historical Trip Stops"
+
+    def __str__(self):
+        return f"Stop at {self.location_name} for {self.user.name} on {self.date}"
 

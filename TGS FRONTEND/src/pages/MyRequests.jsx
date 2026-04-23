@@ -52,10 +52,10 @@ const MyRequests = ({ enforceView = null }) => {
                 api.get('/api/trips/', { params: { page } }),
                 api.get('/api/travels/', { params: { page } })
             ]);
-            
+
             const tripsData = tripsRes.data.results || tripsRes.data || [];
             const travelsData = travelsRes.data.results || travelsRes.data || [];
-            
+
             const mappedTrips = tripsData.map(trip => ({
                 id: trip.trip_id,
                 title: trip.purpose || 'Travel Request',
@@ -77,7 +77,7 @@ const MyRequests = ({ enforceView = null }) => {
             }));
 
             setTrips([...mappedTrips, ...mappedTravels]);
-            
+
             setPaginations(prev => ({
                 ...prev,
                 trips: {
@@ -117,7 +117,7 @@ const MyRequests = ({ enforceView = null }) => {
         try {
             const resp = await api.get('/api/advances/', { params: { page } });
             const data = resp.data.results || resp.data || [];
-            
+
             const mapped = data.map(adv => ({
                 id: `ADV-${adv.id || adv.trip.substring(4)}`,
                 title: `Advance for ${adv.trip || 'Trip'}`,
@@ -127,7 +127,7 @@ const MyRequests = ({ enforceView = null }) => {
                 type: 'advance',
                 tripRef: adv.trip
             }));
-            
+
             setAdvances(mapped);
             setPaginations(prev => ({
                 ...prev,
@@ -145,7 +145,7 @@ const MyRequests = ({ enforceView = null }) => {
 
     const isActiveStatus = (status) => {
         const s = status.toLowerCase();
-        return !['settled', 'rejected', 'cancelled'].includes(s);
+        return !['settled', 'rejected', 'cancelled', 'approved'].includes(s);
     };
 
     const filterData = (dataArray) => {

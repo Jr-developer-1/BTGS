@@ -585,7 +585,29 @@ const TravelStory = () => {
                                                                 (() => {
                                                                     try {
                                                                         const d = JSON.parse(exp.description);
-                                                                        return `${d.origin || ''}${d.origin ? ' → ' : ''}${d.destination || d.location || d.hotelName || d.hotel_name || ''}`;
+                                                                        let loc = `${d.origin || ''}${d.origin ? ' → ' : ''}${d.destination || d.location || d.hotelName || d.hotel_name || ''}`;
+                                                                        if (d.isPublicTransport) loc += ` (via ${d.subType || 'others'})`;
+                                                                        if (d.remainingRoute) loc += ` [${d.remainingRoute}]`;
+                                                                        return (
+                                                                            <>
+                                                                                {d.is_deviated ? (
+                                                                                    <>
+                                                                                        <div style={{ color: '#64748b', fontSize: '0.7rem' }}>
+                                                                                            <span style={{ fontWeight: 800 }}>Planned:</span> {d.origin} → {d.deviation_target || 'N/A'}
+                                                                                        </div>
+                                                                                        <div style={{ color: '#0f172a', fontWeight: 600 }}>
+                                                                                            <span style={{ fontWeight: 800 }}>Actual:</span> {loc}
+                                                                                        </div>
+                                                                                        <div className="deviation-reason-mini mt-1" style={{ fontSize: '0.65rem', color: '#dc2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                            <span>⚠️ REASON:</span>
+                                                                                            <span style={{ fontWeight: 500, color: '#475569' }}>{d.deviation_reason}</span>
+                                                                                        </div>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <div>{loc}</div>
+                                                                                )}
+                                                                            </>
+                                                                        );
                                                                     } catch (e) { return exp.description; }
                                                                 })()
                                                             ) : exp.description}
@@ -767,6 +789,7 @@ const TravelStory = () => {
                             onFilterChange={setDateFilter}
                             // only show bulk button for full travel requests (TRP-)
                             showBulkUpload={true}
+                            isBulkUpload={travel.is_bulk_upload || (travel.activity_batches && travel.activity_batches.length > 0)}
                             onJobReportClick={() => setShowJobReportModal(true)}
                         />
                     )}

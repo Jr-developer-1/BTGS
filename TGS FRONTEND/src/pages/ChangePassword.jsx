@@ -13,11 +13,11 @@ const ChangePassword = () => {
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    
+
     const [showCurrent, setShowCurrent] = useState(false);
     const [showNew, setShowNew] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
-    
+
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -347,7 +347,7 @@ const ChangePassword = () => {
                     outline-offset: 4px;
                 }
             `}</style>
-            
+
             <div className="cp-card">
                 <div className="cp-header">
                     <div className="cp-header-icon">
@@ -443,14 +443,14 @@ const ChangePassword = () => {
                             </div>
                         </div>
 
-                        <button 
-                            type="submit" 
-                            className="cp-submit-btn" 
+                        <button
+                            type="submit"
+                            className="cp-submit-btn"
                             disabled={isLoading || (newPassword.length > 0 && !allValid)}
                         >
                             {isLoading ? 'Updating Password...' : (
                                 <>
-                                    Update Password & Continue 
+                                    Update Password & Continue
                                     <ArrowRight size={18} />
                                 </>
                             )}
