@@ -117,7 +117,7 @@ const TravelCreation = () => {
                     const projectName = me.project?.name || '';
                     const projectCode = me.project?.code || '';
                     let derivedCode = projectCode;
-                    
+
                     if (!derivedCode && projectName) {
                         const numMatch = projectName.match(/(\d+)/);
                         derivedCode = numMatch
@@ -142,10 +142,10 @@ const TravelCreation = () => {
                         }
                     }
 
-                    setFormData(prev => ({ 
-                        ...prev, 
-                        project: derivedCode, 
-                        locationCode: locCode, 
+                    setFormData(prev => ({
+                        ...prev,
+                        project: derivedCode,
+                        locationCode: locCode,
                         locationName: locName,
                         positionCode: derivedPosition
                     }));

@@ -11,7 +11,8 @@ from .views import (
     LocalTravelModeMasterViewSet, LocalProviderMasterViewSet, LocalSubTypeMasterViewSet,
     StayTypeMasterViewSet, RoomTypeMasterViewSet, StayBookingTypeMasterViewSet, StayBookingSourceMasterViewSet,
     MealCategoryMasterViewSet, MealTypeMasterViewSet, MealSourceMasterViewSet, MealProviderMasterViewSet,
-    IncidentalTypeMasterViewSet, CustomMasterDefinitionViewSet, CustomMasterValueViewSet, MasterModuleViewSet
+    IncidentalTypeMasterViewSet, CustomMasterDefinitionViewSet, CustomMasterValueViewSet, MasterModuleViewSet,
+    FinanceExportExcelView, FinanceBulkImportView
 )
 from .views_export import ExpenseStatementPDFView, ExpenseStatementExcelView
 
@@ -78,5 +79,7 @@ urlpatterns = [
     path('approvals/count/', ApprovalCountView.as_view(), name='approvals-count'),
     path('settlement/', TripSettlementView.as_view(), name='trip-settlement'),
     path('war-room/', CFOWarRoomView.as_view(), name='war-room'),
+    path('finance/export/', FinanceExportExcelView.as_view(), name='finance-export-excel'),
+    path('finance/import/', FinanceBulkImportView.as_view(), name='finance-bulk-import'),
     path('', include(router.urls)),
 ]

@@ -29929,3 +29929,37 @@ table.data-table,
     gap: 4px;
 }
 
+
+/* --- BTGS PREMIUM THEME ENGINE --- */
+[data-theme='glass'] {
+  --bg-main: #f8fafc;
+  --bg-card: rgba(255, 255, 255, 0.7);
+  --text-main: #0f172a;
+  --primary: #6366f1;
+  --grad-surface: radial-gradient(circle at top left, #eef2ff, #f8fafc);
+}
+
+[data-theme='cyber'] {
+  --bg-main: #020617;
+  --bg-card: #0f172a;
+  --text-main: #f8fafc;
+  --text-dim: #94a3b8;
+  --primary: #06b6d4;
+  --grad-surface: linear-gradient(to bottom, #020617, #0f172a);
+}
+
+[data-theme='minimal'] {
+  --bg-main: #ffffff;
+  --bg-card: #ffffff;
+  --text-main: #18181b;
+  --primary: #1d4ed8;
+  --border: #f4f4f5;
+}
+
+[data-theme='luxury'] {
+  --bg-main: #0a0a0a;
+  --bg-card: #171717;
+  --text-main: #fbbf24;
+  --primary: #fbbf24;
+  --border: #262626;
+}

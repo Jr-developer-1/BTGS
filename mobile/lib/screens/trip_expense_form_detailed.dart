@@ -48,10 +48,13 @@ class _TripExpenseFormDetailedScreenState
   List<String> _masterStayBookingTypes = [];
   List<String> _masterStayBookingSources = [];
   List<String> _masterClasses = [];
-  List<String> _masterIncidentalTypes = [];        // all types
-  List<String> _masterGeneralIncidentalTypes = [];  // category == 'general_incidental'
-  List<String> _masterTravelIncidentalTypes = [];   // category == 'travel_incidental'
-  List<String> _masterLocalIncidentalTypes = [];    // category == 'local_conveyance'
+  List<String> _masterIncidentalTypes = []; // all types
+  List<String> _masterGeneralIncidentalTypes =
+      []; // category == 'general_incidental'
+  List<String> _masterTravelIncidentalTypes =
+      []; // category == 'travel_incidental'
+  List<String> _masterLocalIncidentalTypes =
+      []; // category == 'local_conveyance'
   List<String> _masterTicketStatuses = [];
   List<String> _masterQuotaTypes = [];
   List<String> _masterVehicles = [];
@@ -99,8 +102,10 @@ class _TripExpenseFormDetailedScreenState
   final TextEditingController _remainingRouteController =
       TextEditingController();
   final TextEditingController _bookingIdController = TextEditingController();
-  final TextEditingController _cancellationChargesController = TextEditingController();
-  final TextEditingController _noShowChargesController = TextEditingController();
+  final TextEditingController _cancellationChargesController =
+      TextEditingController();
+  final TextEditingController _noShowChargesController =
+      TextEditingController();
   final TextEditingController _baseFareController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
   bool _isPublicTransport = false;
@@ -248,12 +253,12 @@ class _TripExpenseFormDetailedScreenState
       final early = double.tryParse(_earlyCheckInController.text) ?? 0.0;
       final late = double.tryParse(_lateCheckOutController.text) ?? 0.0;
       final total = base + early + late;
-      
+
       if (_amountController.text != total.toStringAsFixed(2)) {
         _amountController.text = total.toStringAsFixed(2);
       }
     }
-    
+
     if (mounted) setState(() {});
   }
 
@@ -322,7 +327,8 @@ class _TripExpenseFormDetailedScreenState
     }
 
     Future<List<Map<String, dynamic>>> safeFetchRaw(
-        Future<List<Map<String, dynamic>>> future) async {
+      Future<List<Map<String, dynamic>>> future,
+    ) async {
       try {
         return await future;
       } catch (e) {
@@ -336,51 +342,77 @@ class _TripExpenseFormDetailedScreenState
         safeFetch(_masterService.getTravelModes()), // 0
         safeFetch(_masterService.getBookingTypes()), // 1
         safeFetch(_masterService.getLocalTravelModes()), // 2
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterStayTypes,
-          'results',
-          'stay_type',
-        )), // 3
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterRoomTypes,
-          'results',
-          'room_type',
-        )), // 4
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterMealCategories,
-          'results',
-          'category_name',
-        )), // 5
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterMealTypes,
-          'results',
-          'meal_type',
-        )), // 6
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterMealSources,
-          'results',
-          'source_name',
-        )), // 7
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterMealProviders,
-          'results',
-          'provider_name',
-        )), // 8
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterStayBookingTypes,
-          'results',
-          'booking_type',
-        )), // 9
-        safeFetch(_masterService.fetchMasterList(
-          ApiConstants.masterStayBookingSources,
-          'results',
-          'source_name',
-        )), // 10
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterStayTypes,
+            'results',
+            'stay_type',
+          ),
+        ), // 3
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterRoomTypes,
+            'results',
+            'room_type',
+          ),
+        ), // 4
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterMealCategories,
+            'results',
+            'category_name',
+          ),
+        ), // 5
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterMealTypes,
+            'results',
+            'meal_type',
+          ),
+        ), // 6
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterMealSources,
+            'results',
+            'source_name',
+          ),
+        ), // 7
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterMealProviders,
+            'results',
+            'provider_name',
+          ),
+        ), // 8
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterStayBookingTypes,
+            'results',
+            'booking_type',
+          ),
+        ), // 9
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterStayBookingSources,
+            'results',
+            'source_name',
+          ),
+        ), // 10
         safeFetch(_masterService.getIncidentalTypes()), // 11
-        safeFetch(_masterService.fetchMasterList(
-            ApiConstants.masterTicketStatus, 'results', 'status_name')), // 12
-        safeFetch(_masterService.fetchMasterList(
-            ApiConstants.masterQuotaTypes, 'results', 'quota_name')), // 13
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterTicketStatus,
+            'results',
+            'status_name',
+          ),
+        ), // 12
+        safeFetch(
+          _masterService.fetchMasterList(
+            ApiConstants.masterQuotaTypes,
+            'results',
+            'quota_name',
+          ),
+        ), // 13
         safeFetch(_masterService.getVehicles()), // 14
         safeFetch(_masterService.getOperators()), // 15
         safeFetch(_masterService.getProviders()), // 16
@@ -393,16 +425,34 @@ class _TripExpenseFormDetailedScreenState
 
       String toTC(String s) => s
           .split(' ')
-          .map((w) =>
-              w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1).toLowerCase())
+          .map(
+            (w) => w.isEmpty
+                ? ''
+                : w[0].toUpperCase() + w.substring(1).toLowerCase(),
+          )
           .join(' ');
 
       // --- Fetch & split incidental types by category ---
       await _masterService.getIncidentalTypesRaw().then((raw) {
-        final all = raw.map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
-        final general = raw.where((m) => m['category'] == 'general_incidental').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
-        final travel = raw.where((m) => m['category'] == 'travel_incidental').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
-        final local = raw.where((m) => m['category'] == 'local_conveyance').map((m) => toTC(m['expense_type']?.toString() ?? '')).where((s) => s.isNotEmpty).toList();
+        final all = raw
+            .map((m) => toTC(m['expense_type']?.toString() ?? ''))
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final general = raw
+            .where((m) => m['category'] == 'general_incidental')
+            .map((m) => toTC(m['expense_type']?.toString() ?? ''))
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final travel = raw
+            .where((m) => m['category'] == 'travel_incidental')
+            .map((m) => toTC(m['expense_type']?.toString() ?? ''))
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final local = raw
+            .where((m) => m['category'] == 'local_conveyance')
+            .map((m) => toTC(m['expense_type']?.toString() ?? ''))
+            .where((s) => s.isNotEmpty)
+            .toList();
         if (mounted) {
           setState(() {
             _masterIncidentalTypes = all;
@@ -436,14 +486,32 @@ class _TripExpenseFormDetailedScreenState
 
           // Process Raw Operators & Providers for mode-specific lists
           final ops = results[19] as List<Map<String, dynamic>>;
-          _masterAirlines = ops.where((m) => m['is_flight'] == true).map((m) => toTC(m['operator_name']?.toString() ?? '')).toList();
-          _masterBusOperators = ops.where((m) => m['is_bus'] == true).map((m) => toTC(m['operator_name']?.toString() ?? '')).toList();
+          _masterAirlines = ops
+              .where((m) => m['is_flight'] == true)
+              .map((m) => toTC(m['operator_name']?.toString() ?? ''))
+              .toList();
+          _masterBusOperators = ops
+              .where((m) => m['is_bus'] == true)
+              .map((m) => toTC(m['operator_name']?.toString() ?? ''))
+              .toList();
 
           final provs = results[20] as List<Map<String, dynamic>>;
-          _masterFlightProviders = provs.where((m) => m['is_flight'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
-          _masterTrainProviders = provs.where((m) => m['is_train'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
-          _masterBusProviders = provs.where((m) => m['is_bus'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
-          _masterCabProviders = provs.where((m) => m['is_intercity_cab'] == true).map((m) => toTC(m['provider_name']?.toString() ?? '')).toList();
+          _masterFlightProviders = provs
+              .where((m) => m['is_flight'] == true)
+              .map((m) => toTC(m['provider_name']?.toString() ?? ''))
+              .toList();
+          _masterTrainProviders = provs
+              .where((m) => m['is_train'] == true)
+              .map((m) => toTC(m['provider_name']?.toString() ?? ''))
+              .toList();
+          _masterBusProviders = provs
+              .where((m) => m['is_bus'] == true)
+              .map((m) => toTC(m['provider_name']?.toString() ?? ''))
+              .toList();
+          _masterCabProviders = provs
+              .where((m) => m['is_intercity_cab'] == true)
+              .map((m) => toTC(m['provider_name']?.toString() ?? ''))
+              .toList();
 
           _masterLocalProvidersRaw = results[21] as List<Map<String, dynamic>>;
         });
@@ -471,9 +539,11 @@ class _TripExpenseFormDetailedScreenState
     final exp = widget.expenseData;
     final initialAmount = exp['amount']?.toString() ?? '';
     _amountController.text =
-        (initialAmount == '0.0' || initialAmount == '0.00' || initialAmount == '0')
-            ? ''
-            : initialAmount;
+        (initialAmount == '0.0' ||
+            initialAmount == '0.00' ||
+            initialAmount == '0')
+        ? ''
+        : initialAmount;
 
     var details = exp['details'] ?? {};
     if (details.isEmpty &&
@@ -493,11 +563,18 @@ class _TripExpenseFormDetailedScreenState
     _fromBulkUpload =
         details['from_bulk_upload'] == true ||
         details['from_bulk_upload'] == 'true';
-    _isDeviated = details['is_deviated'] == true || details['is_deviated'] == 'true' || exp['is_deviated'] == true;
+    _isDeviated =
+        details['is_deviated'] == true ||
+        details['is_deviated'] == 'true' ||
+        exp['is_deviated'] == true;
     _deviationReason = details['deviation_reason'] ?? exp['deviation_reason'];
     _deviationTarget = details['deviation_target'] ?? exp['deviation_target'];
-    _plannedOrigin = exp['planned_origin'] ?? details['from_city'] ?? details['origin'];
-    _plannedDestination = exp['planned_destination'] ?? details['to_city'] ?? details['destination'];
+    _plannedOrigin =
+        exp['planned_origin'] ?? details['from_city'] ?? details['origin'];
+    _plannedDestination =
+        exp['planned_destination'] ??
+        details['to_city'] ??
+        details['destination'];
 
     _jobReportController.text =
         exp['remarks'] ?? details['remarks'] ?? details['jobReport'] ?? '';
@@ -555,8 +632,10 @@ class _TripExpenseFormDetailedScreenState
     _ticketStatus = details['ticketStatus'];
     _quotaType = details['quotaType'];
 
-    if (details['checkInTime'] != null) _startTime = _parseTime(details['checkInTime']);
-    if (details['checkOutTime'] != null) _endTime = _parseTime(details['checkOutTime']);
+    if (details['checkInTime'] != null)
+      _startTime = _parseTime(details['checkInTime']);
+    if (details['checkOutTime'] != null)
+      _endTime = _parseTime(details['checkOutTime']);
 
     if (details['bookingDate'] != null)
       _bookingDate = DateTime.tryParse(details['bookingDate']) ?? _bookingDate;
@@ -579,21 +658,34 @@ class _TripExpenseFormDetailedScreenState
     _reasonController.text = details['otherReason'] ?? '';
     _jobReportController.text = details['notes'] ?? details['purpose'] ?? '';
     _bookingIdController.text = details['bookingId'] ?? '';
-    _earlyCheckInController.text = (details['earlyCheckInCharges'] ?? '').toString();
-    _lateCheckOutController.text = (details['lateCheckOutCharges'] ?? '').toString();
-    _baseFareController.text = (details['baseAmount'] ?? (widget.category == 'Accommodation' ? exp['amount'] : '')).toString();
+    _earlyCheckInController.text = (details['earlyCheckInCharges'] ?? '')
+        .toString();
+    _lateCheckOutController.text = (details['lateCheckOutCharges'] ?? '')
+        .toString();
+    _baseFareController.text =
+        (details['baseAmount'] ??
+                (widget.category == 'Accommodation' ? exp['amount'] : ''))
+            .toString();
     _jobReportController.text = details['remarks'] ?? details['purpose'] ?? '';
-    
+
     // Timeline Restore for Accommodation
-    if (details['scheduledCheckInDate'] != null) _scheduledStartDate = _parseDate(details['scheduledCheckInDate']);
-    if (details['scheduledCheckOutDate'] != null) _scheduledEndDate = _parseDate(details['scheduledCheckOutDate']);
-    if (details['scheduledCheckInTime'] != null) _scheduledStartTime = _parseTime(details['scheduledCheckInTime']);
-    if (details['scheduledCheckOutTime'] != null) _scheduledEndTime = _parseTime(details['scheduledCheckOutTime']);
-    
-    if (details['actualCheckInDate'] != null) _startDate = _parseDate(details['actualCheckInDate']);
-    if (details['actualCheckOutDate'] != null) _endDate = _parseDate(details['actualCheckOutDate']);
-    if (details['actualCheckInTime'] != null) _startTime = _parseTime(details['actualCheckInTime']);
-    if (details['actualCheckOutTime'] != null) _endTime = _parseTime(details['actualCheckOutTime']);
+    if (details['scheduledCheckInDate'] != null)
+      _scheduledStartDate = _parseDate(details['scheduledCheckInDate']);
+    if (details['scheduledCheckOutDate'] != null)
+      _scheduledEndDate = _parseDate(details['scheduledCheckOutDate']);
+    if (details['scheduledCheckInTime'] != null)
+      _scheduledStartTime = _parseTime(details['scheduledCheckInTime']);
+    if (details['scheduledCheckOutTime'] != null)
+      _scheduledEndTime = _parseTime(details['scheduledCheckOutTime']);
+
+    if (details['actualCheckInDate'] != null)
+      _startDate = _parseDate(details['actualCheckInDate']);
+    if (details['actualCheckOutDate'] != null)
+      _endDate = _parseDate(details['actualCheckOutDate']);
+    if (details['actualCheckInTime'] != null)
+      _startTime = _parseTime(details['actualCheckInTime']);
+    if (details['actualCheckOutTime'] != null)
+      _endTime = _parseTime(details['actualCheckOutTime']);
     _travelMode = details['mode'];
     _travelSubType = details['subType'];
     _bookedBy = details['bookedBy'];
@@ -664,7 +756,8 @@ class _TripExpenseFormDetailedScreenState
       _startTime = _parseTime(details['mealTime']);
 
     if (details['cancellationCharges'] != null)
-      _cancellationChargesController.text = details['cancellationCharges'].toString();
+      _cancellationChargesController.text = details['cancellationCharges']
+          .toString();
     if (details['noShowCharges'] != null)
       _noShowChargesController.text = details['noShowCharges'].toString();
     if (details['baseFare'] != null)
@@ -701,7 +794,9 @@ class _TripExpenseFormDetailedScreenState
 
       // Outstation Travel Incidentals (Parity with Web)
       if (details['travelIncidentals'] is List) {
-        _incidentals = List<Map<String, dynamic>>.from(details['travelIncidentals']);
+        _incidentals = List<Map<String, dynamic>>.from(
+          details['travelIncidentals'],
+        );
       }
 
       // If incidentals are included in the main amount, subtract them for the fare field display
@@ -716,8 +811,9 @@ class _TripExpenseFormDetailedScreenState
               double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
         }
         double baseAmount = totalAmount - incidentalSum;
-        _amountController.text =
-            baseAmount > 0 ? baseAmount.toStringAsFixed(2) : '0.00';
+        _amountController.text = baseAmount > 0
+            ? baseAmount.toStringAsFixed(2)
+            : '0.00';
       }
 
       if (details['startDate'] != null)
@@ -873,8 +969,8 @@ class _TripExpenseFormDetailedScreenState
           amount = odoTotal + incidentalSum; // Sum them up for the grid card
         } else {
           // For Ride Hailing/PT etc., _amountController is the base fare/cost
-          amount = (double.tryParse(_amountController.text) ?? 0.0) +
-              incidentalSum;
+          amount =
+              (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
         }
       } else if (widget.category == 'Travel' ||
           widget.category == 'Outstation Travel') {
@@ -883,7 +979,8 @@ class _TripExpenseFormDetailedScreenState
           incidentalSum +=
               double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
         }
-        amount = (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
+        amount =
+            (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
       }
 
       final payload = {
@@ -901,9 +998,21 @@ class _TripExpenseFormDetailedScreenState
         'refundable_flag': false, // or add a toggle if needed in UI
         'meal_included_flag': _mealIncluded,
         'vehicle_type': _vehicleType,
-        'odo_start': double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')),
-        'odo_end': double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')),
-        'distance': (double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0) - (double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0),
+        'odo_start': double.tryParse(
+          _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ),
+        'odo_end': double.tryParse(
+          _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ),
+        'distance':
+            (double.tryParse(
+                  _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+                ) ??
+                0) -
+            (double.tryParse(
+                  _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+                ) ??
+                0),
       };
 
       // NEW: Handle correction of rejected bulk rows
@@ -989,17 +1098,21 @@ class _TripExpenseFormDetailedScreenState
         'baseAmount': _baseFareController.text,
         'earlyCheckInCharges': _earlyCheckInController.text,
         'lateCheckOutCharges': _lateCheckOutController.text,
-        
-        'scheduledCheckInDate': DateFormat('yyyy-MM-dd').format(_scheduledStartDate),
-        'scheduledCheckOutDate': DateFormat('yyyy-MM-dd').format(_scheduledEndDate),
+
+        'scheduledCheckInDate': DateFormat(
+          'yyyy-MM-dd',
+        ).format(_scheduledStartDate),
+        'scheduledCheckOutDate': DateFormat(
+          'yyyy-MM-dd',
+        ).format(_scheduledEndDate),
         'scheduledCheckInTime': _scheduledStartTime.format(context),
         'scheduledCheckOutTime': _scheduledEndTime.format(context),
-        
+
         'actualCheckInDate': DateFormat('yyyy-MM-dd').format(_startDate),
         'actualCheckOutDate': DateFormat('yyyy-MM-dd').format(_endDate),
         'actualCheckInTime': _startTime.format(context),
         'actualCheckOutTime': _endTime.format(context),
-        
+
         'nights': int.tryParse(_nightsController.text) ?? 1,
         'remarks': _jobReportController.text,
       });
@@ -1102,7 +1215,8 @@ class _TripExpenseFormDetailedScreenState
     if (_deviationReason != null) desc['deviation_reason'] = _deviationReason;
     if (_deviationTarget != null) desc['deviation_target'] = _deviationTarget;
     if (_plannedOrigin != null) desc['planned_origin'] = _plannedOrigin;
-    if (_plannedDestination != null) desc['planned_destination'] = _plannedDestination;
+    if (_plannedDestination != null)
+      desc['planned_destination'] = _plannedDestination;
 
     if (_batchId != null) {
       desc['batch_id'] = _batchId;
@@ -1153,7 +1267,9 @@ class _TripExpenseFormDetailedScreenState
                   widget.category == 'Others')
                 _buildIncidentalForm(),
 
-              if (!(widget.category == 'Local Travel' && _isTravelo && !_isPublicTransport))
+              if (!(widget.category == 'Local Travel' &&
+                  _isTravelo &&
+                  !_isPublicTransport))
                 _buildAttachmentSection(),
               const SizedBox(height: 40),
               SizedBox(
@@ -1246,9 +1362,9 @@ class _TripExpenseFormDetailedScreenState
                   child: _buildDropdownMini(
                     'TICKET STATUS',
                     _ticketStatus,
-                    _masterTicketStatuses.isNotEmpty 
-                      ? _masterTicketStatuses 
-                      : ['Confirmed', 'Waitlist', 'RAC', 'Cancelled'],
+                    _masterTicketStatuses.isNotEmpty
+                        ? _masterTicketStatuses
+                        : ['Confirmed', 'Waitlist', 'RAC', 'Cancelled'],
                     (v) => setState(() => _ticketStatus = v),
                     icon: Icons.confirmation_number_rounded,
                   ),
@@ -1264,7 +1380,7 @@ class _TripExpenseFormDetailedScreenState
                         'Pending',
                         'Cancelled',
                         'Rescheduled',
-                        'No-Show'
+                        'No-Show',
                       ],
                       (v) => _handleStatusChange(v),
                       icon: Icons.info_outline_rounded,
@@ -1280,7 +1396,7 @@ class _TripExpenseFormDetailedScreenState
                       _masterQuotaTypes,
                       (v) => setState(() => _quotaType = v),
                       icon: Icons.people_outline_rounded,
-        ),
+                    ),
                   ),
                 ],
               ],
@@ -1384,7 +1500,8 @@ class _TripExpenseFormDetailedScreenState
                       value: _carrierController.text,
                       icon: Icons.flight_takeoff_rounded,
                       initialOptions: _masterAirlines,
-                      onChanged: (v) => setState(() => _carrierController.text = v),
+                      onChanged: (v) =>
+                          setState(() => _carrierController.text = v),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1445,25 +1562,25 @@ class _TripExpenseFormDetailedScreenState
               const SizedBox(height: 20),
               Row(
                 children: [
-                Expanded(
-                  child: _buildDropdownMini(
-                    'PROVIDER / VENDOR',
-                    _providerController.text,
-                    _masterCabProviders,
-                    (v) => setState(() => _providerController.text = v ?? ''),
-                    icon: Icons.business_rounded,
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'PROVIDER / VENDOR',
+                      _providerController.text,
+                      _masterCabProviders,
+                      (v) => setState(() => _providerController.text = v ?? ''),
+                      icon: Icons.business_rounded,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildDropdownMini(
-                    'CAB TYPE',
-                    _vehicleType,
-                    _masterVehicles,
-                    (v) => setState(() => _vehicleType = v ?? ''),
-                    icon: Icons.directions_car_rounded,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'CAB TYPE',
+                      _vehicleType,
+                      _masterVehicles,
+                      (v) => setState(() => _vehicleType = v ?? ''),
+                      icon: Icons.directions_car_rounded,
+                    ),
                   ),
-                ),
                 ],
               ),
               const SizedBox(height: 20),
@@ -1491,7 +1608,8 @@ class _TripExpenseFormDetailedScreenState
                 icon: Icons.pin_drop_outlined,
                 isLocation: true,
                 initialOptions: _masterLocations,
-                onChanged: (v) => setState(() => _boardingPointController.text = v),
+                onChanged: (v) =>
+                    setState(() => _boardingPointController.text = v),
               ),
             ] else ...[
               // Train, Bus, etc.
@@ -1500,13 +1618,25 @@ class _TripExpenseFormDetailedScreenState
                 children: [
                   Expanded(
                     child: SearchableDropdown(
-                      label: _travelMode == 'Bus' ? 'OPERATOR NAME' : 'PROVIDER / AGENT',
-                      value: (_travelMode == 'Bus') ? _carrierController.text : _providerController.text,
+                      label: _travelMode == 'Bus'
+                          ? 'OPERATOR NAME'
+                          : 'PROVIDER / AGENT',
+                      value: (_travelMode == 'Bus')
+                          ? _carrierController.text
+                          : _providerController.text,
                       icon: Icons.business_rounded,
-                      initialOptions: (_travelMode == 'Bus') ? _masterBusOperators : (_travelMode == 'Train' ? _masterTrainProviders : (_travelMode == 'Bus' ? _masterBusProviders : _masterProviders)),
+                      initialOptions: (_travelMode == 'Bus')
+                          ? _masterBusOperators
+                          : (_travelMode == 'Train'
+                                ? _masterTrainProviders
+                                : (_travelMode == 'Bus'
+                                      ? _masterBusProviders
+                                      : _masterProviders)),
                       onChanged: (v) => setState(() {
-                         if (_travelMode == 'Bus') _carrierController.text = v;
-                         else _providerController.text = v;
+                        if (_travelMode == 'Bus')
+                          _carrierController.text = v;
+                        else
+                          _providerController.text = v;
                       }),
                     ),
                   ),
@@ -1518,7 +1648,8 @@ class _TripExpenseFormDetailedScreenState
                         value: _providerController.text,
                         icon: Icons.support_agent_rounded,
                         initialOptions: _masterBusProviders,
-                        onChanged: (v) => setState(() => _providerController.text = v),
+                        onChanged: (v) =>
+                            setState(() => _providerController.text = v),
                       ),
                     )
                   else
@@ -1879,12 +2010,19 @@ class _TripExpenseFormDetailedScreenState
                           inc['category'],
                           (() {
                             if (widget.category == 'Local Travel') {
-                              return _masterLocalIncidentalTypes.isNotEmpty ? _masterLocalIncidentalTypes : _masterIncidentalTypes;
+                              return _masterLocalIncidentalTypes.isNotEmpty
+                                  ? _masterLocalIncidentalTypes
+                                  : _masterIncidentalTypes;
                             }
-                            if (widget.category == 'Travel' || widget.category == 'Outstation Travel') {
-                              return _masterTravelIncidentalTypes.isNotEmpty ? _masterTravelIncidentalTypes : _masterIncidentalTypes;
+                            if (widget.category == 'Travel' ||
+                                widget.category == 'Outstation Travel') {
+                              return _masterTravelIncidentalTypes.isNotEmpty
+                                  ? _masterTravelIncidentalTypes
+                                  : _masterIncidentalTypes;
                             }
-                            return _masterGeneralIncidentalTypes.isNotEmpty ? _masterGeneralIncidentalTypes : _masterIncidentalTypes;
+                            return _masterGeneralIncidentalTypes.isNotEmpty
+                                ? _masterGeneralIncidentalTypes
+                                : _masterIncidentalTypes;
                           })(),
                           (v) => setState(
                             () => _incidentals[index]['category'] = v,
@@ -1946,12 +2084,25 @@ class _TripExpenseFormDetailedScreenState
   }
 
   Widget _buildTripLocalTravelForm() {
-    final isOwnVehicle = _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+    final isOwnVehicle =
+        _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
     final showOdoCard = isOwnVehicle;
 
-    final start = double.tryParse(_odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
-    final end = double.tryParse(_odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
-    final rate = double.tryParse(_odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final start =
+        double.tryParse(
+          _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ) ??
+        0.0;
+    final end =
+        double.tryParse(
+          _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ) ??
+        0.0;
+    final rate =
+        double.tryParse(
+          _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ) ??
+        0.0;
     final dist = (end - start).clamp(0.0, 99999.0);
     final odoTotal = dist * rate;
 
@@ -1960,10 +2111,9 @@ class _TripExpenseFormDetailedScreenState
       incidentalSum += double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
     }
 
-    final totalAmount = isOwnVehicle 
-        ? (odoTotal + incidentalSum) 
+    final totalAmount = isOwnVehicle
+        ? (odoTotal + incidentalSum)
         : (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
-
 
     return Column(
       children: [
@@ -1996,16 +2146,29 @@ class _TripExpenseFormDetailedScreenState
                         final mode = _travelMode?.toLowerCase() ?? '';
                         if (mode == 'public transport') {
                           return _masterLocalProvidersRaw
-                              .where((p) => p['is_metro'] == true || p['is_bus'] == true)
+                              .where(
+                                (p) =>
+                                    p['is_metro'] == true ||
+                                    p['is_bus'] == true,
+                              )
                               .map((p) => p['provider_name']?.toString() ?? '')
                               .toList();
                         }
-                        return _masterLocalSubTypesRaw.where((m) {
-                          if (mode == 'bike') return m['is_bike'] == true;
-                          if (mode == 'car') return m['is_car'] == true;
-                          if (mode == 'auto') return m['is_auto'] == true;
-                          return true;
-                        }).map((m) => m['sub_type']?.toString() ?? m['sub_type_name']?.toString() ?? '').where((s) => s.isNotEmpty).toList();
+                        return _masterLocalSubTypesRaw
+                            .where((m) {
+                              if (mode == 'bike') return m['is_bike'] == true;
+                              if (mode == 'car') return m['is_car'] == true;
+                              if (mode == 'auto') return m['is_auto'] == true;
+                              return true;
+                            })
+                            .map(
+                              (m) =>
+                                  m['sub_type']?.toString() ??
+                                  m['sub_type_name']?.toString() ??
+                                  '',
+                            )
+                            .where((s) => s.isNotEmpty)
+                            .toList();
                       })(),
                       (v) => setState(() {
                         _travelSubType = v;
@@ -2027,18 +2190,23 @@ class _TripExpenseFormDetailedScreenState
                   ),
                 ],
               ),
-              if (['Pooling', 'Uber', 'Ola', 'Rental', 'App Based Cab'].map((s) => s.toLowerCase()).contains(_travelSubType?.toLowerCase())) ...[
+              if (['Pooling', 'Uber', 'Ola', 'Rental', 'App Based Cab']
+                  .map((s) => s.toLowerCase())
+                  .contains(_travelSubType?.toLowerCase())) ...[
                 const SizedBox(height: 20),
                 _buildDropdownMini(
                   'PROVIDER',
                   _providerController.text,
-                  _masterLocalProvidersRaw.where((p) {
-                    final m = _travelMode?.toLowerCase() ?? '';
-                    if (m == 'bike') return p['is_bike'] == true;
-                    if (m == 'car') return p['is_car'] == true;
-                    if (m == 'auto') return p['is_auto'] == true;
-                    return true;
-                  }).map((p) => p['provider_name']?.toString() ?? '').toList(),
+                  _masterLocalProvidersRaw
+                      .where((p) {
+                        final m = _travelMode?.toLowerCase() ?? '';
+                        if (m == 'bike') return p['is_bike'] == true;
+                        if (m == 'car') return p['is_car'] == true;
+                        if (m == 'auto') return p['is_auto'] == true;
+                        return true;
+                      })
+                      .map((p) => p['provider_name']?.toString() ?? '')
+                      .toList(),
                   (v) => setState(() => _providerController.text = v ?? ''),
                   icon: Icons.business_rounded,
                 ),
@@ -2085,11 +2253,19 @@ class _TripExpenseFormDetailedScreenState
             Row(
               children: [
                 Expanded(
-                  child: _buildDatePickerMini('START DATE', _startDate, (d) => setState(() => _startDate = d)),
+                  child: _buildDatePickerMini(
+                    'START DATE',
+                    _startDate,
+                    (d) => setState(() => _startDate = d),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: _buildDatePickerMini('END DATE', _endDate, (d) => setState(() => _endDate = d)),
+                  child: _buildDatePickerMini(
+                    'END DATE',
+                    _endDate,
+                    (d) => setState(() => _endDate = d),
+                  ),
                 ),
               ],
             ),
@@ -2097,19 +2273,27 @@ class _TripExpenseFormDetailedScreenState
             Row(
               children: [
                 Expanded(
-                  child: _buildTimePickerMini('START TIME', _startTime, (t) => setState(() => _startTime = t)),
+                  child: _buildTimePickerMini(
+                    'START TIME',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: _buildTimePickerMini('END TIME', _endTime, (t) => setState(() => _endTime = t)),
+                  child: _buildTimePickerMini(
+                    'END TIME',
+                    _endTime,
+                    (t) => setState(() => _endTime = t),
+                  ),
                 ),
               ],
             ),
           ],
         ),
         const SizedBox(height: 20),
-            // START SECTION — only if own vehicle (ODO is needed)
-            // For hired rides (Ride Bike, Ride Hailing, etc.) show bill upload instead
+        // START SECTION — only if own vehicle (ODO is needed)
+        // For hired rides (Ride Bike, Ride Hailing, etc.) show bill upload instead
         // 4. TRACKING (ODO) - Only for own/company vehicles
         if (showOdoCard) ...[
           _buildWebCard(
@@ -2160,8 +2344,22 @@ class _TripExpenseFormDetailedScreenState
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('TOTAL DISTANCE', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w900, color: const Color(0xFF166534))),
-                    Text('${dist.toStringAsFixed(1)} KM', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w900, color: const Color(0xFF15803D))),
+                    Text(
+                      'TOTAL DISTANCE',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF166534),
+                      ),
+                    ),
+                    Text(
+                      '${dist.toStringAsFixed(1)} KM',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -2178,19 +2376,31 @@ class _TripExpenseFormDetailedScreenState
           color: const Color(0xFFF59E0B),
           children: [
             if (isOwnVehicle) ...[
-               Row(
-                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                 children: [
-                   Text('Fuel Reimbursement', style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey[600])),
-                   Text('₹${odoTotal.toStringAsFixed(2)}', style: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.bold)),
-                 ],
-               ),
-               const Divider(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Fuel Reimbursement',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  Text(
+                    '₹${odoTotal.toStringAsFixed(2)}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 24),
             ],
-            
+
             _buildIncidentalSection(),
             const SizedBox(height: 20),
-            
+
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -2205,12 +2415,23 @@ class _TripExpenseFormDetailedScreenState
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isOwnVehicle ? 'TOTAL REIMBURSABLE' : 'TOTAL FARE AMOUNT',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF64748B), letterSpacing: 0.5),
+                        isOwnVehicle
+                            ? 'TOTAL REIMBURSABLE'
+                            : 'TOTAL FARE AMOUNT',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF64748B),
+                          letterSpacing: 0.5,
+                        ),
                       ),
                       Text(
                         '₹${totalAmount.toStringAsFixed(2)}',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 20, fontWeight: FontWeight.w900, color: const Color(0xFF0F172A)),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: const Color(0xFF0F172A),
+                        ),
                       ),
                     ],
                   ),
@@ -2230,7 +2451,6 @@ class _TripExpenseFormDetailedScreenState
             ),
           ],
         ),
-
 
         _buildWebCard(
           title: 'SELFIE VERIFICATION',
@@ -2494,7 +2714,11 @@ class _TripExpenseFormDetailedScreenState
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.info_outline_rounded, color: Color(0xFFD97706), size: 16),
+                        const Icon(
+                          Icons.info_outline_rounded,
+                          color: Color(0xFFD97706),
+                          size: 16,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -2515,11 +2739,19 @@ class _TripExpenseFormDetailedScreenState
                           child: ElevatedButton.icon(
                             onPressed: _showDeviationDialog,
                             icon: const Icon(Icons.alt_route_rounded, size: 14),
-                            label: const Text('DEVIATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
+                            label: const Text(
+                              'DEVIATE',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFF59E0B),
                               foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                           ),
                         ),
@@ -2528,11 +2760,19 @@ class _TripExpenseFormDetailedScreenState
                           child: OutlinedButton.icon(
                             onPressed: _showSkipDialog,
                             icon: const Icon(Icons.cancel_outlined, size: 14),
-                            label: const Text('NOT VISITED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900)),
+                            label: const Text(
+                              'NOT VISITED',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.red,
                               side: const BorderSide(color: Colors.red),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                           ),
                         ),
@@ -2554,7 +2794,11 @@ class _TripExpenseFormDetailedScreenState
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.check_circle_outline_rounded, color: Color(0xFF16A34A), size: 16),
+                    const Icon(
+                      Icons.check_circle_outline_rounded,
+                      color: Color(0xFF16A34A),
+                      size: 16,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -2584,7 +2828,8 @@ class _TripExpenseFormDetailedScreenState
                     child: InkWell(
                       onTap: () => setState(() {
                         _isPublicTransport = false;
-                        if (_travelMode == 'Public Transport' || _travelMode == null) {
+                        if (_travelMode == 'Public Transport' ||
+                            _travelMode == null) {
                           _travelMode = 'Bike';
                           _travelSubType = 'Own Bike';
                           _updateRateForSubType(_travelSubType);
@@ -2594,16 +2839,30 @@ class _TripExpenseFormDetailedScreenState
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         decoration: BoxDecoration(
-                          color: !_isPublicTransport ? Colors.white : Colors.transparent,
+                          color: !_isPublicTransport
+                              ? Colors.white
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: !_isPublicTransport ? [
-                            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
-                          ] : [],
+                          boxShadow: !_isPublicTransport
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ]
+                              : [],
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.directions_car_rounded, size: 16, color: !_isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B)),
+                            Icon(
+                              Icons.directions_car_rounded,
+                              size: 16,
+                              color: !_isPublicTransport
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF64748B),
+                            ),
                             const SizedBox(width: 8),
                             Flexible(
                               child: Text(
@@ -2611,7 +2870,9 @@ class _TripExpenseFormDetailedScreenState
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w900,
-                                  color: !_isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                                  color: !_isPublicTransport
+                                      ? const Color(0xFF4F46E5)
+                                      : const Color(0xFF64748B),
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -2630,7 +2891,8 @@ class _TripExpenseFormDetailedScreenState
                           _travelSubType = 'Auto';
                         }
                         // Clear 0.00 if present to show hint
-                        if (_amountController.text == '0.00' || _amountController.text == '0') {
+                        if (_amountController.text == '0.00' ||
+                            _amountController.text == '0') {
                           _amountController.text = '';
                         }
                         _updateFormTotal();
@@ -2638,16 +2900,30 @@ class _TripExpenseFormDetailedScreenState
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         decoration: BoxDecoration(
-                          color: _isPublicTransport ? Colors.white : Colors.transparent,
+                          color: _isPublicTransport
+                              ? Colors.white
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: _isPublicTransport ? [
-                            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))
-                          ] : [],
+                          boxShadow: _isPublicTransport
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ]
+                              : [],
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.directions_bus_rounded, size: 16, color: _isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B)),
+                            Icon(
+                              Icons.directions_bus_rounded,
+                              size: 16,
+                              color: _isPublicTransport
+                                  ? const Color(0xFF4F46E5)
+                                  : const Color(0xFF64748B),
+                            ),
                             const SizedBox(width: 8),
                             Flexible(
                               child: Text(
@@ -2655,7 +2931,9 @@ class _TripExpenseFormDetailedScreenState
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w900,
-                                  color: _isPublicTransport ? const Color(0xFF4F46E5) : const Color(0xFF64748B),
+                                  color: _isPublicTransport
+                                      ? const Color(0xFF4F46E5)
+                                      : const Color(0xFF64748B),
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -2671,80 +2949,96 @@ class _TripExpenseFormDetailedScreenState
             const SizedBox(height: 24),
 
             if (!_isPublicTransport) ...[
-               if (['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental'].contains(_travelSubType)) ...[
-                 // START SECTION
-              _buildOdoSegment(
-                label: 'START JOURNEY DETAILS',
-                color: const Color(0xFF4F46E5),
-                date: _startDate,
-                time: _startTime,
-                locationController: _originController,
-                odoController: _odoStartController,
-                odoImg: _odoStartImg,
-                onDate: (d) => setState(() => _startDate = d),
-                onTime: (t) => setState(() => _startTime = t),
-                onImg: (img) => setState(() => _odoStartImg = img),
-                isStart: true,
-                isEnabled: true,
-                isLocationEnabled: !_isTravelo,
-              ),
-              const SizedBox(height: 32),
-              // Functional Divider
-              Row(
-                children: [
-                  Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Icon(
-                      Icons.arrow_downward_rounded,
-                      size: 16,
-                      color: Colors.grey.withOpacity(0.3),
+              if ([
+                'Own Car',
+                'Company Car',
+                'Own Bike',
+                'Self Drive Rental',
+              ].contains(_travelSubType)) ...[
+                // START SECTION
+                _buildOdoSegment(
+                  label: 'START JOURNEY DETAILS',
+                  color: const Color(0xFF4F46E5),
+                  date: _startDate,
+                  time: _startTime,
+                  locationController: _originController,
+                  odoController: _odoStartController,
+                  odoImg: _odoStartImg,
+                  onDate: (d) => setState(() => _startDate = d),
+                  onTime: (t) => setState(() => _startTime = t),
+                  onImg: (img) => setState(() => _odoStartImg = img),
+                  isStart: true,
+                  isEnabled: true,
+                  isLocationEnabled: !_isTravelo,
+                ),
+                const SizedBox(height: 32),
+                // Functional Divider
+                Row(
+                  children: [
+                    Expanded(
+                      child: Divider(color: Colors.grey.withOpacity(0.1)),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Icon(
+                        Icons.arrow_downward_rounded,
+                        size: 16,
+                        color: Colors.grey.withOpacity(0.3),
+                      ),
+                    ),
+                    Expanded(
+                      child: Divider(color: Colors.grey.withOpacity(0.1)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 32),
+                // END SECTION
+                AbsorbPointer(
+                  absorbing: !isStartFieldsComplete,
+                  child: Opacity(
+                    opacity: isStartFieldsComplete ? 1.0 : 0.5,
+                    child: _buildOdoSegment(
+                      label: 'END JOURNEY DETAILS',
+                      color: const Color(0xFF10B981),
+                      date: _endDate,
+                      time: _endTime,
+                      locationController: _destController,
+                      odoController: _odoEndController,
+                      odoImg: _odoEndImg,
+                      onDate: (d) => setState(() => _endDate = d),
+                      onTime: (t) => setState(() => _endTime = t),
+                      onImg: (img) => setState(() => _odoEndImg = img),
+                      isStart: false,
+                      isEnabled: isStartFieldsComplete,
+                      isLocationEnabled: !_isTravelo,
                     ),
                   ),
-                  Expanded(child: Divider(color: Colors.grey.withOpacity(0.1))),
-                ],
-              ),
-              const SizedBox(height: 32),
-              // END SECTION
-              AbsorbPointer(
-                absorbing: !isStartFieldsComplete,
-                child: Opacity(
-                  opacity: isStartFieldsComplete ? 1.0 : 0.5,
-                  child: _buildOdoSegment(
-                    label: 'END JOURNEY DETAILS',
-                    color: const Color(0xFF10B981),
-                    date: _endDate,
-                    time: _endTime,
-                    locationController: _destController,
-                    odoController: _odoEndController,
-                    odoImg: _odoEndImg,
-                    onDate: (d) => setState(() => _endDate = d),
-                    onTime: (t) => setState(() => _endTime = t),
-                    onImg: (img) => setState(() => _odoEndImg = img),
-                    isStart: false,
-                    isEnabled: isStartFieldsComplete,
-                    isLocationEnabled: !_isTravelo,
+                ),
+              ],
+            ] else ...[
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 48,
+                        color: Colors.grey.withOpacity(0.3),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'ODO tracking is not required for this mode.',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.grey,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ],
-              ] else ...[
-                 Center(
-                   child: Padding(
-                     padding: const EdgeInsets.all(24.0),
-                     child: Column(
-                       children: [
-                         Icon(Icons.info_outline_rounded, size: 48, color: Colors.grey.withOpacity(0.3)),
-                         const SizedBox(height: 12),
-                         Text(
-                           'ODO tracking is not required for this mode.',
-                           style: GoogleFonts.plusJakartaSans(color: Colors.grey, fontSize: 12),
-                         ),
-                       ],
-                     ),
-                   ),
-                 ),
-              ],
           ],
         ),
         if (_isPublicTransport)
@@ -2757,12 +3051,20 @@ class _TripExpenseFormDetailedScreenState
                 children: [
                   Expanded(
                     flex: 3,
-                    child: _buildDatePickerMini('DATE', _startDate, (d) => setState(() => _startDate = d)),
+                    child: _buildDatePickerMini(
+                      'DATE',
+                      _startDate,
+                      (d) => setState(() => _startDate = d),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     flex: 2,
-                    child: _buildTimePickerMini('TIME', _startTime, (t) => setState(() => _startTime = t)),
+                    child: _buildTimePickerMini(
+                      'TIME',
+                      _startTime,
+                      (t) => setState(() => _startTime = t),
+                    ),
                   ),
                 ],
               ),
@@ -2797,31 +3099,44 @@ class _TripExpenseFormDetailedScreenState
                     child: _buildDropdownMini(
                       'TYPE / PUBLIC MODE',
                       _travelSubType,
-                      const ['Auto', 'Bus', 'Taxi', 'Metro', 'Rickshaw', 'Other'],
+                      const [
+                        'Auto',
+                        'Bus',
+                        'Taxi',
+                        'Metro',
+                        'Rickshaw',
+                        'Other',
+                      ],
                       (v) => setState(() => _travelSubType = v),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: (_travelSubType == 'Auto' || _isPublicTransport) 
-                      ? _buildTextFieldMini(
-                        'AMOUNT (₹)',
-                        _amountController,
-                        keyboardType: TextInputType.number,
-                        hint: 'Enter cost',
-                        icon: Icons.currency_rupee_rounded,
-                        )
-                      : const SizedBox.shrink(),
+                    child: (_travelSubType == 'Auto' || _isPublicTransport)
+                        ? _buildTextFieldMini(
+                            'AMOUNT (₹)',
+                            _amountController,
+                            keyboardType: TextInputType.number,
+                            hint: 'Enter cost',
+                            icon: Icons.currency_rupee_rounded,
+                          )
+                        : const SizedBox.shrink(),
                   ),
                 ],
               ),
             ],
           ),
-            
+
         // Web parity: Incidental section only for vehicle owners
-        if (!_isPublicTransport && ['Own Car', 'Company Car', 'Own Bike', 'Company Bike'].contains(_travelSubType))
-           _buildIncidentalSection(),
-           
+        if (!_isPublicTransport &&
+            [
+              'Own Car',
+              'Company Car',
+              'Own Bike',
+              'Company Bike',
+            ].contains(_travelSubType))
+          _buildIncidentalSection(),
+
         const SizedBox(height: 24),
         // Professional Insight Card
         Builder(
@@ -2966,28 +3281,21 @@ class _TripExpenseFormDetailedScreenState
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) =>
-                                    JobReportComposerScreen(
-                                      travelId: widget.tripId,
-                                      initialReport:
-                                          _jobReportController.text,
-                                      initialAttachments:
-                                          _jobReportAttachments,
-                                      onSave: (text, attachments) async {
-                                        setState(() {
-                                          _jobReportController.text = text;
-                                          _jobReportAttachments =
-                                              attachments;
-                                        });
-                                      },
-                                    ),
+                                builder: (context) => JobReportComposerScreen(
+                                  travelId: widget.tripId,
+                                  initialReport: _jobReportController.text,
+                                  initialAttachments: _jobReportAttachments,
+                                  onSave: (text, attachments) async {
+                                    setState(() {
+                                      _jobReportController.text = text;
+                                      _jobReportAttachments = attachments;
+                                    });
+                                  },
+                                ),
                               ),
                             );
                           },
-                          icon: const Icon(
-                            Icons.edit_note_rounded,
-                            size: 18,
-                          ),
+                          icon: const Icon(Icons.edit_note_rounded, size: 18),
                           label: Text(
                             'WRITE REPORT',
                             style: GoogleFonts.plusJakartaSans(
@@ -3005,9 +3313,7 @@ class _TripExpenseFormDetailedScreenState
                             backgroundColor: Colors.white,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
-                              side: const BorderSide(
-                                color: Color(0xFFE2E8F0),
-                              ),
+                              side: const BorderSide(color: Color(0xFFE2E8F0)),
                             ),
                           ),
                         ),
@@ -3043,7 +3349,7 @@ class _TripExpenseFormDetailedScreenState
             );
           },
         ),
-        
+
         // INCIDENTAL SECTION
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3165,7 +3471,13 @@ class _TripExpenseFormDetailedScreenState
                               inc['category'],
                               _masterIncidentalTypes.isNotEmpty
                                   ? _masterIncidentalTypes
-                                  : ['Toll', 'Parking', 'Repairs', 'Cleaning', 'Other'],
+                                  : [
+                                      'Toll',
+                                      'Parking',
+                                      'Repairs',
+                                      'Cleaning',
+                                      'Other',
+                                    ],
                               (v) => setState(
                                 () => _incidentals[index]['category'] = v,
                               ),
@@ -3302,7 +3614,10 @@ class _TripExpenseFormDetailedScreenState
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           'RECORD DEVIATION',
-          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900, fontSize: 16),
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w900,
+            fontSize: 16,
+          ),
         ),
         content: SingleChildScrollView(
           child: Column(
@@ -3310,7 +3625,10 @@ class _TripExpenseFormDetailedScreenState
             children: [
               Text(
                 'Provide details for the actual route taken.',
-                style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -3365,10 +3683,14 @@ class _TripExpenseFormDetailedScreenState
               });
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Deviation recorded. Locations updated.')),
+                const SnackBar(
+                  content: Text('Deviation recorded. Locations updated.'),
+                ),
               );
             },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF59E0B),
+            ),
             child: const Text('CONFIRM', style: TextStyle(color: Colors.white)),
           ),
         ],
@@ -3385,14 +3707,21 @@ class _TripExpenseFormDetailedScreenState
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(
           'MARK AS NOT VISITED',
-          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.red),
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w900,
+            fontSize: 16,
+            color: Colors.red,
+          ),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               'Marking this stop as cancelled. Amount will be set to 0.',
-              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: Colors.grey),
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -3421,11 +3750,17 @@ class _TripExpenseFormDetailedScreenState
               });
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Stop marked as Not Visited.'), backgroundColor: Colors.red),
+                const SnackBar(
+                  content: Text('Stop marked as Not Visited.'),
+                  backgroundColor: Colors.red,
+                ),
               );
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('MARK CANCELLED', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'MARK CANCELLED',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -3622,7 +3957,8 @@ class _TripExpenseFormDetailedScreenState
     final sourceLower = _mealSource?.toLowerCase() ?? '';
     final showSource = isSelfMeal;
     final showProvider = isSelfMeal && sourceLower == 'online';
-    final showHotel = isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
+    final showHotel =
+        isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
     final showRestaurant = isSelfMeal && sourceLower == 'restaurant';
 
     return Column(
@@ -3793,7 +4129,6 @@ class _TripExpenseFormDetailedScreenState
     );
   }
 
-
   Widget _buildAccommodationForm() {
     final showBookingId = _bookingType == 'Online Booking';
     final showBookingSource = _bookingType != 'Walkin' && _bookingType != null;
@@ -3922,8 +4257,11 @@ class _TripExpenseFormDetailedScreenState
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.nights_stay_rounded,
-                      size: 14, color: Color(0xFF64748B)),
+                  const Icon(
+                    Icons.nights_stay_rounded,
+                    size: 14,
+                    color: Color(0xFF64748B),
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'NIGHTS: ',
@@ -4111,8 +4449,6 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
-
-
 
   Widget _buildIncidentalForm() {
     final showOtherReason = _incidentalType?.toLowerCase() == 'others';
@@ -4351,8 +4687,10 @@ class _TripExpenseFormDetailedScreenState
                 : null,
             filled: true,
             fillColor: Colors.white,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 12,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
@@ -4363,7 +4701,10 @@ class _TripExpenseFormDetailedScreenState
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF0F766E), width: 1.5),
+              borderSide: const BorderSide(
+                color: Color(0xFF0F766E),
+                width: 1.5,
+              ),
             ),
             errorStyle: GoogleFonts.plusJakartaSans(
               fontSize: 10,
@@ -4415,7 +4756,10 @@ class _TripExpenseFormDetailedScreenState
               borderRadius: BorderRadius.circular(16),
               borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
             ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
           ),
         ),
       ],
@@ -4475,13 +4819,18 @@ class _TripExpenseFormDetailedScreenState
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                       ),
-                      offset: const Offset(0, 48), // Opens right below the field
+                      offset: const Offset(
+                        0,
+                        48,
+                      ), // Opens right below the field
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(
                             child: Text(
-                              (value == null || value!.isEmpty) ? 'Select' : value!,
+                              (value == null || value!.isEmpty)
+                                  ? 'Select'
+                                  : value!,
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 14,
                                 fontWeight: (value == null || value!.isEmpty)
@@ -5107,5 +5456,4 @@ class _TripExpenseFormDetailedScreenState
       ],
     );
   }
-
 }

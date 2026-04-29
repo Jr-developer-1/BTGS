@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter/material.dart';
 import '../models/trip_model.dart';
 import 'api_service.dart';
@@ -160,6 +161,7 @@ class TripService {
     String? date,
     int page = 1,
     String? source,
+    Map<String, String>? extraParams,
   }) async {
     String url =
         '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType&page=$page';
@@ -171,6 +173,11 @@ class TripService {
     }
     if (source != null) {
       url += '&source=$source';
+    }
+    if (extraParams != null) {
+      extraParams.forEach((key, value) {
+        url += '&$key=$value';
+      });
     }
     final response = await _apiService.get(url);
     if (response is Map && response.containsKey('results')) {
@@ -713,5 +720,34 @@ class TripService {
       debugPrint('ERROR FETCHING HISTORICAL STOPS for $date: $e');
       return {"stops": [], "breadcrumbs": []};
     }
+  }
+
+  Future<String?> exportFinanceExcel(String tab) async {
+    try {
+      final response = await _apiService.getBinary(
+        '${ApiConstants.financeExport}?tab=$tab',
+      );
+      if (response.isNotEmpty) {
+        final dir = await getTemporaryDirectory();
+        final file = File(
+          '${dir.path}/Finance_Export_${tab}_${DateTime.now().millisecondsSinceEpoch}.xlsx',
+        );
+        await file.writeAsBytes(response);
+        return file.path;
+      }
+    } catch (e) {
+      print('Export error: $e');
+      rethrow;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> importFinanceStatus(File file) async {
+    return await _apiService.postMultipart(
+      ApiConstants.financeImport,
+      fields: {},
+      fileKey: 'file',
+      file: file,
+    );
   }
 }

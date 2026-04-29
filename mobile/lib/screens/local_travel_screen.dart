@@ -54,7 +54,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   void _initFromSession() {
     final user = _apiService.getUser();
     final profile = user?['external_profile'];
-    
+
     if (profile != null) {
       final String projectName = (profile['project']?['name'] ?? '').toString();
       String projectCode = (profile['project']?['code'] ?? '').toString();
@@ -64,8 +64,8 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         projectCode = numMatch != null
             ? 'PROJ-${numMatch.group(1)}'
             : projectName.length > 6
-                ? projectName.substring(0, 6).toUpperCase()
-                : projectName.toUpperCase();
+            ? projectName.substring(0, 6).toUpperCase()
+            : projectName.toUpperCase();
       }
 
       if (projectCode.isNotEmpty) {
@@ -85,13 +85,19 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
 
       final String? positionName = profile['position']?['name']?.toString();
       if (positionName != null) {
-        final words = positionName.split(' ').where((String w) => w.trim().isNotEmpty).toList();
+        final words = positionName
+            .split(' ')
+            .where((String w) => w.trim().isNotEmpty)
+            .toList();
         if (words.isNotEmpty) {
           final firstWord = words[0];
           if (firstWord.length <= 3) {
             _positionCode = firstWord.toUpperCase();
           } else {
-            _positionCode = words.map((String w) => w.isNotEmpty ? w[0] : '').join('').toUpperCase();
+            _positionCode = words
+                .map((String w) => w.isNotEmpty ? w[0] : '')
+                .join('')
+                .toUpperCase();
           }
         }
       }
@@ -138,7 +144,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   Future<void> _detectManager() async {
     final user = _apiService.getUser();
     if (user == null) return;
-    
+
     // Exact same ID extraction as ProfilePage for consistency
     final empId = user['employee_id'] ?? user['username'] ?? '';
     final myIdNormalized = _normalizeId(empId);
@@ -148,8 +154,9 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       final response = await _apiService.get(
         '${ApiConstants.baseUrl}/api/employees/?employee_code=${Uri.encodeComponent(empId.toString())}',
       );
-      
-      final systemUsers = (await _tripService.fetchUsers()).cast<Map<String, dynamic>>();
+
+      final systemUsers = (await _tripService.fetchUsers())
+          .cast<Map<String, dynamic>>();
 
       List<dynamic> results = [];
       if (response is Map && response.containsKey('results')) {
@@ -162,10 +169,16 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         final searchName = (user['name'] ?? '').toString().toLowerCase();
 
         for (var emp in results) {
-          final code = (emp['employee_code'] ?? emp['employee']?['employee_code'] ?? '').toString().toLowerCase();
-          final name = (emp['name'] ?? emp['employee']?['name'] ?? '').toString().toLowerCase();
+          final code =
+              (emp['employee_code'] ?? emp['employee']?['employee_code'] ?? '')
+                  .toString()
+                  .toLowerCase();
+          final name = (emp['name'] ?? emp['employee']?['name'] ?? '')
+              .toString()
+              .toLowerCase();
 
-          if ((searchId.isNotEmpty && code == searchId) || (searchName.isNotEmpty && name == searchName)) {
+          if ((searchId.isNotEmpty && code == searchId) ||
+              (searchName.isNotEmpty && name == searchName)) {
             me = emp;
             break;
           }
@@ -174,7 +187,8 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       }
 
       if (me != null) {
-        final String locName = (me['office']?['name'] ?? 'Vijayawada').toString();
+        final String locName = (me['office']?['name'] ?? 'Vijayawada')
+            .toString();
         setState(() {
           _baseLocation = locName;
           _baseLocationCode = locName.length >= 3
@@ -183,28 +197,35 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         });
 
         // Derive Position Code (matches Profile detail logic)
-        final String positionName = (me['position']?['name'] ?? 'Employee').toString();
-        final words = positionName.split(' ').where((String w) => w.trim().isNotEmpty).toList();
+        final String positionName = (me['position']?['name'] ?? 'Employee')
+            .toString();
+        final words = positionName
+            .split(' ')
+            .where((String w) => w.trim().isNotEmpty)
+            .toList();
         if (words.isNotEmpty) {
           final firstWord = words[0];
           if (firstWord.length <= 3) {
             _positionCode = firstWord.toUpperCase();
           } else {
-            _positionCode = words.map((String w) => w.isNotEmpty ? w[0] : '').join('').toUpperCase();
+            _positionCode = words
+                .map((String w) => w.isNotEmpty ? w[0] : '')
+                .join('')
+                .toUpperCase();
           }
         }
 
         // Project Resolution (Matches ProfilePage's derivedProjectCode logic)
         final String projectName = (me['project']?['name'] ?? '').toString();
         String projectCode = (me['project']?['code'] ?? '').toString();
-        
+
         if (projectCode.isEmpty && projectName.isNotEmpty) {
           final numMatch = RegExp(r'(\d+)').firstMatch(projectName);
           projectCode = numMatch != null
               ? 'PROJ-${numMatch.group(1)}'
               : projectName.length > 6
-                  ? projectName.substring(0, 6).toUpperCase()
-                  : projectName.toUpperCase();
+              ? projectName.substring(0, 6).toUpperCase()
+              : projectName.toUpperCase();
         }
 
         if (projectCode.isNotEmpty) {
@@ -215,11 +236,13 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         if (me['position']?['reporting_to'] != null &&
             (me['position']['reporting_to'] as List).isNotEmpty) {
           final managerInfo = me['position']['reporting_to'][0];
-          final managerCode = managerInfo['employee_code'] ?? managerInfo['employee_id'];
+          final managerCode =
+              managerInfo['employee_code'] ?? managerInfo['employee_id'];
 
           final systemMgr = systemUsers.firstWhere(
-            (u) => _normalizeId(u['employee_id']) == _normalizeId(managerCode) || 
-                   _normalizeId(u['username']) == _normalizeId(managerCode),
+            (u) =>
+                _normalizeId(u['employee_id']) == _normalizeId(managerCode) ||
+                _normalizeId(u['username']) == _normalizeId(managerCode),
             orElse: () => {},
           );
 
@@ -468,9 +491,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 16,
-                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
                 child: Text(
                   'GO TO MY TRIPS',
@@ -552,8 +573,11 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                           : Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Icon(Icons.description_outlined,
-                                    size: 20, color: Colors.white),
+                                const Icon(
+                                  Icons.description_outlined,
+                                  size: 20,
+                                  color: Colors.white,
+                                ),
                                 const SizedBox(width: 12),
                                 Text(
                                   'SEND ITS FOR APPROVAL',
@@ -685,8 +709,10 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
               color: const Color(0xFF0D9488).withOpacity(0.1),
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.person_outline_rounded,
-                color: Color(0xFF0D9488)),
+            child: const Icon(
+              Icons.person_outline_rounded,
+              color: Color(0xFF0D9488),
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -709,7 +735,9 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(8),
@@ -761,8 +789,11 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                 color: Color(0xFFD1FAE5),
                 shape: BoxShape.circle,
               ),
-              child:
-                  const Icon(Icons.download_rounded, color: Color(0xFF059669), size: 18),
+              child: const Icon(
+                Icons.download_rounded,
+                color: Color(0xFF059669),
+                size: 18,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -792,8 +823,11 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline_rounded,
-              color: Color(0xFF0D9488), size: 18),
+          const Icon(
+            Icons.info_outline_rounded,
+            color: Color(0xFF0D9488),
+            size: 18,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -833,10 +867,14 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 32),
         decoration: BoxDecoration(
-          color: _selectedFile != null ? const Color(0xFFF0FDF4) : const Color(0xFFFAFAFA),
+          color: _selectedFile != null
+              ? const Color(0xFFF0FDF4)
+              : const Color(0xFFFAFAFA),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: _selectedFile != null ? const Color(0xFFBBF7D0) : const Color(0xFFF1F5F9),
+            color: _selectedFile != null
+                ? const Color(0xFFBBF7D0)
+                : const Color(0xFFF1F5F9),
             width: 2,
           ),
         ),
@@ -845,18 +883,26 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: _selectedFile != null ? Colors.white : const Color(0xFFF1F5F9),
+                color: _selectedFile != null
+                    ? Colors.white
+                    : const Color(0xFFF1F5F9),
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                _selectedFile != null ? Icons.check_circle_rounded : Icons.cloud_upload_outlined,
-                color: _selectedFile != null ? const Color(0xFF22C55E) : const Color(0xFF94A3B8),
+                _selectedFile != null
+                    ? Icons.check_circle_rounded
+                    : Icons.cloud_upload_outlined,
+                color: _selectedFile != null
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFF94A3B8),
                 size: 32,
               ),
             ),
             const SizedBox(height: 12),
             Text(
-              _selectedFile != null ? _selectedFile!.path.split('/').last : 'Upload Log File',
+              _selectedFile != null
+                  ? _selectedFile!.path.split('/').last
+                  : 'Upload Log File',
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 14,
                 fontWeight: FontWeight.w800,
@@ -865,13 +911,15 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              _selectedFile != null 
-                ? 'Ready to Upload • ${(_selectedFile!.lengthSync() / 1024).toStringAsFixed(1)} KB'
-                : 'XLSX or XLS Only',
+              _selectedFile != null
+                  ? 'Ready to Upload • ${(_selectedFile!.lengthSync() / 1024).toStringAsFixed(1)} KB'
+                  : 'XLSX or XLS Only',
               style: GoogleFonts.plusJakartaSans(
                 fontSize: 10,
                 fontWeight: FontWeight.w800,
-                color: _selectedFile != null ? const Color(0xFF16A34A) : const Color(0xFF94A3B8),
+                color: _selectedFile != null
+                    ? const Color(0xFF16A34A)
+                    : const Color(0xFF94A3B8),
                 letterSpacing: 0.5,
               ),
             ),
@@ -892,7 +940,11 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 18),
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Color(0xFFD97706),
+            size: 18,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -924,7 +976,11 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
     );
   }
 
-  Widget _premiumCard({required String title, required IconData icon, required Widget child}) {
+  Widget _premiumCard({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -1004,10 +1060,10 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         maxLines: maxLines, // Use the provided maxLines, not forced null
         enabled: enabled,
         validator: validator,
-        textCapitalization: forceUpperCase ? TextCapitalization.characters : TextCapitalization.none,
-        inputFormatters: forceUpperCase 
-          ? [UpperCaseTextFormatter()]
-          : [],
+        textCapitalization: forceUpperCase
+            ? TextCapitalization.characters
+            : TextCapitalization.none,
+        inputFormatters: forceUpperCase ? [UpperCaseTextFormatter()] : [],
         style: GoogleFonts.plusJakartaSans(
           fontSize: controller.text.length > 10 ? 12 : 14,
           fontWeight: FontWeight.w700,
@@ -1023,7 +1079,10 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide.none,
           ),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 16,
+          ),
         ),
       ),
     );

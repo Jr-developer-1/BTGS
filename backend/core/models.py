@@ -200,15 +200,15 @@ class User(models.Model):
     def bank_name(self):
         data = self._get_api_data()
         if not data: return ''
-        emp_info = data.get('employee', {})
-        return emp_info.get('bank_name', '')
+        bank_info = data.get('bank_details', {})
+        return bank_info.get('bank_name', '')
 
     @property
     def account_no(self):
         data = self._get_api_data()
         if not data: return ''
-        emp_info = data.get('employee', {})
-        raw_acc = str(emp_info.get('account_no') or '')
+        bank_info = data.get('bank_details', {})
+        raw_acc = str(bank_info.get('account_no') or '')
         if not raw_acc: return ''
         
         # Masking: show last 5 digits
@@ -217,11 +217,19 @@ class User(models.Model):
         return '*' * (len(raw_acc) - 5) + raw_acc[-5:]
 
     @property
+    def full_account_no(self):
+        """Unmasked account number for finance exports."""
+        data = self._get_api_data()
+        if not data: return ''
+        bank_info = data.get('bank_details', {})
+        return str(bank_info.get('account_no') or '')
+
+    @property
     def ifsc_code(self):
         data = self._get_api_data()
         if not data: return ''
-        emp_info = data.get('employee', {})
-        return emp_info.get('ifsc_code', '')
+        bank_info = data.get('bank_details', {})
+        return bank_info.get('ifsc_code', '')
 
     def _get_hierarchy_manager(self, index):
         """Helper to resolve a manager from the API hierarchy at a specific depth."""

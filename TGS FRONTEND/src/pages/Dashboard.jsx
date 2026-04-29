@@ -198,7 +198,7 @@ const Dashboard = () => {
 
                 // 2. ADMIN ANALYTICS
                 const totalEmpCount = employeesRes.data.count ?? (employeesRes.data.results || employeesRes.data || []).length;
-                
+
                 let activatedCount = 0;
                 let activeNowCount = 0;
 
@@ -208,9 +208,9 @@ const Dashboard = () => {
                             api.get('/api/users/').catch(() => ({ data: { count: 0 } })),
                             api.get('/api/session-history').catch(() => ({ data: [] }))
                         ]);
-                        
+
                         activatedCount = usersRes.data.count ?? (Array.isArray(usersRes.data) ? usersRes.data.length : 0);
-                        
+
                         const sessions = Array.isArray(sessionsRes.data) ? sessionsRes.data : (sessionsRes.data.results || []);
                         activeNowCount = sessions.filter(s => s.is_active === true).length;
                     } catch (e) {

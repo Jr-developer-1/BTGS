@@ -380,10 +380,10 @@ export default function AdminMasterManagement() {
                                         {/* Boolean Toggles Grid */}
                                         <div style={{ gridColumn: 'span 2', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '10px' }}>
                                             {boolFields.map(field => (
-                                                <div key={field} className="checkbox-field" style={{ 
-                                                    background: '#f8fafc', 
-                                                    padding: '12px 16px', 
-                                                    borderRadius: '16px', 
+                                                <div key={field} className="checkbox-field" style={{
+                                                    background: '#f8fafc',
+                                                    padding: '12px 16px',
+                                                    borderRadius: '16px',
                                                     border: '1.5px solid #e2e8f0',
                                                     display: 'flex',
                                                     alignItems: 'center',
@@ -392,26 +392,26 @@ export default function AdminMasterManagement() {
                                                     <div style={{ flex: 1 }}>
                                                         <label style={{ fontSize: '0.75rem', fontWeight: 800, color: '#64748b', display: 'block', textTransform: 'uppercase' }}>{field.replace(/^is_/, '').replace(/_/g, ' ')}</label>
                                                     </div>
-                                                    <div 
+                                                    <div
                                                         onClick={() => setFormData({ ...formData, [field]: !formData[field] })}
-                                                        style={{ 
-                                                            width: '44px', 
-                                                            height: '24px', 
-                                                            borderRadius: '24px', 
-                                                            backgroundColor: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? 'var(--primary)' : '#cbd5e1', 
-                                                            position: 'relative', 
-                                                            cursor: 'pointer', 
-                                                            transition: 'background-color 0.3s ease' 
+                                                        style={{
+                                                            width: '44px',
+                                                            height: '24px',
+                                                            borderRadius: '24px',
+                                                            backgroundColor: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? 'var(--primary)' : '#cbd5e1',
+                                                            position: 'relative',
+                                                            cursor: 'pointer',
+                                                            transition: 'background-color 0.3s ease'
                                                         }}
                                                     >
-                                                        <div style={{ 
-                                                            position: 'absolute', 
-                                                            height: '18px', 
-                                                            width: '18px', 
-                                                            left: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? '23px' : '3px', 
-                                                            top: '3px', 
-                                                            backgroundColor: 'white', 
-                                                            transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                                                        <div style={{
+                                                            position: 'absolute',
+                                                            height: '18px',
+                                                            width: '18px',
+                                                            left: (formData[field] === true || String(formData[field]).toLowerCase() === 'true' || formData[field] === 1) ? '23px' : '3px',
+                                                            top: '3px',
+                                                            backgroundColor: 'white',
+                                                            transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                                                             borderRadius: '50%',
                                                             boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                                                         }}></div>

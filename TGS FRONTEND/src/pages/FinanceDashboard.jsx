@@ -15,6 +15,8 @@ import {
     ArrowDownRight,
     Search,
     FileDown,
+    UploadCloud,
+    FileText,
     Zap,
     XCircle,
     Send,
@@ -40,6 +42,9 @@ const FinanceDashboard = () => {
     const [selectedRecord, setSelectedRecord] = useState(null);
     const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
     const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+    const [importFile, setImportFile] = useState(null);
+    const [importLoading, setImportLoading] = useState(false);
 
     // Form states
     const [transferData, setTransferData] = useState({
@@ -67,6 +72,36 @@ const FinanceDashboard = () => {
             setRejectReason('');
         }
     }, [isRejectModalOpen]);
+
+    const fetchStats = async () => {
+        try {
+            // Get pending count
+            const pendingResp = await api.get('/api/approvals/?tab=pending&source=hub');
+            const pendingCount = (pendingResp.data.results || pendingResp.data || []).length;
+
+            // Get paid today count and amount
+            const today = new Date().toISOString().split('T')[0];
+            const paidResp = await api.get(`/api/approvals/?tab=completed&source=hub&date=${today}`);
+            const paidData = paidResp.data.results || paidResp.data || [];
+            const paidTotal = paidData.reduce((sum, item) => {
+                const amt = item.details?.executive_approved_amount || item.cost || 0;
+                return sum + parseFloat(String(amt).replace(/[^\d.-]/g, '') || 0);
+            }, 0);
+
+            // Get disputes count
+            const disputeResp = await api.get('/api/approvals/?tab=pending&source=hub&is_disputed=true');
+            const disputeCount = (disputeResp.data.results || disputeResp.data || []).length;
+
+            setStats(prev => [
+                { ...prev[0], value: pendingCount.toString() },
+                { ...prev[1], value: `₹${paidTotal.toLocaleString()}` },
+                { ...prev[2], value: disputeCount.toString() },
+                { ...prev[3], value: '2.4h' } // Dummy for now
+            ]);
+        } catch (error) {
+            console.error("Error fetching stats:", error);
+        }
+    };
 
     const fetchFinanceData = async () => {
         try {
@@ -104,7 +139,67 @@ const FinanceDashboard = () => {
 
     useEffect(() => {
         fetchFinanceData();
+        fetchStats();
     }, [activeTab]);
+
+    const handleExport = async (tabOverride = null) => {
+        const targetTab = tabOverride || activeTab;
+        try {
+            showToast("Generating export...", "info");
+            const response = await api.get(`/api/finance/export/?tab=${targetTab}`, {
+                responseType: 'blob'
+            });
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `Finance_Export_${targetTab}_${new Date().toISOString().split('T')[0]}.xlsx`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        } catch (e) {
+            // Since responseType is 'blob', the error data is also a Blob
+            if (e.response && e.response.data instanceof Blob) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    try {
+                        const json = JSON.parse(reader.result);
+                        showToast(json.error || "Export failed", "error");
+                    } catch (err) {
+                        showToast("Export failed", "error");
+                    }
+                };
+                reader.readAsText(e.response.data);
+            } else {
+                showToast(e.response?.data?.error || "Export failed", "error");
+            }
+        }
+    };
+
+    const handleImport = async () => {
+        if (!importFile) {
+            showToast("Please select a file", "warning");
+            return;
+        }
+        try {
+            setImportLoading(true);
+            const formData = new FormData();
+            formData.append('file', importFile);
+            const resp = await api.post('/api/finance/import/', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            showToast(resp.data.message || "Import successful", "success");
+            if (resp.data.errors && resp.data.errors.length > 0) {
+                console.warn("Import warning:", resp.data.errors);
+            }
+            setIsImportModalOpen(false);
+            setImportFile(null);
+            fetchFinanceData();
+        } catch (e) {
+            showToast(e.response?.data?.error || "Import failed", "error");
+        } finally {
+            setImportLoading(false);
+        }
+    };
 
     const filteredRecords = records.filter(rec =>
         rec.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -201,18 +296,21 @@ const FinanceDashboard = () => {
             <div className="page-header">
                 <div>
                     <h1>Finance Dashboard</h1>
-                    {/* <p>Manage employee trips, expenses, and payments.</p> */}
                 </div>
                 <div className="header-actions">
+                    <button className="btn-secondary" onClick={() => setIsImportModalOpen(true)}>
+                        <UploadCloud size={18} />
+                        Bulk Operations
+                    </button>
                     <button className="btn-secondary" onClick={() => fetchFinanceData()}>
-                        <Clock size={18} />
-                        Refresh List
+                        <RotateCcw size={18} />
+                        Refresh
                     </button>
                     <button className="btn-primary" onClick={() => navigate('/settlement')}>
                         <Zap size={18} />
-                        Settlement Runs
+                        Settlements
                     </button>
-                </div>
+                </div>55
             </div>
 
             <div className="stats-grid">
@@ -294,58 +392,13 @@ const FinanceDashboard = () => {
                                 <th>Type</th>
                                 <th>Amount</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                <th style={{ textAlign: 'right' }}>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             {loading ? (
-                                <tr><td colSpan="8" className="fd-empty-cell">Loading transactions...</td></tr>
-                            ) : filteredRecords.length > 0 ? (
-                                filteredRecords.map(rec => (
-                                    <tr key={rec.id}>
-                                        <td><span className="id-badge-fims">{rec.id}</span></td>
-                                        <td><span className="trip-ref">{rec.trip}</span></td>
-                                        <td>{rec.employee}</td>
-                                        <td>{rec.date}</td>
-                                        <td>{rec.type}</td>
-                                        <td className="amt-cell">{rec.amount}</td>
-                                        <td>
-                                            <div className={`status-pill ${rec.status.toLowerCase().replace(/ /g, '-')}`}>
-                                                {rec.status}
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div className="finance-actions">
-                                                {activeTab === 'pending' && (
-                                                    <button className="f-icon-btn process" onClick={() => handleUnderProcess(rec.id)} title="Mark as Processing">
-                                                        <Clock size={16} />
-                                                    </button>
-                                                )}
-                                                {activeTab === 'rejected' && (
-                                                    <button className="f-icon-btn process" onClick={() => handleUnreject(rec.id)} title="Mark Unreject">
-                                                        <RotateCcw size={16} />
-                                                    </button>
-                                                )}
-                                                {(activeTab !== 'completed' && activeTab !== 'rejected') && (
-                                                    <button className="f-icon-btn transfer" onClick={() => openTransfer(rec)} title="Record Transfer">
-                                                        <IndianRupee size={16} />
-                                                    </button>
-                                                )}
-                                                {(activeTab !== 'completed' && activeTab !== 'rejected') && (
-                                                    <button className="f-icon-btn reject" onClick={() => openReject(rec)} title="Reject">
-                                                        <XCircle size={16} />
-                                                    </button>
-                                                )}
-                                                {activeTab === 'completed' && (
-                                                    <button className="f-icon-btn process" onClick={() => openTransfer(rec)} title="View Details">
-                                                        <Search size={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            ) : (
+                                <tr><td colSpan="8" className="fd-empty-cell">Retrieving records...</td></tr>
+                            ) : filteredRecords.length === 0 ? (
                                 <tr>
                                     <td colSpan="8" className="fd-empty-cell">
                                         <div className="empty-state-fims">
@@ -359,6 +412,51 @@ const FinanceDashboard = () => {
                                         </div>
                                     </td>
                                 </tr>
+                            ) : (
+                                filteredRecords.map((rec) => (
+                                    <tr key={rec.id}>
+                                        <td className="id-cell">{rec.id}</td>
+                                        <td className="trip-cell">{rec.trip}</td>
+                                        <td>{rec.employee}</td>
+                                        <td>{rec.date}</td>
+                                        <td><span className="type-badge">{rec.type}</span></td>
+                                        <td className="amt-cell">{rec.amount}</td>
+                                        <td>
+                                            <span className={`status-pill ${rec.status?.toLowerCase().replace(/_/g, '-')}`}>
+                                                {rec.status?.replace(/_/g, ' ')}
+                                            </span>
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>
+                                            <div className="action-row-btns">
+                                                {activeTab === 'pending' && (
+                                                    <button className="mini-action-btn orange" onClick={() => handleUnderProcess(rec.id)} title="Mark Under Process">
+                                                        <RotateCcw size={14} />
+                                                    </button>
+                                                )}
+                                                {activeTab === 'rejected' && (
+                                                    <button className="mini-action-btn blue" onClick={() => handleUnreject(rec.id)} title="Unreject to Queue">
+                                                        <RotateCcw size={14} />
+                                                    </button>
+                                                )}
+                                                {(activeTab === 'pending' || activeTab === 'processing') && (
+                                                    <>
+                                                        <button className="mini-action-btn green" onClick={() => openTransfer(rec)} title="Transfer/Pay">
+                                                            <IndianRupee size={15} />
+                                                        </button>
+                                                        <button className="mini-action-btn red" onClick={() => openReject(rec)} title="Reject">
+                                                            <XCircle size={15} />
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {activeTab === 'completed' && (
+                                                    <button className="mini-action-btn blue" onClick={() => openTransfer(rec)} title="View Details">
+                                                        <Search size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
                             )}
                         </tbody>
                     </table>
@@ -422,7 +520,6 @@ const FinanceDashboard = () => {
                         </div>
                     </div>
 
-                    {/* Only show payment fields if there is actually a net amount to pay */}
                     {(activeTab === 'completed' || (parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0) - parseFloat(selectedRecord?.raw?.details?.wallet_balance_used || 0)) > 0) ? (
                         <>
                             <div className="form-grid-2">
@@ -461,7 +558,6 @@ const FinanceDashboard = () => {
                                         placeholder="Enter NEFT Ref or UPI ID"
                                         value={activeTab === 'completed' ? selectedRecord?.raw.transaction_id : transferData.transaction_id}
                                         onChange={(e) => setTransferData({ ...transferData, transaction_id: e.target.value })}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
                                         disabled={activeTab === 'completed'}
                                     />
                                 </div>
@@ -483,7 +579,6 @@ const FinanceDashboard = () => {
                             placeholder="Add payment notes..."
                             value={activeTab === 'completed' ? selectedRecord?.raw.finance_remarks : transferData.remarks}
                             onChange={(e) => setTransferData({ ...transferData, remarks: e.target.value })}
-                            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) e.preventDefault(); }}
                             disabled={activeTab === 'completed'}
                         />
                     </div>
@@ -515,6 +610,114 @@ const FinanceDashboard = () => {
                             value={rejectReason}
                             onChange={(e) => setRejectReason(e.target.value)}
                         />
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Bulk Operations Modal */}
+            <Modal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                closeOnOverlayClick={false}
+                title="Bulk Operations Hub"
+                type="info"
+                actions={
+                    <div className="modal-actions-grid" style={{ padding: '0 24px 24px' }}>
+                        <button className="btn-secondary" onClick={() => setIsImportModalOpen(false)} style={{ borderRadius: '12px', fontWeight: '600' }}>Close</button>
+                        <button 
+                            className="btn-primary" 
+                            onClick={handleImport} 
+                            disabled={importLoading || !importFile}
+                            style={{ 
+                                borderRadius: '12px', 
+                                fontWeight: '700',
+                                background: (importLoading || !importFile) ? '#e2e8f0' : 'linear-gradient(135deg, #BB0633 0%, #800020 100%)',
+                                boxShadow: (!importLoading && importFile) ? '0 4px 12px rgba(187, 6, 51, 0.2)' : 'none',
+                                color: (importLoading || !importFile) ? '#94a3b8' : '#fff'
+                            }}
+                        >
+                            {importLoading ? "Processing..." : "Submit Updates"}
+                        </button>
+                    </div>
+                }
+            >
+                <div className="bulk-ops-enhanced" style={{ padding: '8px 24px' }}>
+                    <div className="bulk-step-card" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #f1f5f9', padding: '20px', marginBottom: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                            <div style={{ background: '#BB063315', padding: '10px', borderRadius: '12px' }}>
+                                <FileDown size={22} color="#BB0633" />
+                            </div>
+                            <div>
+                                <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>Step 1: Download Templates</h4>
+                                {/* <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: '#64748b' }}>Get updated ledger with dropdown validation</p> */}
+                            </div>
+                        </div>
+                        
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                            <button className="btn-secondary flex-1" onClick={() => handleExport('pending')} style={{ border: '1px solid #e2e8f0', borderRadius: '12px', height: '48px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                <Clock size={18} color="#f59e0b" />
+                                <span style={{ fontWeight: '600' }}>Export Pending</span>
+                            </button>
+                            <button className="btn-secondary flex-1" onClick={() => handleExport('completed')} style={{ border: '1px solid #e2e8f0', borderRadius: '12px', height: '48px', transition: 'all 0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                <CheckCircle size={18} color="#10b981" />
+                                <span style={{ fontWeight: '600' }}>Export Paid</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bulk-step-card" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #f1f5f9', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                            <div style={{ background: '#BB063315', padding: '10px', borderRadius: '12px' }}>
+                                <UploadCloud size={22} color="#BB0633" />
+                            </div>
+                            <div>
+                                <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '800', color: '#0f172a' }}>Step 2: Upload Updated File</h4>
+                                {/* <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: '#64748b' }}>Upload edited Excel to process bulk status changes</p> */}
+                            </div>
+                        </div>
+
+                        <div 
+                            className="dropzone-enhanced" 
+                            style={{ 
+                                border: '2px dashed #cbd5e1', 
+                                borderRadius: '16px', 
+                                padding: '32px 20px', 
+                                textAlign: 'center', 
+                                transition: 'all 0.3s', 
+                                background: importFile ? '#f0fdf4' : '#f8fafc',
+                                cursor: 'pointer',
+                                borderColor: importFile ? '#22c55e' : '#cbd5e1'
+                            }}
+                        >
+                            <input 
+                                type="file" 
+                                accept=".xlsx, .xls"
+                                id="bulk-import-input-enh"
+                                onChange={(e) => setImportFile(e.target.files[0])}
+                                style={{ display: 'none' }}
+                            />
+                            <label htmlFor="bulk-import-input-enh" style={{ cursor: 'pointer', display: 'block' }}>
+                                <div style={{ 
+                                    width: '56px', 
+                                    height: '56px', 
+                                    background: importFile ? '#22c55e15' : '#fff', 
+                                    borderRadius: '50%', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center', 
+                                    margin: '0 auto 12px',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                                }}>
+                                    {importFile ? <CheckCircle size={28} color="#22c55e" /> : <FileText size={28} color="#94a3b8" />}
+                                </div>
+                                <p style={{ fontWeight: '700', color: '#1e293b', margin: 0, fontSize: '0.95rem' }}>
+                                    {importFile ? importFile.name : "Select Excel Spreadsheet"}
+                                </p>
+                                <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '6px' }}>
+                                    {importFile ? `${(importFile.size / 1024).toFixed(1)} KB ready` : "Drag & drop or browse files"}
+                                </p>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </Modal>

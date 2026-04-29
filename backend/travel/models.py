@@ -309,6 +309,7 @@ class TravelClaim(SoftDeleteModel):
         ('PENDING_HEAD', 'Pending Finance Head'),
         ('PENDING_FINAL_RELEASE', 'Pending Final Release'),
         ('REJECTED_BY_HEAD', 'Rejected by Finance Head'),
+        ('PARTIALLY_COMPLETED', 'Partially Completed'),
     ]
 
     HEAD_ACTION_CHOICES = [
@@ -396,6 +397,7 @@ class TravelAdvance(SoftDeleteModel):
         ('PENDING_FINAL_RELEASE', 'Pending Final Release'),
         ('REJECTED_BY_HEAD', 'Rejected by Finance Head'),
         ('COMPLETED', 'Completed'),
+        ('PARTIALLY_COMPLETED', 'Partially Completed'),
     ]
 
     HEAD_ACTION_CHOICES = [

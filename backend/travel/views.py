@@ -42,6 +42,205 @@ from core.permissions import IsCustomAuthenticated # type: ignore
 import requests # type: ignore
 import datetime # type: ignore
 
+def _is_admin(user):
+    """Checks if a user is an administrator."""
+    if not user or not user.role: return False
+    return user.role.name.lower() in ['admin', 'it-admin', 'superuser']
+
+class FinanceExportExcelView(APIView):
+    permission_classes = [IsCustomAuthenticated]
+    
+    def get(self, request):
+        user = getattr(request, 'custom_user', None)
+        if not (_is_finance_executive(user) or _is_finance_head(user) or _is_admin(user)):
+            return Response({"error": "Unauthorized"}, status=403)
+            
+        tab = request.query_params.get('tab', 'pending')
+        
+        # Get querysets based on tab
+        if tab == 'completed':
+            statuses = ['Paid', 'COMPLETED', 'Completed', 'Settled', 'Transferred']
+        elif tab == 'processing':
+            statuses = ['Under Process']
+        elif tab == 'rejected':
+            statuses = ['Rejected', 'Rejected by Finance', 'Cancelled']
+        else:
+            # Action Required (Pending)
+            statuses = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
+            
+        advances = TravelAdvance.objects.filter(status__in=statuses)
+        claims = TravelClaim.objects.filter(status__in=statuses)
+
+        data = []
+        # Add advances to list
+        for adv in advances:
+            user_obj = adv.trip.user if adv.trip and adv.trip.user else None
+            data.append({
+                'ID': f"ADV-{adv.id}",
+                'Employee Name': user_obj.name if user_obj else (adv.user_name or "N/A"),
+                'Amount': adv.executive_approved_amount or adv.hr_approved_amount or adv.requested_amount,
+                'Bank Name': user_obj.bank_name if user_obj else "N/A",
+                'Account Num': user_obj.full_account_no if user_obj else "N/A",
+                'IFSC Code': user_obj.ifsc_code if user_obj else "N/A",
+                'Status': adv.status,
+                'Trip ID': adv.trip.trip_id if adv.trip else "N/A",
+                'Date': adv.created_at.strftime("%Y-%m-%d") if adv.created_at else "N/A"
+            })
+
+        # Add claims to list
+        for claim in claims:
+            user_obj = claim.trip.user if claim.trip and claim.trip.user else None
+            data.append({
+                'ID': f"CLAIM-{claim.id}",
+                'Employee Name': user_obj.name if user_obj else (claim.user_name or "N/A"),
+                'Amount': claim.executive_approved_amount or claim.hr_approved_amount or claim.total_amount,
+                'Bank Name': user_obj.bank_name if user_obj else "N/A",
+                'Account Num': user_obj.full_account_no if user_obj else "N/A",
+                'IFSC Code': user_obj.ifsc_code if user_obj else "N/A",
+                'Status': claim.status,
+                'Trip ID': claim.trip.trip_id if claim.trip else "N/A",
+                'Date': claim.created_at.strftime("%Y-%m-%d") if claim.created_at else "N/A"
+            })
+            
+        if not data:
+            return Response({"error": "There is no pending record to process the payment"}, status=400)
+            
+        df = pd.DataFrame(data)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Payouts')
+        
+        output.seek(0)
+        
+        filename = f"Finance_Export_{tab}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        # Add Data Validation for Status Column using openpyxl
+        from openpyxl.worksheet.datavalidation import DataValidation
+        
+        output.seek(0)
+        from openpyxl import load_workbook
+        wb = load_workbook(output)
+        ws = wb.active
+        
+        # Find Status column index
+        status_col_idx = None
+        for cell in ws[1]:
+            if cell.value == 'Status':
+                status_col_idx = cell.column_letter
+                break
+        
+        if status_col_idx:
+            # Define statuses for dropdown
+            statuses = ['Paid', 'COMPLETED', 'PARTIALLY_COMPLETED', 'Under Process', 'REJECTED_BY_HEAD']
+            validation_list = f'"{",".join(statuses)}"'
+            
+            dv = DataValidation(type="list", formula1=validation_list, allow_blank=True)
+            dv.error ='Your entry is not in the list'
+            dv.errorTitle = 'Invalid Selection'
+            dv.prompt = 'Please select a status'
+            dv.promptTitle = 'Status Selection'
+            
+            # Apply to the column (starting from row 2 to 1000 for safety)
+            ws.add_data_validation(dv)
+            dv.add(f"{status_col_idx}2:{status_col_idx}1000")
+
+        # Save back to output
+        new_output = io.BytesIO()
+        wb.save(new_output)
+        new_output.seek(0)
+        
+        response = HttpResponse(
+            new_output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+class FinanceBulkImportView(APIView):
+    permission_classes = [IsCustomAuthenticated]
+    
+    def post(self, request):
+        user = getattr(request, 'custom_user', None)
+        if not (_is_finance_executive(user) or _is_finance_head(user) or _is_admin(user)):
+            return Response({"error": "Unauthorized"}, status=403)
+            
+        if 'file' not in request.FILES:
+            return Response({"error": "No file uploaded"}, status=400)
+            
+        import_file = request.FILES['file']
+        try:
+            df = pd.read_excel(import_file)
+            
+            # Expected columns: ID, Status, Remarks (optional)
+            if 'ID' not in df.columns or 'Status' not in df.columns:
+                return Response({"error": "Excel must contain 'ID' and 'Status' columns"}, status=400)
+                
+            updated_count = 0
+            errors = []
+            
+            for index, row in df.iterrows():
+                task_id = str(row['ID']).strip()
+                new_status = str(row['Status']).strip()
+                remarks = str(row.get('Remarks', '')).strip()
+                
+                if not task_id: continue
+                
+                try:
+                    obj = None
+                    if task_id.startswith('ADV-'):
+                        obj = TravelAdvance.objects.filter(id=task_id.replace('ADV-', '')).first()
+                    elif task_id.startswith('CLAIM-'):
+                        obj = TravelClaim.objects.filter(id=task_id.replace('CLAIM-', '')).first()
+                    
+                    if obj:
+                        # VALIDATION: Skip if the record is already in the target status 
+                        # to prevent duplicate processing/notifications
+                        if obj.status == new_status:
+                            continue
+
+                        # VALIDATION: Prevent unauthorized reversal of finalized payments
+                        final_terminal_statuses = ['Paid', 'Completed', 'Transferred']
+                        if obj.status in final_terminal_statuses and new_status not in final_terminal_statuses:
+                            errors.append(f"Row {index+2}: Record {task_id} is already {obj.status} and cannot be reversed via bulk import.")
+                            continue
+
+                        obj.status = new_status
+                        if remarks and remarks != 'nan':
+                            obj.finance_remarks = remarks
+                        obj.processed_by = user
+                        
+                        # Only update payment_date if moving to a paid/completed status
+                        if new_status in ['Paid', 'Completed', 'Transferred', 'PARTIALLY_COMPLETED']:
+                            obj.payment_date = timezone.now()
+                            
+                        obj.save()
+                        
+                        # Notify employee
+                        requester = obj.trip.user if hasattr(obj, 'trip') and obj.trip else None
+                        if requester:
+                            Notification.objects.create(
+                                user=requester,
+                                title=f"Payment Status Updated",
+                                message=f"Your {task_id} status has been updated to {new_status} by Finance.",
+                                type='info'
+                            )
+                        updated_count += 1
+                    else:
+                        errors.append(f"Row {index+2}: Record {task_id} not found.")
+                except Exception as e:
+                    errors.append(f"Row {index+2} (ID: {task_id}): {str(e)}")
+            
+            return Response({
+                "message": f"Successfully updated {updated_count} records.",
+                "errors": errors
+            })
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({"error": f"Error processing file: {str(e)}"}, status=400)
+
 def decode_id(encoded_id):
     s_id = str(encoded_id) if encoded_id else ""
     if not s_id:
@@ -1069,7 +1268,7 @@ class ApprovalsView(APIView):
             
             # Admins see everything in history
             if is_admin:
-                history_statuses = ['Approved', 'Rejected', 'Resolved', 'Paid', 'HR Approved', 'Manager Approved', 'COMPLETED']
+                history_statuses = ['Approved', 'Rejected', 'Resolved', 'Paid', 'HR Approved', 'Manager Approved', 'COMPLETED', 'Completed', 'Settled', 'Transferred']
                 trips = Trip.objects.filter(status__in=history_statuses)
                 advances = TravelAdvance.objects.filter(status__in=history_statuses)
                 claims = TravelClaim.objects.filter(status__in=history_statuses)
@@ -1085,7 +1284,7 @@ class ApprovalsView(APIView):
                     advances = advances.filter(current_approver=user)
                     claims = claims.filter(current_approver=user)
             elif tab == 'completed':
-                completed_statuses = ['Paid', 'COMPLETED', 'Settled']
+                completed_statuses = ['Paid', 'COMPLETED', 'Completed', 'Settled', 'Transferred']
                 trips = Trip.objects.filter(status__in=completed_statuses)
                 advances = TravelAdvance.objects.filter(status__in=completed_statuses)
                 claims = TravelClaim.objects.filter(status__in=completed_statuses)
@@ -1107,7 +1306,7 @@ class ApprovalsView(APIView):
                 if is_admin:
                     source = request.query_params.get('source')
                     if source == 'hub':
-                        finance_pending = ['PENDING_FINAL_RELEASE', 'Approved']
+                        finance_pending = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
                         trips = Trip.objects.filter(status__in=finance_pending)
                         advances = TravelAdvance.objects.filter(status__in=finance_pending)
                         claims = TravelClaim.objects.filter(status__in=finance_pending)
@@ -1124,7 +1323,7 @@ class ApprovalsView(APIView):
                         source = request.query_params.get('source')
                         if source == 'hub':
                             # Financial Hub is for Payouts - only show items authorized by Head
-                            pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved']
+                            pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
                         else:
                             # Inbox is for auditing/verification
                             pending_money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'HR Approved']
@@ -1191,6 +1390,11 @@ class ApprovalsView(APIView):
                 if view_type == 'monthly' and not is_tour_plan: continue
 
 
+                # PRE-CALCULATE TOTALS FOR FINANCE HUB RECONCILIATION
+                expense_sum = float(t.expenses.aggregate(s=Sum('amount'))['s'] or 0)
+                advance_sum = float(t.advances.filter(status__in=['Paid', 'COMPLETED', 'Transferred']).aggregate(s=Sum('executive_approved_amount'))['s'] or 0)
+                wallet_bal = float(t.user.carry_forward_balance or 0) if t.user else 0
+
                 tasks.append({
                     "id": f"TRIP-{t.trip_id}", "db_id": t.trip_id, 
                     "type": "Monthly Tour Plan" if t.consider_as_local else "Trip",
@@ -1199,7 +1403,7 @@ class ApprovalsView(APIView):
                     "hierarchy_level": t.hierarchy_level,
                     "trip_id": t.trip_id,
                     "is_local": t.consider_as_local,
-                    "cost": t.cost_estimate,
+                    "cost": f"₹{expense_sum:,.2f}" if (t.consider_as_local or expense_sum > 0) else t.cost_estimate,
                     "details": {
                         "source": t.source, "destination": t.destination, 
                         "start_date": t.start_date.strftime("%b %d, %Y"),
@@ -1209,6 +1413,10 @@ class ApprovalsView(APIView):
                         "vehicle_type": t.vehicle_type,
                         "purpose": t.purpose,
                         "project_code": t.project_code,
+                        "total_expenses": str(expense_sum),
+                        "total_advance_taken": str(advance_sum),
+                        "wallet_balance_used": str(wallet_bal),
+                        "executive_approved_amount": str(expense_sum), # Default to requested expenses for audit
                         "job_reports": [
                             {
                                 "id": jr.id,
@@ -1567,6 +1775,15 @@ class ApprovalsView(APIView):
                 # This ensures the web application ledger shows them immediately.
                 if trip:
                     _generate_expenses_from_batches(trip)
+                
+                # Notify user if they corrected a row
+                if row_status == 'Validated':
+                    Notification.objects.create(
+                        user=batch.user,
+                        title="Record Resubmitted",
+                        message="The rejected record has been resubmitted",
+                        type='success'
+                    )
 
                 print(f"DEBUG: UpdateBatchRow updated {updated_count} row(s)")
                 return Response({"message": f"Row {row_index} updated in {updated_count} batch(es)"})
@@ -3319,6 +3536,14 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     parent_batch = BulkActivityBatch.objects.get(id=parent_batch_id)
                     parent_batch.status = 'Resolved'
                     parent_batch.save()
+                    
+                    # Notify user about successful resubmission
+                    Notification.objects.create(
+                        user=user,
+                        title="Resubmission",
+                        message="The rejected record has been resubmitted",
+                        type='success'
+                    )
                 except (BulkActivityBatch.DoesNotExist, Trip.DoesNotExist):
                     pass
             

@@ -293,7 +293,14 @@ class ApiService {
       if (response.statusCode == 200) {
         return response.bodyBytes;
       } else {
-        throw Exception('Failed to download file. Status: ${response.statusCode}');
+        String msg = 'Failed to download file. Status: ${response.statusCode}';
+        try {
+          final errorBody = jsonDecode(response.body);
+          if (errorBody is Map && errorBody.containsKey('error')) {
+            msg = errorBody['error'];
+          }
+        } catch (_) {}
+        throw Exception(msg);
       }
     } catch (e) {
       LoggerService.log('API GET BINARY ERR: $e', isError: true);

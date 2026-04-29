@@ -418,13 +418,13 @@ const TravelExpenseGrid = ({
                 }
 
                 const natureVal = exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category);
-                
+
                 // Initialize timeDetails with robust fallbacks for different data sources (mobile/web/bulk)
-                const timeDetails = details.time || { 
-                    boardingTime: details.startTime || details.start_time || '', 
-                    scheduledTime: '', 
-                    delay: 0, 
-                    actualTime: details.endTime || details.reach_time || '' 
+                const timeDetails = details.time || {
+                    boardingTime: details.startTime || details.start_time || '',
+                    scheduledTime: '',
+                    delay: 0,
+                    actualTime: details.endTime || details.reach_time || ''
                 };
 
                 // enforce fixed fields for non-TRP trip ids and local travel entries
@@ -464,12 +464,12 @@ const TravelExpenseGrid = ({
                 const unsavedRows = currentRows.filter(r => {
                     if (r.isSaved) return false;
                     if (syncedIds.has(r.id)) return false;
-                    
+
                     // Special case for newly created rows that just got a real ID in backend
                     // but still have a temporary random ID in local state.
-                    const isAlreadyInBackend = syncedRows.some(sr => 
-                        sr.date === r.date && 
-                        sr.nature === r.nature && 
+                    const isAlreadyInBackend = syncedRows.some(sr =>
+                        sr.date === r.date &&
+                        sr.nature === r.nature &&
                         Math.abs(parseFloat(sr.amount || 0) - parseFloat(r.amount || 0)) < 0.01 &&
                         sr.details.origin === r.details.origin &&
                         sr.details.destination === r.details.destination
@@ -1856,14 +1856,14 @@ const TravelExpenseGrid = ({
                                                                                         <button
                                                                                             type="button"
                                                                                             style={{ background: '#fef3c7', border: '1px solid #fcd34d', color: '#d97706', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                                                                            onClick={() => setDeviationModal({ 
-                                                                                                show: true, 
-                                                                                                rowId: row.id, 
-                                                                                                reason: '', 
-                                                                                                target: '', 
-                                                                                                actualFrom: row.details.origin || '', 
-                                                                                                actualTo: row.details.destination || '' 
-                                                                                             })}
+                                                                                            onClick={() => setDeviationModal({
+                                                                                                show: true,
+                                                                                                rowId: row.id,
+                                                                                                reason: '',
+                                                                                                target: '',
+                                                                                                actualFrom: row.details.origin || '',
+                                                                                                actualTo: row.details.destination || ''
+                                                                                            })}
                                                                                         >
                                                                                             <AlertTriangle size={12} /> DEVIATE
                                                                                         </button>
@@ -1881,20 +1881,20 @@ const TravelExpenseGrid = ({
                                                                                 </button>
                                                                             </div>
                                                                         )}
-                                                                            </div>
-                                                                        </div>
-                                                                    {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
+                                                                    </div>
+                                                                </div>
+                                                                {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
                                                                 <div style={{ padding: '0 14px', marginBottom: '10px' }}>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px' }}>
-                                                                        <button 
-                                                                            type="button" 
+                                                                        <button
+                                                                            type="button"
                                                                             onClick={() => updateDetails(row.id, 'isPublicTransport', false)}
                                                                             style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
                                                                             VEHICLE (ODOMETER)
                                                                         </button>
-                                                                        <button 
-                                                                            type="button" 
+                                                                        <button
+                                                                            type="button"
                                                                             onClick={() => updateDetails(row.id, 'isPublicTransport', true)}
                                                                             style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
@@ -1978,10 +1978,10 @@ const TravelExpenseGrid = ({
                                                                         ) : (
                                                                             <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
                                                                                 <label>Type / Public Mode</label>
-                                                                                <select 
-                                                                                    className="cat-input" 
-                                                                                    value={row.details.remainingRoute || 'Auto'} 
-                                                                                    onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)} 
+                                                                                <select
+                                                                                    className="cat-input"
+                                                                                    value={row.details.remainingRoute || 'Auto'}
+                                                                                    onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)}
                                                                                     disabled={isLocked}
                                                                                 >
                                                                                     <option value="Auto">Auto</option>
@@ -2605,9 +2605,9 @@ const TravelExpenseGrid = ({
                                                                         {isFixedLocal && !row.is_deviated && (
                                                                             <button
                                                                                 className="deviate-mini-btn"
-                                                                                onClick={() => setDeviationModal({ 
-                                                                                    show: true, 
-                                                                                    rowId: row.id, 
+                                                                                onClick={() => setDeviationModal({
+                                                                                    show: true,
+                                                                                    rowId: row.id,
                                                                                     reason: '',
                                                                                     actualFrom: row.details.origin || '',
                                                                                     actualTo: row.details.destination || ''
@@ -2650,15 +2650,15 @@ const TravelExpenseGrid = ({
                                                                 <div className="odo-tracking mt-2" style={{ gridColumn: '1 / -1' }}>
                                                                     {/* TOGGLE FOR VEHICLE vs OTHERS */}
                                                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px', marginBottom: '12px' }}>
-                                                                        <button 
-                                                                            type="button" 
+                                                                        <button
+                                                                            type="button"
                                                                             onClick={() => updateDetails(row.id, 'isPublicTransport', false)}
                                                                             style={{ padding: '6px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
                                                                             VEHICLE (ODOMETER)
                                                                         </button>
-                                                                        <button 
-                                                                            type="button" 
+                                                                        <button
+                                                                            type="button"
                                                                             onClick={() => updateDetails(row.id, 'isPublicTransport', true)}
                                                                             style={{ padding: '6px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
@@ -2721,11 +2721,11 @@ const TravelExpenseGrid = ({
                                                                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                                                                 <div style={{ flex: 1, minWidth: '150px' }}>
                                                                                     <label className="odo-label" style={{ display: 'block', marginBottom: '6px', fontSize: '0.65rem' }}>Type / Public Mode</label>
-                                                                                    <select 
-                                                                                        className="cat-input" 
+                                                                                    <select
+                                                                                        className="cat-input"
                                                                                         style={{ width: '100%', fontSize: '0.8rem', padding: '8px', borderRadius: '6px', border: '1px solid #cbd5e1' }}
-                                                                                        value={row.details.remainingRoute || 'Auto'} 
-                                                                                        onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)} 
+                                                                                        value={row.details.remainingRoute || 'Auto'}
+                                                                                        onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)}
                                                                                         disabled={isLocked}
                                                                                     >
                                                                                         <option value="Auto">Auto</option>
@@ -3645,8 +3645,8 @@ const TravelExpenseGrid = ({
                         <div className="modal-content-p">
                             <h3>{deviationModal.isNotVisited ? 'Mark as Not Visited' : 'Report Travel Deviation'}</h3>
                             <p style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: 1.5 }}>
-                                {deviationModal.isNotVisited 
-                                    ? 'Please provide a reason for not visiting this planned location. This entry will be marked as cancelled and the amount will be set to zero.' 
+                                {deviationModal.isNotVisited
+                                    ? 'Please provide a reason for not visiting this planned location. This entry will be marked as cancelled and the amount will be set to zero.'
                                     : 'Please enter the reason for deviating from the planned route. This requires approval.'}
                             </p>
                             <textarea
@@ -3688,7 +3688,7 @@ const TravelExpenseGrid = ({
                             )}
                             <div className="modal-actions-p mt-3">
                                 <button className="modal-btn cancel" onClick={() => setDeviationModal({ show: false, rowId: null, reason: '', target: '', actualFrom: '', actualTo: '' })}>Cancel</button>
-                                
+
                                 {!deviationModal.isNotVisited && (
                                     <button
                                         className="modal-btn confirm warning"
