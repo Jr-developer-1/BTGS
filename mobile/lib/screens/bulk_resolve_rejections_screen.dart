@@ -283,18 +283,22 @@ class _BulkResolveRejectionsScreenState
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  DateFormat(
-                                    'dd-MM-yyyy',
-                                  ).format(controllers.date),
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
+                                Flexible(
+                                  child: Text(
+                                    DateFormat(
+                                      'dd-MM-yyyy',
+                                    ).format(controllers.date),
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
+                                const SizedBox(width: 4),
                                 const Icon(
                                   Icons.calendar_today_outlined,
-                                  size: 14,
+                                  size: 13,
                                   color: Color(0xFF64748B),
                                 ),
                               ],
@@ -514,16 +518,20 @@ class _BulkResolveRejectionsScreenState
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    _formatTime(time),
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                  Flexible(
+                    child: Text(
+                      _formatTime(time),
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  const SizedBox(width: 4),
                   const Icon(
                     Icons.access_time,
-                    size: 12,
+                    size: 11,
                     color: Color(0xFF94A3B8),
                   ),
                 ],
@@ -539,13 +547,16 @@ class _BulkResolveRejectionsScreenState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label.toUpperCase(),
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF94A3B8),
-            letterSpacing: 0.5,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label.toUpperCase(),
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF94A3B8),
+              letterSpacing: 0.5,
+            ),
           ),
         ),
         const SizedBox(height: 4),

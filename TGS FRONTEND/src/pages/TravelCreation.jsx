@@ -85,12 +85,10 @@ const TravelCreation = () => {
 
     useEffect(() => {
         if (!user) return;
-        const role = (user.role || '').toUpperCase();
-        const desig = (user.designation || '').toUpperCase();
-        const isOE = role.includes('OE') || desig.includes('OE');
+        const canCreateTourPlan = user?.role_permissions?.can_create_tour_plan;
 
-        if (!isOE) {
-            showToast("Access Restricted: Only OE role can initiate Tour Plans", "error");
+        if (!canCreateTourPlan) {
+            showToast("Access Restricted: Your role does not have permission to initiate Tour Plans", "error");
             navigate('/trips');
         }
     }, [user, navigate, showToast]);

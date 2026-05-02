@@ -126,7 +126,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
         # Fetch the first page to get metadata
         try:
             start_time = time.time()
-            response = requests.get(api_url, params=params, headers=headers, timeout=30)
+            response = requests.get(api_url, params=params, headers=headers, timeout=120)
             latency = (time.time() - start_time) * 1000
 
             try:
@@ -147,36 +147,52 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 return {"count": 0, "results": []}
 
             total_count = data.get('count', 0)
+            # Handle pagination logic efficiently
             next_url = data.get('next')
             prev_url = data.get('previous')
+            count = data.get('count', 0)
             page_results = data.get('results', [])
             
-            # If we need more data for the current page_size
-            current_external_page = start_external_page
-            while len(page_results) < int(page_size) and next_url:
-                try:
-                    next_resp = requests.get(next_url, headers=headers, timeout=30)
-                    next_resp.raise_for_status()
-                    next_data = next_resp.json() or {}
-                    page_results.extend(next_data.get('results', []))
-                    next_url = next_data.get('next')
-                    current_external_page += 1
-                except:
-                    break
-            
-            # Slice to exact page_size in case we fetched too many
-            page_results = page_results[:int(page_size)]
-
+            target_page_count = 0
             if fetch_all_pages:
-                while next_url:
-                    try:
-                        next_resp = requests.get(next_url, headers=headers, timeout=30)
-                        next_resp.raise_for_status()
-                        next_data = next_resp.json() or {}
-                        page_results.extend(next_data.get('results', []))
-                        next_url = next_data.get('next')
-                    except:
-                        break
+                # Calculate how many pages we need to fetch in total
+                import math
+                # API seems hardcoded to 10 per page
+                target_page_count = math.ceil(count / 10)
+            elif int(page_size) > len(page_results):
+                import math
+                target_page_count = math.ceil(int(page_size) / 10)
+
+            if target_page_count > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                
+                # We already have page 1 (start_external_page)
+                # Fetch remaining pages up to target_page_count in parallel
+                max_pages_to_fetch = target_page_count
+                pages_to_fetch = range(start_external_page + 1, max_pages_to_fetch + 1)
+                
+                if pages_to_fetch:
+                    def fetch_single_page(p_num):
+                        try:
+                            p_params = params.copy()
+                            p_params['page'] = p_num
+                            p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=20)
+                            if p_resp.status_code == 200:
+                                return p_resp.json().get('results', [])
+                        except Exception as e:
+                            print(f"Parallel fetch error on page {p_num}: {e}")
+                        return []
+
+                    # Use up to 20 workers to avoid overwhelming the external API
+                    with ThreadPoolExecutor(max_workers=20) as executor:
+                        extra_results_list = list(executor.map(fetch_single_page, pages_to_fetch))
+                    
+                    for er in extra_results_list:
+                        page_results.extend(er)
+
+            # Slice to exact page_size in case we fetched too many (only if not fetching all)
+            if not fetch_all_pages:
+                page_results = page_results[:int(page_size)]
             
             all_results = page_results
 

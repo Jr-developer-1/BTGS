@@ -354,6 +354,7 @@ class TravelClaim(SoftDeleteModel):
     hod_director_name = models.CharField(max_length=255, null=True, blank=True)
     rejection_reason = models.TextField(blank=True, null=True)
     rejected_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_claims')
+    paid_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -438,6 +439,7 @@ class TravelAdvance(SoftDeleteModel):
     hod_director_name = models.CharField(max_length=255, null=True, blank=True)
     rejection_reason = models.TextField(blank=True, null=True)
     rejected_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_advances')
+    paid_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

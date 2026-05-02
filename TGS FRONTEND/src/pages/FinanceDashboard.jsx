@@ -112,9 +112,7 @@ const FinanceDashboard = () => {
                 id: item.id,
                 trip: item.details?.trip_id || 'N/A',
                 employee: item.requester,
-                amount: (item.details?.executive_approved_amount && parseFloat(item.details.executive_approved_amount) > 0)
-                    ? `₹${parseFloat(item.details.executive_approved_amount).toLocaleString()}`
-                    : item.cost,
+                amount: item.cost,
                 type: item.type,
                 status: item.status,
                 date: item.date,
@@ -310,7 +308,7 @@ const FinanceDashboard = () => {
                         <Zap size={18} />
                         Settlements
                     </button>
-                </div>55
+                </div>
             </div>
 
             <div className="stats-grid">

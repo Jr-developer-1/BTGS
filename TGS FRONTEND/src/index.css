@@ -29963,3 +29963,7 @@ table.data-table,
   --primary: #fbbf24;
   --border: #262626;
 }
+
+.header-icon-svg { color: white !important; stroke-width: 2px; }
+
+.header-icon-svg { stroke: white !important; color: white !important; display: block !important; min-width: 24px !important; min-height: 24px !important; }

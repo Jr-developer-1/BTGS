@@ -4,6 +4,7 @@ from django.utils import timezone
 class Role(models.Model):
     name = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
+    permissions = models.JSONField(default=dict, blank=True)
     
     def __str__(self):
         return self.name
@@ -132,6 +133,11 @@ class User(models.Model):
         if lower_id == 'hr': return 'HR Head'
         data = self._get_api_data()
         return data.get('position', {}).get('name', '') if data else ''
+
+    @property
+    def role_from_api(self):
+        data = self._get_api_data()
+        return data.get('position', {}).get('role_name', '') if data else ''
 
     @property
     def department(self):

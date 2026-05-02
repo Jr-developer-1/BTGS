@@ -1,11 +1,32 @@
 from rest_framework import serializers
 from .models import User, Role, Session, AuditLog, LoginHistory
+from django.db.models import Q
+
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'permissions']
 
 class UserSerializer(serializers.ModelSerializer):
-    role = serializers.StringRelatedField()
+    role_name = serializers.CharField(source='role.name', read_only=True)
+    role_permissions = serializers.SerializerMethodField()
+    
+    def get_role_permissions(self, obj):
+        if not obj.role:
+            return {}
+        
+        # Priority: Role from API > Designation from API > Default local role
+        role_from_api = obj.role_from_api
+        designation = obj.designation
+        
+        matching_role = Role.objects.filter(Q(name__iexact=role_from_api) | Q(name__iexact=designation)).first()
+        if matching_role:
+            return matching_role.permissions
+        return obj.role.permissions
+
     class Meta:
         model = User
-        fields = ['id', 'name', 'employee_id', 'role', 'designation', 'department', 
+        fields = ['id', 'name', 'employee_id', 'role_name', 'role_permissions', 'designation', 'department', 
                   'is_face_enrolled', 'face_photo', 'allow_photo_reset', 'theme', 'carry_forward_balance']
 
 class SessionSerializer(serializers.ModelSerializer):

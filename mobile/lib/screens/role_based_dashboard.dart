@@ -199,6 +199,7 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
     final user = _apiService.getUser();
     final dept = user?['department']?.toString();
     final desig = user?['designation']?.toString();
+    final permissions = user?['role_permissions'] as Map<String, dynamic>?;
 
     _refinedRole = ModuleConstants.normalizeRole(
       widget.userRole,
@@ -206,7 +207,9 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
       desig: desig,
     );
 
-    final allModules = ModuleConstants.getModulesForRole(_refinedRole);
+    final allModules = ModuleConstants.getModulesForUser(_refinedRole, permissions);
+    // Failsafe: Explicitly remove Local Travel from dashboard as per user request
+    allModules.removeWhere((m) => m.title == 'Local Travel');
 
     // Filter main vs management modules based on titles to preserve UI layout
     _mainModules = allModules
@@ -614,7 +617,13 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   }
 
   Widget _buildActionButtons() {
+    final user = _apiService.getUser();
     final role = widget.userRole.toLowerCase();
+    final permissions = user?['role_permissions'] as Map<String, dynamic>?;
+
+    final canCreateTrip = permissions?['can_create_trip'] != false;
+    final canCreateTourPlan = permissions?['can_create_tour_plan'] == true;
+    final hasCreationAbility = canCreateTrip || canCreateTourPlan;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -664,17 +673,18 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
               ),
               const SizedBox(width: 12),
             ],
-            Expanded(
-              child: _buildHeaderBtn(
-                'New Request',
-                Icons.add_circle_outline,
-                const Color(0xFF0D9488),
-                () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const MyTripsScreen()),
-                ), // Or specific create screen
+            if (hasCreationAbility)
+              Expanded(
+                child: _buildHeaderBtn(
+                  'New Request',
+                  Icons.add_circle_outline,
+                  const Color(0xFF0D9488),
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const MyTripsScreen()),
+                  ), // Or specific create screen
+                ),
               ),
-            ),
           ],
         ],
       ),

@@ -894,10 +894,23 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             const SizedBox(height: 32),
             _buildRequestOption(
               icon: Icons.business_center_rounded,
-              title: 'Business Trip',
+              title: 'New Trip Request',
               subtitle: 'Inter-city travel & planning',
               color: const Color(0xFF0D9488),
               onTap: () {
+                final user = _apiService.getUser();
+                final permissions = user?['role_permissions'] as Map<String, dynamic>?;
+                final canCreateTrip = permissions?['can_create_trip'] != false;
+                
+                if (!canCreateTrip) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Access Restricted: Your role does not have permission to initiate New Trip Requests'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
                 Navigator.pop(context);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateTripScreen()));
               },
@@ -906,21 +919,20 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             Builder(
               builder: (context) {
                 final user = _apiService.getUser();
-                final role = user?['role']?.toString().toUpperCase() ?? '';
-                final desig = user?['designation']?.toString().toUpperCase() ?? '';
-                final isOE = role.contains('OE') || desig.contains('OE');
+                final permissions = user?['role_permissions'] as Map<String, dynamic>?;
+                final canCreateTourPlan = permissions?['can_create_tour_plan'] == true;
                 
                 return _buildRequestOption(
                   icon: Icons.local_taxi_rounded,
-                  title: 'Local Travel',
+                  title: 'New Tour Plan',
                   subtitle: 'Monthly site visits & conveyance',
-                  color: isOE ? const Color(0xFF134E4A) : Colors.grey,
-                  isLocked: !isOE,
+                  color: canCreateTourPlan ? const Color(0xFF134E4A) : Colors.grey,
+                  isLocked: !canCreateTourPlan,
                   onTap: () {
-                    if (!isOE) {
+                    if (!canCreateTourPlan) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Access Restricted: Only OE role can initiate Tour Plans'),
+                          content: Text('Access Restricted: Your role does not have permission to initiate New Tour Plans'),
                           backgroundColor: Colors.red,
                         ),
                       );

@@ -288,18 +288,16 @@ const MyTrips = () => {
                     <h1>My Trips & Tour Plans</h1>
                 </div>
                 <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
-                    {(typeFilter === 'All' || typeFilter === 'Trip') && (
+                    {(typeFilter === 'All' || typeFilter === 'Trip') && (user?.role_permissions?.can_create_trip !== false) && (
                         <button className="btn-primary" onClick={() => navigate('/create-trip')}>
                             <Plane size={18} style={{ marginRight: '8px' }} />
                             New Trip Request
                         </button>
                     )}
                     {(() => {
-                        const role = (user?.role || '').toUpperCase();
-                        const desig = (user?.designation || '').toUpperCase();
-                        const isOE = role.includes('OE') || desig.includes('OE');
+                        const canCreateTourPlan = user?.role_permissions?.can_create_tour_plan;
 
-                        return (typeFilter === 'All' || typeFilter === 'Travel') && isOE && (
+                        return (typeFilter === 'All' || typeFilter === 'Travel') && canCreateTourPlan && (
                             <button className="btn-primary" style={{ backgroundColor: 'white', color: 'var(--magenta)', border: '1px solid var(--magenta)' }} onClick={() => navigate('/travel-creation')}>
                                 <Briefcase size={18} style={{ marginRight: '8px' }} />
                                 New Tour Plan

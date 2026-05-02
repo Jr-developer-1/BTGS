@@ -871,9 +871,9 @@ const TripExpenseGrid = ({
                 if (isSelfBooked) {
                     // travel-specific requirement
                     if (mode === 'Flight' || mode === 'Intercity Bus' || mode === 'Intercity Cab') {
-                        // Ticket/Invoice requirements
-                        if (!row.bills || row.bills.length < (mode === 'Intercity Cab' ? 1 : 2)) {
-                            showToast(`Item #${rowNum}: Please upload ${mode === 'Intercity Cab' ? 'Invoice' : 'Ticket and Invoice'} for self-booked ${mode.toLowerCase()}.`, "warning");
+                        // Ticket/Invoice requirements - relaxed to 1 bill
+                        if (!row.bills || row.bills.length < 1) {
+                            showToast(`Item #${rowNum}: Please upload ${mode === 'Intercity Cab' ? 'Invoice' : 'Ticket/Invoice'} for self-booked ${mode.toLowerCase()}.`, "warning");
                         }
                     }
                 }

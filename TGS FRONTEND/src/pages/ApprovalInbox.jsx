@@ -482,7 +482,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                     <span>Requested Amount</span>
                                     <h2>₹{task.details.requested_amount}</h2>
                                 </div>
-                                {isFinanceExec && (['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD'].includes(task.status)) && (
+                                {isFinanceExec && (['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
                                     <div className="exec-amount-editor animate-fade-in">
                                         <label>Set Approved Amount</label>
                                         <div className="amount-input-wrapper">
@@ -490,7 +490,16 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                             <input
                                                 type="number"
                                                 value={execAmount}
-                                                onChange={(e) => setExecAmount(e.target.value)}
+                                                onChange={(e) => {
+                                                    const val = parseFloat(e.target.value);
+                                                    const req = parseFloat(task.details?.requested_amount || task.cost?.replace(/[₹,]/g, '') || 0);
+                                                    if (val > req) {
+                                                        showToast(`Approved amount cannot exceed requested amount (₹${req})`, "error");
+                                                        setExecAmount(req.toString());
+                                                    } else {
+                                                        setExecAmount(e.target.value);
+                                                    }
+                                                }}
                                                 placeholder="0.00"
                                             />
                                         </div>
@@ -503,7 +512,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                     )}
 
-                    {task.type === 'Expense Claim' && isFinanceExec && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE'].includes(task.status)) && (
+                    {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && isFinanceExec && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
                         <div className="detail-section animate-fade-in" style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
                             <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1e293b' }}>
                                 < IndianRupee size={18} className="text-indigo-600" /> Audit Finalization
@@ -520,7 +529,16 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                         <input
                                             type="number"
                                             value={execAmount}
-                                            onChange={(e) => setExecAmount(e.target.value)}
+                                            onChange={(e) => {
+                                                const val = parseFloat(e.target.value);
+                                                const req = parseFloat(task.details?.requested_amount || task.cost?.replace(/[₹,]/g, '') || task.details?.total_amount || 0);
+                                                if (val > req) {
+                                                    showToast(`Approved amount cannot exceed requested amount (₹${req})`, "error");
+                                                    setExecAmount(req.toString());
+                                                } else {
+                                                    setExecAmount(e.target.value);
+                                                }
+                                            }}
                                             placeholder="0.00"
                                             style={{ background: 'transparent', border: 'none', padding: '8px 0', width: '100%', fontWeight: 700, fontSize: '1.1rem', color: '#10b981', outline: 'none' }}
                                         />
@@ -1364,8 +1382,10 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                         key={claim.id}
                                                         onClick={() => {
                                                             setSelectedTask(claim);
-                                                            // We stay in the monthly view but ensure details area is ready
-                                                            // We'll also update the layout below to show details for selected task
+                                                            const amt = claim.details?.executive_approved_amount && parseFloat(claim.details.executive_approved_amount) > 0
+                                                                ? claim.details.executive_approved_amount
+                                                                : (claim.details?.requested_amount || claim.cost?.replace(/[₹,]/g, '') || '');
+                                                            setExecAmount(amt);
                                                         }}
                                                         style={{
                                                             background: selectedTask?.id === claim.id ? '#e0f2fe' : '#f0f9ff',

@@ -39,6 +39,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   Map<String, dynamic>? _currentUser;
   final Map<int, Map<String, String>> _batchRowEdits = {};
   bool _isActionLoading = false;
+  bool isFinanceHead = false;
+  bool isFinanceExec = false;
+  final Map<String, String> _batchAmounts = {}; // batchId -> amount
+  final Map<String, TextEditingController> _batchControllers =
+      {}; // batchId -> controller
   final Set<String> _expandedBatchIds = {}; // for collapsible batch cards
 
   // PAGINATION CONTROLS
@@ -64,14 +69,38 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       _activeTab = widget.enforceTab == 0 ? 'pending' : 'history';
     }
     _currentUser = ApiService().getUser();
+    _computeRoles();
     _fetchData();
     _scrollController.addListener(_onScroll);
+  }
+
+  void _computeRoles() {
+    final role = _currentUser?['role_name']?.toString().toLowerCase() ?? '';
+    final dept = _currentUser?['department']?.toString().toLowerCase() ?? '';
+    final desig = _currentUser?['designation']?.toString().toLowerCase() ?? '';
+
+    isFinanceHead =
+        (dept.contains('finance') && dept.contains('head')) ||
+        (desig.contains('finance') && desig.contains('head')) ||
+        role == 'cfo' ||
+        role.contains('cfo');
+
+    final isFinance =
+        dept.contains('finance') ||
+        desig.contains('finance') ||
+        role.contains('finance') ||
+        isFinanceHead;
+
+    isFinanceExec = isFinance && !isFinanceHead;
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     _searchController.dispose();
+    for (var controller in _batchControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -100,7 +129,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         type: _filterType,
         viewType: _viewType,
         search: _searchController.text,
-        date: _selectedDate != null ? DateFormat('yyyy-MM-dd').format(_selectedDate!) : null,
+        date: _selectedDate != null
+            ? DateFormat('yyyy-MM-dd').format(_selectedDate!)
+            : null,
         page: _currentPage,
       );
 
@@ -109,7 +140,16 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         _hasMore = false;
       }
 
-      if (_viewType == 'monthly') {
+      // FRONTEND-SIDE FILTERING (Safeguard)
+      // Ensure Bulk Uploads NEVER appear in the 'special' (Special Requests) tab
+      if (_viewType == 'special') {
+        finalTasks = finalTasks.where((t) {
+          final isBatch =
+              t['type'] == 'Bulk Upload' ||
+              t['id']?.toString().startsWith('BATCH-') == true;
+          return !isBatch;
+        }).toList();
+      } else if (_viewType == 'monthly') {
         finalTasks = finalTasks.map((t) {
           if (t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true) {
@@ -163,7 +203,14 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       }
 
       List<Map<String, dynamic>> processedMore = moreTasks;
-      if (_viewType == 'monthly') {
+      if (_viewType == 'special') {
+        processedMore = moreTasks.where((t) {
+          final isBatch =
+              t['type'] == 'Bulk Upload' ||
+              t['id']?.toString().startsWith('BATCH-') == true;
+          return !isBatch;
+        }).toList();
+      } else if (_viewType == 'monthly') {
         processedMore = moreTasks.map((t) {
           if (t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true) {
@@ -225,15 +272,24 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     Map<String, dynamic>? extra,
   }) async {
     try {
+      final Map<String, dynamic> finalExtra = {
+        ...?extra,
+        if (isFinanceExec && _batchAmounts.containsKey(id)) ...{
+          'executive_approved_amount': _batchAmounts[id],
+          'approved_amount':
+              _batchAmounts[id], // Fallback matching backend data.get('approved_amount')
+        },
+      };
+
       if (id.startsWith('BATCH-')) {
         final batchId = id.replaceAll('BATCH-', '');
         await _tripService.handleBulkBatchAction(
           batchId,
           action.toLowerCase(),
-          extraData: extra ?? {},
+          extraData: finalExtra,
         );
       } else {
-        await _tripService.performApproval(id, action, extraData: extra);
+        await _tripService.performApproval(id, action, extraData: finalExtra);
       }
       // mirror web toast wording EXACTLY: "Request Approved successfully"
       String verb;
@@ -444,7 +500,10 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   ),
                   if (_selectedDate != null)
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white,
+                      ),
                       onPressed: () {
                         setState(() => _selectedDate = null);
                         _fetchData();
@@ -453,7 +512,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   IconButton(
                     icon: Icon(
                       Icons.calendar_month_rounded,
-                      color: _selectedDate != null ? const Color(0xFFFDE68A) : Colors.white,
+                      color: _selectedDate != null
+                          ? const Color(0xFFFDE68A)
+                          : Colors.white,
                     ),
                     onPressed: () async {
                       final picked = await showDatePicker(
@@ -498,9 +559,21 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           if (!widget.hideHeader) ...[
             Row(
               children: [
-                Expanded(child: _buildToggleBtn('pending', Icons.access_time_filled_rounded, 'Active Queue')),
+                Expanded(
+                  child: _buildToggleBtn(
+                    'pending',
+                    Icons.access_time_filled_rounded,
+                    'Active Queue',
+                  ),
+                ),
                 const SizedBox(width: 12),
-                Expanded(child: _buildToggleBtn('history', Icons.check_circle_rounded, 'History')),
+                Expanded(
+                  child: _buildToggleBtn(
+                    'history',
+                    Icons.check_circle_rounded,
+                    'History',
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
@@ -560,32 +633,56 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
-                    color: _selectedDate != null ? const Color(0xFFFEF3C7) : Colors.white,
+                    color: _selectedDate != null
+                        ? const Color(0xFFFEF3C7)
+                        : Colors.white,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: _selectedDate != null ? const Color(0xFFF59E0B) : const Color(0xFFCCFBF1),
+                      color: _selectedDate != null
+                          ? const Color(0xFFF59E0B)
+                          : const Color(0xFFCCFBF1),
                     ),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.calendar_month_rounded, size: 13,
-                          color: _selectedDate != null ? const Color(0xFFF59E0B) : const Color(0xFF0D9488)),
+                      Icon(
+                        Icons.calendar_month_rounded,
+                        size: 13,
+                        color: _selectedDate != null
+                            ? const Color(0xFFF59E0B)
+                            : const Color(0xFF0D9488),
+                      ),
                       const SizedBox(width: 4),
                       Text(
-                        _selectedDate != null ? DateFormat('MMM dd').format(_selectedDate!) : 'Date',
+                        _selectedDate != null
+                            ? DateFormat('MMM dd').format(_selectedDate!)
+                            : 'Date',
                         style: GoogleFonts.plusJakartaSans(
-                          fontSize: 11, fontWeight: FontWeight.w700,
-                          color: _selectedDate != null ? const Color(0xFF92400E) : const Color(0xFF0D9488),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: _selectedDate != null
+                              ? const Color(0xFF92400E)
+                              : const Color(0xFF0D9488),
                         ),
                       ),
                       if (_selectedDate != null) ...[
                         const SizedBox(width: 4),
                         GestureDetector(
-                          onTap: () { setState(() => _selectedDate = null); _fetchData(); },
-                          child: const Icon(Icons.close_rounded, size: 12, color: Color(0xFFF59E0B)),
+                          onTap: () {
+                            setState(() => _selectedDate = null);
+                            _fetchData();
+                          },
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 12,
+                            color: Color(0xFFF59E0B),
+                          ),
                         ),
                       ],
                     ],
@@ -605,16 +702,29 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   child: DropdownButton<String>(
                     value: _filterType,
                     isDense: true,
-                    icon: const Icon(Icons.arrow_drop_down_rounded, color: Color(0xFF0D9488), size: 20),
+                    icon: const Icon(
+                      Icons.arrow_drop_down_rounded,
+                      color: Color(0xFF0D9488),
+                      size: 20,
+                    ),
                     style: GoogleFonts.plusJakartaSans(
-                      color: const Color(0xFF134E4A), fontWeight: FontWeight.w700, fontSize: 11,
+                      color: const Color(0xFF134E4A),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
                     ),
                     dropdownColor: Colors.white,
                     borderRadius: BorderRadius.circular(16),
-                    items: _filterOptions.map((f) => DropdownMenuItem<String>(
-                      value: f['value'], child: Text(f['label']!),
-                    )).toList(),
-                    onChanged: (v) { if (v != null) _handleFilterChange(v); },
+                    items: _filterOptions
+                        .map(
+                          (f) => DropdownMenuItem<String>(
+                            value: f['value'],
+                            child: Text(f['label']!),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) _handleFilterChange(v);
+                    },
                   ),
                 ),
               ),
@@ -743,8 +853,12 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (_selectedDate != null)
-                   IconButton(
-                    icon: const Icon(Icons.close_rounded, color: Color(0xFF0D9488), size: 18),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: Color(0xFF0D9488),
+                      size: 18,
+                    ),
                     onPressed: () {
                       setState(() => _selectedDate = null);
                       _fetchData();
@@ -755,7 +869,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                 IconButton(
                   icon: Icon(
                     Icons.calendar_month_rounded,
-                    color: _selectedDate != null ? const Color(0xFFF59E0B) : const Color(0xFF0D9488),
+                    color: _selectedDate != null
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF0D9488),
                     size: 18,
                   ),
                   onPressed: () async {
@@ -787,7 +903,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                 ),
                 Flexible(
                   child: Text(
-                    _selectedDate != null 
+                    _selectedDate != null
                         ? DateFormat('MMM dd').format(_selectedDate!)
                         : 'DATE',
                     style: GoogleFonts.plusJakartaSans(
@@ -853,9 +969,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     final String statusStr = (task['status'] ?? '').toString().toLowerCase();
     final statusColor = statusStr.contains('approved')
         ? Colors.green
-        : (statusStr.contains('rejected') 
-            ? Colors.red 
-            : (statusStr.contains('resubmitted') ? Colors.deepOrange : const Color(0xFFF59E0B)));
+        : (statusStr.contains('rejected')
+              ? Colors.red
+              : (statusStr.contains('resubmitted')
+                    ? Colors.deepOrange
+                    : const Color(0xFFF59E0B)));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -1140,11 +1258,28 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     final String tripId = task['trip_id']?.toString() ?? 'N/A';
     final String requester = task['requester']?.toString() ?? 'Unknown';
     final String batchId =
-        task['id']?.toString() ??
-        task['trip_id']?.toString() ??
-        'batch-$tripId';
+        task['id']?.toString() ?? 'BATCH-${task['db_id'] ?? task['batch_id']}';
 
     final bool isExpanded = _expandedBatchIds.contains(batchId);
+
+    // Initialize amount and controller for Finance Executive if not already set
+    if (isFinanceExec && !_batchControllers.containsKey(batchId)) {
+      final execRaw = task['executive_approved_amount']?.toString();
+      final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
+      String initialValue;
+      if (execRaw != null && execVal > 0) {
+        initialValue = execRaw;
+      } else {
+        initialValue =
+            task['cost']?.toString().replaceAll('₹', '').replaceAll(',', '') ??
+            '';
+      }
+      _batchAmounts[batchId] = initialValue;
+      _batchControllers[batchId] = TextEditingController(text: initialValue);
+    }
+
+    final String currentExecAmount =
+        _batchAmounts[batchId] ?? _batchControllers[batchId]?.text ?? '';
 
     return Container(
       width: double.infinity,
@@ -1257,7 +1392,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               final isRejected = batchStatus
                                   .toLowerCase()
                                   .contains('rejected');
-                               final isResubmitted = batchStatus
+                              final isResubmitted = batchStatus
                                   .toLowerCase()
                                   .contains('resubmitted');
                               final badgeBg = isApproved
@@ -1424,6 +1559,132 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     }),
                   ],
 
+                  // Executive Amount Adjustment Field (Moved outside filteredRows check)
+                  if (isFinanceExec &&
+                      [
+                        'PENDING_EXECUTIVE',
+                        'HR APPROVED',
+                        'REJECTED_BY_HEAD',
+                        'PENDING_FINAL_RELEASE',
+                      ].contains(task['status']?.toString().toUpperCase())) ...[
+                    const SizedBox(height: 32),
+                    const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Total Valid Expense (Gross)',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Text(
+                          '₹',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: '0.00',
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                            ),
+                            controller: _batchControllers[batchId],
+                            onChanged: (v) {
+                              double entered = double.tryParse(v) ?? 0.0;
+                              final requestedStr =
+                                  task['cost']
+                                      ?.toString()
+                                      .replaceAll('₹', '')
+                                      .replaceAll(',', '') ??
+                                  '0';
+                              double requested =
+                                  double.tryParse(requestedStr) ?? 0.0;
+
+                              if (entered > requested) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Amount cannot exceed requested ₹$requested',
+                                    ),
+                                    backgroundColor: Colors.red,
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                                // Clamp to requested
+                                String clamped = requested.toStringAsFixed(2);
+                                _batchAmounts[batchId] = clamped;
+                                _batchControllers[batchId]?.text = clamped;
+                                _batchControllers[batchId]?.selection =
+                                    TextSelection.fromPosition(
+                                      TextPosition(offset: clamped.length),
+                                    );
+                              } else {
+                                _batchAmounts[batchId] = v;
+                              }
+                              setState(() {});
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+
+                  // Finance Head view of Executive Recommendation
+                  if (isFinanceHead &&
+                      (task['executive_approved_amount'] ??
+                              task['details']?['executive_approved_amount']) !=
+                          null) ...[
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0F9FF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBAE6FD)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Executive Recommendation',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFF0369A1),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '₹${task['executive_approved_amount'] ?? task['details']?['executive_approved_amount']}',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: const Color(0xFFBB0633),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 20),
 
                   // Action Buttons
@@ -1439,7 +1700,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               size: 20,
                             ),
                             label: Text(
-                              'Approve All',
+                              isFinanceExec
+                                  ? 'Verify & Send to Head (₹$currentExecAmount)'
+                                  : 'Approve All',
                               style: GoogleFonts.plusJakartaSans(
                                 fontWeight: FontWeight.w900,
                                 fontSize: 13,
@@ -1629,7 +1892,10 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       ),
                     ),
                   ),
-                if ((task['details']['deviated_indices'] as List?)?.contains(idx) == true) ...[
+                if ((task['details']['deviated_indices'] as List?)?.contains(
+                      idx,
+                    ) ==
+                    true) ...[
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -2273,63 +2539,159 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       decoration: BoxDecoration(
                         color: const Color(0xFFFFFBEB),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
+                        border: Border.all(
+                          color: const Color(0xFFF59E0B),
+                          width: 1.2,
+                        ),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(children: [
-                            const Icon(Icons.warning_amber_rounded, size: 13, color: Color(0xFFF59E0B)),
-                            const SizedBox(width: 5),
-                            Text('ROUTE DEVIATION', style: GoogleFonts.plusJakartaSans(
-                              fontSize: 9, fontWeight: FontWeight.w900,
-                              color: const Color(0xFF92400E), letterSpacing: 0.5)),
-                          ]),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                size: 13,
+                                color: Color(0xFFF59E0B),
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                'ROUTE DEVIATION',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFF92400E),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 8),
                           // Planned row
-                          if ((exp['planned_origin']?.toString() ?? '').isNotEmpty || (exp['planned_destination']?.toString() ?? '').isNotEmpty) ...[
-                            Text('PLANNED', style: GoogleFonts.plusJakartaSans(fontSize: 8, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8), letterSpacing: 0.5)),
+                          if ((exp['planned_origin']?.toString() ?? '')
+                                  .isNotEmpty ||
+                              (exp['planned_destination']?.toString() ?? '')
+                                  .isNotEmpty) ...[
+                            Text(
+                              'PLANNED',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF94A3B8),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
                             const SizedBox(height: 3),
-                            Row(children: [
-                              Expanded(child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                                decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(8)),
-                                child: Text(exp['planned_origin']?.toString() ?? '-',
-                                  style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF475569))),
-                              )),
-                              const Padding(padding: EdgeInsets.symmetric(horizontal: 6),
-                                child: Icon(Icons.arrow_forward_rounded, size: 12, color: Color(0xFF94A3B8))),
-                              Expanded(child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                                decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(8)),
-                                child: Text(exp['planned_destination']?.toString() ?? '-',
-                                  style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF475569))),
-                              )),
-                            ]),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      exp['planned_origin']?.toString() ?? '-',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 6),
+                                  child: Icon(
+                                    Icons.arrow_forward_rounded,
+                                    size: 12,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      exp['planned_destination']?.toString() ??
+                                          '-',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 8),
                           ],
                           // Actual row
-                          if ((exp['deviation_target']?.toString() ?? '').isNotEmpty) ...[
-                            Text('ACTUAL WENT', style: GoogleFonts.plusJakartaSans(fontSize: 8, fontWeight: FontWeight.w800, color: const Color(0xFF0D9488), letterSpacing: 0.5)),
+                          if ((exp['deviation_target']?.toString() ?? '')
+                              .isNotEmpty) ...[
+                            Text(
+                              'ACTUAL WENT',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF0D9488),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
                             const SizedBox(height: 3),
                             Container(
                               width: double.infinity,
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
                               decoration: BoxDecoration(
                                 color: const Color(0xFFCCFBF1),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Text(exp['deviation_target']?.toString() ?? '-',
-                                style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF0F766E))),
+                              child: Text(
+                                exp['deviation_target']?.toString() ?? '-',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF0F766E),
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 8),
                           ],
                           // Reason
-                          if ((exp['deviation_reason']?.toString() ?? '').isNotEmpty) ...[
-                            Text('REASON', style: GoogleFonts.plusJakartaSans(fontSize: 8, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8), letterSpacing: 0.5)),
+                          if ((exp['deviation_reason']?.toString() ?? '')
+                              .isNotEmpty) ...[
+                            Text(
+                              'REASON',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF94A3B8),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
                             const SizedBox(height: 3),
-                            Text(exp['deviation_reason']?.toString() ?? '',
-                              style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w600, color: const Color(0xFF92400E))),
+                            Text(
+                              exp['deviation_reason']?.toString() ?? '',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFF92400E),
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -2643,41 +3005,59 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
   // finance-related state for approvals
   String execAmount = '';
+  TextEditingController? _detailExecController;
   String paymentMode = '';
   String transactionId = '';
   String? receiptFile;
+
+  @override
+  void dispose() {
+    _detailExecController?.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
     super.initState();
     _currentUser = ApiService().getUser();
     _computeRoles();
-    
+
     // Prefill amount exactly like web
-    final execRaw = widget.task['details']?['executive_approved_amount']?.toString();
+    final execRaw = widget.task['details']?['executive_approved_amount']
+        ?.toString();
     final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
-    
+
     if (execRaw != null && execVal > 0) {
       execAmount = execRaw;
     } else {
-      execAmount = widget.task['details']?['requested_amount']?.toString() ?? 
-                   widget.task['cost']?.toString().replaceAll('₹', '').replaceAll(',', '') ?? '';
+      execAmount =
+          widget.task['details']?['requested_amount']?.toString() ??
+          widget.task['cost']
+              ?.toString()
+              .replaceAll('₹', '')
+              .replaceAll(',', '') ??
+          '';
     }
+    _detailExecController = TextEditingController(text: execAmount);
   }
 
   void _computeRoles() {
-    final role = _currentUser?['role']?.toString().toLowerCase() ?? '';
+    final role = _currentUser?['role_name']?.toString().toLowerCase() ?? '';
     final dept = _currentUser?['department']?.toString().toLowerCase() ?? '';
     final desig = _currentUser?['designation']?.toString().toLowerCase() ?? '';
+
     isFinanceHead =
         (dept.contains('finance') && dept.contains('head')) ||
         (desig.contains('finance') && desig.contains('head')) ||
-        role == 'cfo';
+        role == 'cfo' ||
+        role.contains('cfo');
+
     final isFinance =
         dept.contains('finance') ||
         desig.contains('finance') ||
-        role == 'finance' ||
+        role.contains('finance') ||
         isFinanceHead;
+
     isFinanceExec = isFinance && !isFinanceHead;
   }
 
@@ -2896,7 +3276,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 20),
+                            const Icon(
+                              Icons.warning_amber_rounded,
+                              color: Color(0xFFD97706),
+                              size: 20,
+                            ),
                             const SizedBox(width: 8),
                             Text(
                               'TRAVEL PLAN DEVIATIONS',
@@ -2911,7 +3295,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          details['deviation_summary'] ?? 'User deviated from the planned route.',
+                          details['deviation_summary'] ??
+                              'User deviated from the planned route.',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 11,
                             color: const Color(0xFFB45309),
@@ -2928,21 +3313,53 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('PLANNED ROUTE', style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF92400E))),
+                                  Text(
+                                    'PLANNED ROUTE',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF92400E),
+                                    ),
+                                  ),
                                   const SizedBox(height: 4),
-                                  Text('${details['planned_origin'] ?? 'N/A'} → ${details['planned_destination'] ?? 'N/A'}', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF78350F))),
+                                  Text(
+                                    '${details['planned_origin'] ?? 'N/A'} → ${details['planned_destination'] ?? 'N/A'}',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF78350F),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
-                            const Icon(Icons.arrow_forward_rounded, color: Color(0xFFD97706), size: 16),
+                            const Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Color(0xFFD97706),
+                              size: 16,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('ACTUAL ROUTE', style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF92400E))),
+                                  Text(
+                                    'ACTUAL ROUTE',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w800,
+                                      color: const Color(0xFF92400E),
+                                    ),
+                                  ),
                                   const SizedBox(height: 4),
-                                  Text('${details['source'] ?? 'N/A'} → ${details['destination'] ?? 'N/A'}', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: const Color(0xFF78350F))),
+                                  Text(
+                                    '${details['source'] ?? 'N/A'} → ${details['destination'] ?? 'N/A'}',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF78350F),
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -2958,9 +3375,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 if (isFinanceExec &&
                     [
                       'PENDING_EXECUTIVE',
-                      'HR Approved',
+                      'HR APPROVED',
                       'REJECTED_BY_HEAD',
-                    ].contains(widget.task['status'])) ...[
+                      'PENDING_FINAL_RELEASE',
+                    ].contains(
+                      widget.task['status']?.toString().toUpperCase(),
+                    )) ...[
                   const SizedBox(height: 32),
                   Text(
                     'Total Valid Expense (Gross)',
@@ -2996,12 +3416,35 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                               vertical: 8,
                             ),
                           ),
-                          controller: TextEditingController(text: execAmount)
-                            ..selection = TextSelection.collapsed(
-                              offset: execAmount.length,
-                            ),
+                          controller: _detailExecController,
                           onChanged: (v) {
-                             setState(() => execAmount = v);
+                            double entered = double.tryParse(v) ?? 0.0;
+                            final requestedStr =
+                                widget.task['cost']
+                                    ?.toString()
+                                    .replaceAll('₹', '')
+                                    .replaceAll(',', '') ??
+                                '0';
+                            double requested =
+                                double.tryParse(requestedStr) ?? 0.0;
+
+                            if (entered > requested) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Amount cannot exceed requested ₹$requested',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                              // Clamp to requested
+                              setState(
+                                () => execAmount = requested.toStringAsFixed(2),
+                              );
+                            } else {
+                              setState(() => execAmount = v);
+                            }
                           },
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 16,
@@ -3014,12 +3457,27 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   const SizedBox(height: 8),
                   Builder(
                     builder: (context) {
-                      final advTaken = double.tryParse(widget.task['details']?['total_advance_taken']?.toString() ?? '0') ?? 0.0;
-                      final walletUsed = double.tryParse(widget.task['details']?['wallet_balance_used']?.toString() ?? '0') ?? 0.0;
+                      final advTaken =
+                          double.tryParse(
+                            widget.task['details']?['total_advance_taken']
+                                    ?.toString() ??
+                                '0',
+                          ) ??
+                          0.0;
+                      final walletUsed =
+                          double.tryParse(
+                            widget.task['details']?['wallet_balance_used']
+                                    ?.toString() ??
+                                '0',
+                          ) ??
+                          0.0;
                       final totalDeductions = advTaken + walletUsed;
-                      
+
                       final currentGross = double.tryParse(execAmount) ?? 0.0;
-                      final netPayout = (currentGross - totalDeductions).clamp(0.0, double.infinity);
+                      final netPayout = (currentGross - totalDeductions).clamp(
+                        0.0,
+                        double.infinity,
+                      );
 
                       if (totalDeductions > 0 && type == 'Expense Claim') {
                         return Container(
@@ -3027,38 +3485,62 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF8FAFC),
-                            border: Border.all(color: const Color(0xFFCBD5E1), style: BorderStyle.solid),
+                            border: Border.all(
+                              color: const Color(0xFFCBD5E1),
+                              style: BorderStyle.solid,
+                            ),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
                                     'Wallet/Advance Deductions:',
-                                    style: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFF64748B), fontWeight: FontWeight.w600),
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      color: const Color(0xFF64748B),
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                   Text(
                                     '-₹${totalDeductions.toStringAsFixed(2)}',
-                                    style: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFFEF4444), fontWeight: FontWeight.w700),
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      color: const Color(0xFFEF4444),
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
                                 ],
                               ),
                               const SizedBox(height: 6),
-                              Container(height: 1, color: const Color(0xFFE2E8F0)),
+                              Container(
+                                height: 1,
+                                color: const Color(0xFFE2E8F0),
+                              ),
                               const SizedBox(height: 6),
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
                                     'Net Payout to Bank:',
-                                    style: GoogleFonts.plusJakartaSans(fontSize: 13, color: const Color(0xFF0F172A), fontWeight: FontWeight.w900),
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      color: const Color(0xFF0F172A),
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
                                   Text(
                                     '₹${netPayout.toStringAsFixed(2)}',
-                                    style: GoogleFonts.plusJakartaSans(fontSize: 14, color: const Color(0xFFBB0633), fontWeight: FontWeight.w900),
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 14,
+                                      color: const Color(0xFFBB0633),
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -3072,10 +3554,15 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   const SizedBox(height: 4),
                   Text(
                     '* Enter the total approved expenses. Deductions are handled automatically.',
-                    style: GoogleFonts.plusJakartaSans(fontSize: 10, color: const Color(0xFF94A3B8)),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 10,
+                      color: const Color(0xFF94A3B8),
+                    ),
                   ),
                 ] else if (isFinanceHead &&
-                    widget.task['details']?['executive_approved_amount'] !=
+                    (widget.task['executive_approved_amount'] ??
+                            widget
+                                .task['details']?['executive_approved_amount']) !=
                         null) ...[
                   const SizedBox(height: 32),
                   Container(
@@ -3088,18 +3575,21 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Executive Recommendation',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFF64748B),
+                        Expanded(
+                          child: Text(
+                            'Executive Recommendation',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF64748B),
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                         Text(
-                          '₹${widget.task['details']['executive_approved_amount']}',
+                          '₹${widget.task['executive_approved_amount'] ?? widget.task['details']?['executive_approved_amount']}',
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 18,
+                            fontSize: 17,
                             fontWeight: FontWeight.w900,
                             color: const Color(0xFFBB0633),
                           ),
@@ -3368,6 +3858,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           'PENDING_EXECUTIVE',
           'HR Approved',
           'REJECTED_BY_HEAD',
+          'PENDING_FINAL_RELEASE',
         ].contains(status)) {
       approveLabel = 'Verify & Send to Head (₹$execAmount)';
     } else if (isFinanceHead) {

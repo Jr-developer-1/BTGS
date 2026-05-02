@@ -24,6 +24,7 @@ import '../screens/admin_master_management_screen.dart';
 import '../screens/admin_masters_screen.dart';
 import '../screens/location_codes_screen.dart';
 import '../screens/advance_request_screen.dart';
+import '../screens/local_travel_screen.dart';
 
 /// Module constants matching the Header.jsx navigation structure
 class ModuleConstants {
@@ -48,6 +49,7 @@ class ModuleConstants {
       iconColor: const Color(0xFFE11D48),
       allowedRoles: ['employee', 'reporting_authority', 'finance', 'admin'],
       destinationScreen: () => const MyTripsScreen(),
+      permissionKey: 'can_create_trip',
     ),
     NavigationModule(
       title: 'Inbox',
@@ -283,29 +285,29 @@ class ModuleConstants {
     ),
   ];
 
-  static List<NavigationModule> getModulesForRole(String? userRole) {
+  static List<NavigationModule> getModulesForUser(String? userRole, Map<String, dynamic>? permissions) {
     final normalizedRole = normalizeRole(userRole);
     List<NavigationModule> result = [];
 
+    bool checkPermission(NavigationModule m) {
+      if (m.permissionKey == null) return true;
+      // If permission key exists, it must be explicitly true or not false (default true)
+      return permissions?[m.permissionKey] != false;
+    }
+
     // 1. Add matching mainNav
     result.addAll(
-      mainNavModules.where((m) => m.allowedRoles.contains(normalizedRole)),
+      mainNavModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
     );
 
     // 2. Add matching managementNav
-    // Note: The list is a static field of the class, so we must access it as ModuleConstants.managementNavModules
-    // Wait, since we are inside the static method `getModulesForRole`, we can access `managementNavModules` directly.
     result.addAll(
-      managementNavModules.where(
-        (m) => m.allowedRoles.contains(normalizedRole),
-      ),
+      managementNavModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
     );
 
     // 3. Add matching mobile specific
     result.addAll(
-      mobileSpecificModules.where(
-        (m) => m.allowedRoles.contains(normalizedRole),
-      ),
+      mobileSpecificModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
     );
 
     return result;

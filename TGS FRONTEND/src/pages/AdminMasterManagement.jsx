@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/api';
 import {
-    Plus, Edit2, Trash2, AlignLeft, Layers, AlertCircle, RotateCcw, Eye, EyeOff,
+    Plus, Edit2, Trash2, AlignLeft, Layers, AlertCircle, RotateCcw, Eye, EyeOff, Search,
     Briefcase, Zap, MapPin, Coffee, Shield
 } from 'lucide-react';
 import { useToast } from '../context/ToastContext';
@@ -61,6 +61,14 @@ const CONFIG_GROUPS = [
         icon: <Shield size={18} />,
         tables: [
             { id: 'incidental-type', name: 'Incidental Types', endpoint: 'incidental-type-masters', fields: ['expense_type', 'category', 'status'] }
+        ]
+    },
+    {
+        id: 'access',
+        label: 'Access Control',
+        icon: <Shield size={18} />,
+        tables: [
+            { id: 'roles', name: 'Role Permissions', endpoint: 'roles', fields: ['name', 'description'] }
         ]
     }
 ];
@@ -242,6 +250,34 @@ export default function AdminMasterManagement() {
                         <div className="panel-header">
                             <h2>{activeTab.name} Registry</h2>
                             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+                                <div style={{ position: 'relative' }}>
+                                    <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search records..." 
+                                        style={{ 
+                                            padding: '0 12px 0 38px', 
+                                            height: '40px', 
+                                            borderRadius: '10px', 
+                                            border: '1.5px solid #e2e8f0', 
+                                            fontSize: '14px',
+                                            width: '250px'
+                                        }} 
+                                        onChange={(e) => {
+                                            const term = e.target.value.toLowerCase();
+                                            if (!term) {
+                                                fetchData();
+                                            } else {
+                                                const filtered = data.filter(item => 
+                                                    Object.values(item).some(val => 
+                                                        String(val).toLowerCase().includes(term)
+                                                    )
+                                                );
+                                                setData(filtered);
+                                            }
+                                        }}
+                                    />
+                                </div>
                                 <button
                                     className={`action-btn ${showDeleted ? 'active' : ''}`}
                                     style={{
@@ -418,6 +454,59 @@ export default function AdminMasterManagement() {
                                                     </div>
                                                 </div>
                                             ))}
+                                            {activeTab.id === 'roles' && (
+                                                <div style={{ gridColumn: 'span 2', marginTop: '20px' }}>
+                                                    <h3 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '16px' }}>Feature Access Permissions</h3>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                                        {[
+                                                            { key: 'can_create_trip', label: 'New Trip Request' },
+                                                            { key: 'can_create_tour_plan', label: 'New Tour Plan' }
+                                                        ].map(perm => (
+                                                            <div key={perm.key} className="checkbox-field" style={{
+                                                                background: '#fff',
+                                                                padding: '12px 16px',
+                                                                borderRadius: '16px',
+                                                                border: '1.5px solid var(--primary-light)',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'space-between'
+                                                            }}>
+                                                                <div style={{ flex: 1 }}>
+                                                                    <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)', display: 'block' }}>{perm.label}</label>
+                                                                </div>
+                                                                <div
+                                                                    onClick={() => {
+                                                                        const perms = { ...(formData.permissions || {}) };
+                                                                        perms[perm.key] = !perms[perm.key];
+                                                                        setFormData({ ...formData, permissions: perms });
+                                                                    }}
+                                                                    style={{
+                                                                        width: '44px',
+                                                                        height: '24px',
+                                                                        borderRadius: '24px',
+                                                                        backgroundColor: (formData.permissions?.[perm.key]) ? 'var(--primary)' : '#cbd5e1',
+                                                                        position: 'relative',
+                                                                        cursor: 'pointer',
+                                                                        transition: 'background-color 0.3s ease'
+                                                                    }}
+                                                                >
+                                                                    <div style={{
+                                                                        position: 'absolute',
+                                                                        height: '18px',
+                                                                        width: '18px',
+                                                                        left: (formData.permissions?.[perm.key]) ? '23px' : '3px',
+                                                                        top: '3px',
+                                                                        backgroundColor: 'white',
+                                                                        transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                                                        borderRadius: '50%',
+                                                                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                                                                    }}></div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </form>

@@ -9,6 +9,7 @@ class NavigationModule {
   final Color iconColor;
   final List<String> allowedRoles;
   final Widget Function()? destinationScreen;
+  final String? permissionKey;
 
   NavigationModule({
     required this.title,
@@ -18,6 +19,7 @@ class NavigationModule {
     required this.iconColor,
     required this.allowedRoles,
     this.destinationScreen,
+    this.permissionKey,
   });
 }
 

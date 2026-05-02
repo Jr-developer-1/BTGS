@@ -308,22 +308,36 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   }
 
   Future<void> _downloadTemplate() async {
-    try {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Downloading template...'),
-          duration: Duration(seconds: 2),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Downloading Template...'),
+              ],
+            ),
+          ),
         ),
-      );
+      ),
+    );
+
+    try {
       final bytes = await _tripService.downloadBulkTemplate();
-      final directory = await getApplicationDocumentsDirectory();
+      final directory = await getTemporaryDirectory();
       final filename = _buildTemplateFilename();
       final filePath = '${directory.path}/$filename';
       final file = File(filePath);
-      await file.writeAsBytes(bytes);
+      await file.writeAsBytes(bytes, flush: true);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        Navigator.pop(context); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Template saved: $filename'),
@@ -342,10 +356,12 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       }
     } catch (e) {
       if (mounted) {
+        Navigator.pop(context); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Download failed: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
           ),
         );
       }

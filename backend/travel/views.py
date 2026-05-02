@@ -74,32 +74,68 @@ class FinanceExportExcelView(APIView):
         data = []
         # Add advances to list
         for adv in advances:
+            total_amt = adv.executive_approved_amount or adv.hr_approved_amount or adv.requested_amount
+            balance = float(total_amt) - float(adv.paid_amount or 0)
+            
+            # Skip partially completed records if balance is already cleared
+            if adv.status == 'PARTIALLY_COMPLETED' and balance <= 0:
+                continue
+
             user_obj = adv.trip.user if adv.trip and adv.trip.user else None
             data.append({
                 'ID': f"ADV-{adv.id}",
                 'Employee Name': user_obj.name if user_obj else (adv.user_name or "N/A"),
-                'Amount': adv.executive_approved_amount or adv.hr_approved_amount or adv.requested_amount,
+                'Amount': balance, # Show remaining balance
                 'Bank Name': user_obj.bank_name if user_obj else "N/A",
                 'Account Num': user_obj.full_account_no if user_obj else "N/A",
                 'IFSC Code': user_obj.ifsc_code if user_obj else "N/A",
                 'Status': adv.status,
+                'Payment Mode': adv.payment_mode or 'NEFT',
+                'Transaction ID': adv.transaction_id or '',
+                'Payment Date': adv.payment_date.strftime("%Y-%m-%d") if adv.payment_date else '',
+                'Finance Remarks': adv.finance_remarks or '',
                 'Trip ID': adv.trip.trip_id if adv.trip else "N/A",
-                'Date': adv.created_at.strftime("%Y-%m-%d") if adv.created_at else "N/A"
+                'Date Created': adv.created_at.strftime("%Y-%m-%d") if adv.created_at else "N/A"
             })
 
         # Add claims to list
         for claim in claims:
+            # 1. Base Amount (Approved or Total)
+            total_amt = float(claim.executive_approved_amount or claim.hr_approved_amount or claim.total_amount or 0)
+            
+            # 2. Subtract Advances associated with this trip
+            total_adv = 0
+            if claim.trip:
+                total_adv = float(claim.trip.advances.filter(status__in=['COMPLETED', 'Paid', 'Settled', 'Transferred']).aggregate(s=Sum('executive_approved_amount'))['s'] or 0)
+            
+            # 3. Subtract Wallet Balance
+            wallet_bal = float(claim.trip.user.carry_forward_balance or 0) if claim.trip and claim.trip.user else 0
+            
+            # 4. Calculate Net Payout (consistent with ApprovalsView)
+            net_payout = total_amt - total_adv - wallet_bal
+            
+            # 5. Remaining balance (subtracting what was already paid for THIS claim)
+            balance = net_payout - float(claim.paid_amount or 0)
+            
+            # Skip partially completed records if balance is already cleared
+            if claim.status == 'PARTIALLY_COMPLETED' and balance <= 0:
+                continue
+
             user_obj = claim.trip.user if claim.trip and claim.trip.user else None
             data.append({
                 'ID': f"CLAIM-{claim.id}",
                 'Employee Name': user_obj.name if user_obj else (claim.user_name or "N/A"),
-                'Amount': claim.executive_approved_amount or claim.hr_approved_amount or claim.total_amount,
+                'Amount': max(0, balance), # Show remaining net payable amount
                 'Bank Name': user_obj.bank_name if user_obj else "N/A",
                 'Account Num': user_obj.full_account_no if user_obj else "N/A",
                 'IFSC Code': user_obj.ifsc_code if user_obj else "N/A",
                 'Status': claim.status,
+                'Payment Mode': claim.payment_mode or 'NEFT',
+                'Transaction ID': claim.transaction_id or '',
+                'Payment Date': claim.payment_date.strftime("%Y-%m-%d") if claim.payment_date else '',
+                'Finance Remarks': claim.finance_remarks or '',
                 'Trip ID': claim.trip.trip_id if claim.trip else "N/A",
-                'Date': claim.created_at.strftime("%Y-%m-%d") if claim.created_at else "N/A"
+                'Date Created': claim.created_at.strftime("%Y-%m-%d") if claim.created_at else "N/A"
             })
             
         if not data:
@@ -115,35 +151,34 @@ class FinanceExportExcelView(APIView):
         
         filename = f"Finance_Export_{tab}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         
-        # Add Data Validation for Status Column using openpyxl
+        # Add Data Validation for Dropdowns using openpyxl
         from openpyxl.worksheet.datavalidation import DataValidation
-        
-        output.seek(0)
         from openpyxl import load_workbook
+        
         wb = load_workbook(output)
         ws = wb.active
         
-        # Find Status column index
+        # 1. Status Dropdown
         status_col_idx = None
+        mode_col_idx = None
         for cell in ws[1]:
             if cell.value == 'Status':
                 status_col_idx = cell.column_letter
-                break
+            if cell.value == 'Payment Mode':
+                mode_col_idx = cell.column_letter
         
         if status_col_idx:
-            # Define statuses for dropdown
-            statuses = ['Paid', 'COMPLETED', 'PARTIALLY_COMPLETED', 'Under Process', 'REJECTED_BY_HEAD']
-            validation_list = f'"{",".join(statuses)}"'
+            statuses_list = ['Paid', 'COMPLETED', 'PARTIALLY_COMPLETED', 'Under Process', 'REJECTED_BY_HEAD']
+            dv_status = DataValidation(type="list", formula1=f'"{",".join(statuses_list)}"', allow_blank=True)
+            ws.add_data_validation(dv_status)
+            dv_status.add(f"{status_col_idx}2:{status_col_idx}1000")
             
-            dv = DataValidation(type="list", formula1=validation_list, allow_blank=True)
-            dv.error ='Your entry is not in the list'
-            dv.errorTitle = 'Invalid Selection'
-            dv.prompt = 'Please select a status'
-            dv.promptTitle = 'Status Selection'
-            
-            # Apply to the column (starting from row 2 to 1000 for safety)
-            ws.add_data_validation(dv)
-            dv.add(f"{status_col_idx}2:{status_col_idx}1000")
+        # 2. Payment Mode Dropdown
+        if mode_col_idx:
+            modes_list = ['NEFT', 'Bank Transfer', 'UPI', 'Cash']
+            dv_mode = DataValidation(type="list", formula1=f'"{",".join(modes_list)}"', allow_blank=True)
+            ws.add_data_validation(dv_mode)
+            dv_mode.add(f"{mode_col_idx}2:{mode_col_idx}1000")
 
         # Save back to output
         new_output = io.BytesIO()
@@ -180,49 +215,93 @@ class FinanceBulkImportView(APIView):
             errors = []
             
             for index, row in df.iterrows():
-                task_id = str(row['ID']).strip()
-                new_status = str(row['Status']).strip()
-                remarks = str(row.get('Remarks', '')).strip()
+                task_id = str(row.get('ID', '')).strip()
+                new_status = str(row.get('Status', '')).strip()
                 
-                if not task_id: continue
+                # New fields from updated template
+                payment_mode = str(row.get('Payment Mode', '')).strip()
+                transaction_id = str(row.get('Transaction ID', '')).strip()
+                payment_date_val = row.get('Payment Date')
+                remarks = str(row.get('Finance Remarks', row.get('Remarks', ''))).strip()
+                
+                if not task_id or task_id == 'nan': continue
                 
                 try:
                     obj = None
                     if task_id.startswith('ADV-'):
                         obj = TravelAdvance.objects.filter(id=task_id.replace('ADV-', '')).first()
+                        total_amt = float(obj.executive_approved_amount or obj.hr_approved_amount or obj.requested_amount) if obj else 0
                     elif task_id.startswith('CLAIM-'):
                         obj = TravelClaim.objects.filter(id=task_id.replace('CLAIM-', '')).first()
+                        total_amt = float(obj.executive_approved_amount or obj.hr_approved_amount or obj.total_amount) if obj else 0
                     
                     if obj:
-                        # VALIDATION: Skip if the record is already in the target status 
-                        # to prevent duplicate processing/notifications
-                        if obj.status == new_status:
-                            continue
-
-                        # VALIDATION: Prevent unauthorized reversal of finalized payments
-                        final_terminal_statuses = ['Paid', 'Completed', 'Transferred']
-                        if obj.status in final_terminal_statuses and new_status not in final_terminal_statuses:
-                            errors.append(f"Row {index+2}: Record {task_id} is already {obj.status} and cannot be reversed via bulk import.")
-                            continue
-
-                        obj.status = new_status
+                        # 1. Update Basic Fields
+                        if new_status and new_status != 'nan':
+                            obj.status = new_status
+                        
                         if remarks and remarks != 'nan':
                             obj.finance_remarks = remarks
+                            
+                        if payment_mode and payment_mode != 'nan':
+                            obj.payment_mode = payment_mode
+                            
+                        if transaction_id and transaction_id != 'nan':
+                            obj.transaction_id = transaction_id
+                            
                         obj.processed_by = user
                         
-                        # Only update payment_date if moving to a paid/completed status
-                        if new_status in ['Paid', 'Completed', 'Transferred', 'PARTIALLY_COMPLETED']:
+                        # 2. Handle Partial vs Full Payment Amount
+                        excel_amt = 0
+                        try:
+                            excel_amt = float(row.get('Amount', 0))
+                        except:
+                            pass
+
+                        if obj.status == 'PARTIALLY_COMPLETED':
+                            # Add the current payment to cumulative paid_amount
+                            obj.paid_amount = float(obj.paid_amount or 0) + excel_amt
+                            
+                            # Auto-complete if balance is now cleared
+                            if obj.paid_amount >= total_amt:
+                                obj.status = 'Paid' if task_id.startswith('ADV-') else 'Completed'
+                        elif obj.status in ['Paid', 'Completed', 'Transferred']:
+                            # Set full amount as paid
+                            obj.paid_amount = total_amt
+
+                        # 3. Handle Payment Date
+                        if payment_date_val and not pd.isna(payment_date_val):
+                            try:
+                                if isinstance(payment_date_val, (datetime.datetime, datetime.date)):
+                                    obj.payment_date = payment_date_val
+                                else:
+                                    obj.payment_date = pd.to_datetime(payment_date_val).to_pydatetime()
+                            except:
+                                pass
+                        
+                        if obj.status in ['Paid', 'Completed', 'Transferred'] and not obj.payment_date:
                             obj.payment_date = timezone.now()
                             
                         obj.save()
                         
-                        # Notify employee
+                        # 3. Notify employee
                         requester = obj.trip.user if hasattr(obj, 'trip') and obj.trip else None
                         if requester:
+                            trip_id = obj.trip.trip_id if hasattr(obj, 'trip') and obj.trip else "N/A"
+                            if obj.status == 'PARTIALLY_COMPLETED':
+                                title = "Payment Partially Credited"
+                                msg = f"₹{excel_amt:,.2f} has been partially credited for Trip {trip_id}. Remaining balance will be processed soon."
+                            elif obj.status in ['Paid', 'Completed', 'Transferred']:
+                                title = "Amount Credited"
+                                msg = f"₹{excel_amt:,.2f} has been fully credited for Trip {trip_id}."
+                            else:
+                                title = "Payment Status Updated"
+                                msg = f"Your {task_id} status has been updated to {obj.status} by Finance."
+
                             Notification.objects.create(
                                 user=requester,
-                                title=f"Payment Status Updated",
-                                message=f"Your {task_id} status has been updated to {new_status} by Finance.",
+                                title=title,
+                                message=msg,
                                 type='info'
                             )
                         updated_count += 1
@@ -1215,15 +1294,39 @@ class ApprovalCountView(APIView):
             advances = advances.filter(trip__consider_as_local=True)
             claims = claims.filter(trip__consider_as_local=True)
             
-        trip_count = trips.count()
+        # --- Include BulkActivityBatch counts with de-duplication ---
+        batch_count = 0
+        if view_type in ['all', 'monthly']:
+            if is_admin:
+                batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'HR Approved', 'Under Process'])
+            elif is_hr:
+                batch_qs = BulkActivityBatch.objects.filter(
+                    Q(status__in=['Manager Approved', 'HR Approved', 'Under Process']) | Q(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user)
+                )
+            else:
+                batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user)
+            
+            # Find trip IDs of these batches for de-duplication
+            batch_trip_ids = {str(tid).strip() for tid in batch_qs.values_list('trip_id', flat=True) if tid}
+            batch_count = batch_qs.count()
+            
+            # De-duplicate: Subtract trips/claims that will be hidden in the UI
+            hidden_trips = trips.filter(trip_id__in=batch_trip_ids).count()
+            hidden_claims = claims.filter(trip_id__in=batch_trip_ids).count()
+        else:
+            hidden_trips = 0
+            hidden_claims = 0
+
+        trip_count = max(0, trips.count() - hidden_trips)
         advance_count = advances.count()
-        claim_count = claims.count()
+        claim_count = max(0, claims.count() - hidden_claims)
         
         return Response({
-            "total": trip_count + advance_count + claim_count,
+            "total": trip_count + advance_count + claim_count + batch_count,
             "trips": trip_count,
             "advances": advance_count,
-            "claims": claim_count
+            "claims": claim_count,
+            "batches": batch_count
         })
 
 
@@ -1243,6 +1346,7 @@ class ApprovalsView(APIView):
         
         tab = request.query_params.get('tab', 'pending')
         type_filter = request.query_params.get('type', 'all') 
+        view_type = request.query_params.get('view_type', 'all')
         
         trips = Trip.objects.none()
         advances = TravelAdvance.objects.none()
@@ -1379,13 +1483,29 @@ class ApprovalsView(APIView):
             ).distinct()
 
         tasks = []
-        # Support filtering by type if specified
-        view_type = request.query_params.get('view_type', 'all')
+        # Collect trip IDs that have pending batches to avoid double-showing them
+        # (Manager should approve the Batch card which contains specific rows)
+        if is_admin:
+            batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'HR Approved', 'Under Process'])
+        elif is_hr:
+            batch_qs = BulkActivityBatch.objects.filter(
+                Q(status__in=['Manager Approved', 'HR Approved', 'Under Process']) | Q(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user)
+            )
+        else:
+            batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user)
+        
+        pending_batch_trip_ids = {str(tid).strip() for tid in batch_qs.values_list('trip_id', flat=True) if tid}
 
         if type_filter in ['all', 'trip']:
             for t in trips.order_by('-created_at'):
                 # Handle view_type filtering for mobile (trips are generally NOT monthly)
                 is_tour_plan = t.consider_as_local
+                
+                # DE-DUPLICATION: If this trip has a pending batch, hide the trip card
+                # to avoid double-cards (manager approves the batch instead)
+                if t.trip_id.strip() in pending_batch_trip_ids:
+                    continue
+
                 if view_type == 'special' and is_tour_plan: continue
                 if view_type == 'monthly' and not is_tour_plan: continue
 
@@ -1453,10 +1573,18 @@ class ApprovalsView(APIView):
                 if view_type == 'special' and is_tour_plan: continue
                 if view_type == 'monthly' and not is_tour_plan: continue
 
+                total_amt = a.executive_approved_amount or a.hr_approved_amount or a.requested_amount
+                paid_amt = a.paid_amount or 0
+                balance = float(total_amt) - float(paid_amt)
+                
+                cost_label = f"₹{total_amt}"
+                if a.status == 'PARTIALLY_COMPLETED':
+                    cost_label = f"₹{max(0, balance):.2f}"
+
                 tasks.append({
                     "id": f"ADV-{a.id}", "db_id": a.id, "type": "Money Top-up / Advance",
                     "requester": a.trip.user.name if a.trip.user else "Unknown",
-                    "purpose": f"Advance: {a.purpose}", "cost": f"₹{a.requested_amount}",
+                    "purpose": f"Advance: {a.purpose}", "cost": cost_label,
                     "status": a.status, "date": a.created_at.strftime("%b %d, %Y"),
                     "hierarchy_level": a.hierarchy_level,
                     "trip_id": a.trip.trip_id,
@@ -1467,12 +1595,13 @@ class ApprovalsView(APIView):
                         "requested_amount": str(a.requested_amount),
                         "hr_approved_amount": str(a.hr_approved_amount or 0),
                         "hr_remarks": a.hr_remarks or "",
-                        "executive_approved_amount": str(a.executive_approved_amount),
+                        "executive_approved_amount": str(max(0, balance)) if a.status == 'PARTIALLY_COMPLETED' else str(a.executive_approved_amount),
                         "reason": a.purpose,
                         "trip_destination": a.trip.destination,
                         "trip_id": a.trip.trip_id,
                         "start_date": a.trip.start_date.strftime("%b %d, %Y") if a.trip.start_date else "N/A",
                         "end_date": a.trip.end_date.strftime("%b %d, %Y") if a.trip.end_date else "N/A",
+                        "paid_amount": str(a.paid_amount or 0),
                     }
                 })
 
@@ -1480,20 +1609,32 @@ class ApprovalsView(APIView):
             for c in claims.order_by('-created_at'):
                 # Handle view_type filtering for mobile
                 is_tour_plan = c.trip.consider_as_local
+                
+                # DE-DUPLICATION: If this trip has a pending batch, hide the claim card
+                # to avoid double-cards (manager approves the batch instead)
+                if c.trip.trip_id.strip() in pending_batch_trip_ids:
+                    continue
+
                 view_type = request.query_params.get('view_type', 'all')
                 if view_type == 'special' and is_tour_plan: continue
                 if view_type == 'monthly' and not is_tour_plan: continue
 
                 total_adv = c.trip.advances.filter(status='COMPLETED').aggregate(s=Sum('executive_approved_amount'))['s'] or 0
                 wallet_bal = float(c.trip.user.carry_forward_balance or 0) if c.trip.user else 0
-                net_payout = float(c.total_amount) - float(total_adv) - wallet_bal
+                net_payout = float(c.executive_approved_amount or c.hr_approved_amount or c.total_amount) - float(total_adv) - wallet_bal
+                paid_amt = c.paid_amount or 0
+                balance = max(0, net_payout) - float(paid_amt)
+                
+                cost_label = f"₹{max(0, net_payout):.2f}"
+                if c.status == 'PARTIALLY_COMPLETED':
+                    cost_label = f"₹{max(0, balance):.2f}"
 
                 tasks.append({
                     "id": f"CLAIM-{c.id}", "db_id": c.id, 
                     "type": "Monthly Tour Plan" if c.trip.consider_as_local else "Expense Claim",
                     "requester": c.trip.user.name if c.trip.user else "Unknown",
                     "purpose": f"Claim for {c.trip.destination}", 
-                    "cost": f"₹{max(0, net_payout):.2f}",
+                    "cost": cost_label,
                     "status": c.status, "date": c.created_at.strftime("%b %d, %Y"),
                     "hierarchy_level": c.hierarchy_level,
                     "trip_id": c.trip.trip_id,
@@ -1506,7 +1647,7 @@ class ApprovalsView(APIView):
                         "approved_amount": str(c.approved_amount),
                         "hr_approved_amount": str(c.hr_approved_amount or 0),
                         "hr_remarks": getattr(c, "hr_remarks", ""),
-                        "executive_approved_amount": str(c.executive_approved_amount),
+                        "executive_approved_amount": str(max(0, balance)) if c.status == 'PARTIALLY_COMPLETED' else str(c.executive_approved_amount),
                         "total_advance_taken": str(total_adv),
                         "wallet_balance_used": str(wallet_bal),
                         "net_payout": str(max(0, net_payout)),
@@ -1517,6 +1658,7 @@ class ApprovalsView(APIView):
                         "deviation_summary": c.deviation_summary,
                         "planned_origin": c.planned_origin,
                         "planned_destination": c.planned_destination,
+                        "paid_amount": str(c.paid_amount or 0),
 
                         "expenses": [
                             {
@@ -1602,23 +1744,17 @@ class ApprovalsView(APIView):
             if date_query:
                 # Filter by trip start date if possible, otherwise by batch created_at
                 try:
-                    target_date = datetime.strptime(date_query, "%Y-%m-%d").date()
+                    # Correct datetime usage (module vs class)
+                    from datetime import datetime as dt_class
+                    target_date = dt_class.strptime(date_query, "%Y-%m-%d").date()
                     pending_batches = pending_batches.filter(
                         Q(trip__start_date=target_date) | Q(created_at__date=target_date)
                     )
-                except:
+                except Exception as e:
+                    print(f"DEBUG: Batch date filter failed for {date_query}: {e}")
                     pass
 
-            # --- DE-DUPLICATION LOGIC ---
-            # Use ALL claims for de-duplication, not just the filtered pending ones.
-            # This ensures that even if a claim was approved, the raw batch card is hidden.
-            all_claim_trip_pks = set(TravelClaim.objects.values_list('trip_id', flat=True))
-            filtered_batches = []
-            for b in pending_batches.order_by('-created_at'):
-                if b.trip_id in all_claim_trip_pks:
-                    continue  # A formal claim already exists — skip the raw batch
-                filtered_batches.append(b)
-            # ----------------------------
+            filtered_batches = list(pending_batches.order_by('-created_at'))
 
             for b in filtered_batches:
                 trip_obj = b.trip
@@ -2358,10 +2494,16 @@ class ApprovalsView(APIView):
                     trip.save()
                 update_trip_lifecycle(trip, "Settlement", f"Final Transfer completed by {user.name}.")
             
+            trip_id = trip.trip_id if trip else "N/A"
+            if net_payable > 0:
+                msg = f"₹{net_payable:,.2f} has been fully credited for Trip {trip_id}."
+            else:
+                msg = f"Your {request_type} for Trip {trip_id} has been settled via internal adjustment."
+
             Notification.objects.create(
                 user=requester,
                 title="Amount Credited",
-                message=f"Your {request_type} has been fully approved and the amount has been credited to your account.",
+                message=msg,
                 type='success'
             )
             return Response({"message": f"{action} completed and phase closed."})

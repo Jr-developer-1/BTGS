@@ -189,7 +189,7 @@ const Header = () => {
                     <div className="header-actions">
                         <div className="notification-wrapper">
                             <button className="icon-btn" onClick={() => setShowNotifications(!showNotifications)} title="Notifications">
-                                <Bell size={24} />
+                                <Bell size={24} className="header-icon-svg" />
                                 {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
                             </button>
 

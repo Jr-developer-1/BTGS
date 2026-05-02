@@ -75,7 +75,7 @@
 
 /* ... My new styles below ... */
 
-.header-actions button {
+.header-actions button:not(.icon-btn) {
   display: flex;
   align-items: center;
   gap: 0.6rem;

@@ -15,10 +15,10 @@ from rest_framework.response import Response
 from rest_framework import status, generics, viewsets
 from rest_framework.permissions import AllowAny
 
-from .models import User, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest, AppVersion
+from .models import User, Role, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest, AppVersion
 from notifications.models import Notification
 from .permissions import IsCustomAuthenticated, IsAdmin
-from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer, AppVersionSerializer
+from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer, RoleSerializer, AppVersionSerializer
 from .pagination import StandardResultsSetPagination
 from django.db.models import Q
 from rest_framework import filters
@@ -125,6 +125,7 @@ def login_view(request):
                 'employee_id': user.employee_id,
                 'name': getattr(user, 'name', user.employee_id),
                 'role': user.role.name if user.role else 'Employee',
+                'role_permissions': (lambda u: (Role.objects.filter(Q(name__iexact=u.role_from_api) | Q(name__iexact=u.designation)).first() or u.role).permissions if u.role else {})(user),
                 'department': getattr(user, 'department', 'N/A'),
                 'designation': getattr(user, 'designation', 'N/A'),
                 'office_level': getattr(user, 'office_level', 3),
@@ -355,6 +356,7 @@ def me_view(request):
             'employee_id': user.employee_id,
             'name': getattr(user, 'name', user.employee_id),
             'role': user.role.name if user.role else 'Employee',
+            'role_permissions': (lambda u: (Role.objects.filter(Q(name__iexact=u.role_from_api) | Q(name__iexact=u.designation)).first() or u.role).permissions if u.role else {})(user),
             'department': getattr(user, 'department', 'N/A'),
             'designation': getattr(user, 'designation', 'N/A'),
             'office_level': getattr(user, 'office_level', 3),
@@ -600,6 +602,13 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
                 log.ip_address
             ])
         return response
+
+class RoleViewSet(viewsets.ModelViewSet):
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = [IsCustomAuthenticated]
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['name']
 
 @api_view(['POST'])
 @permission_classes([IsCustomAuthenticated])
