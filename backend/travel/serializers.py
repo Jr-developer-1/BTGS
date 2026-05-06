@@ -7,8 +7,16 @@ from .models import (
     StayTypeMaster, RoomTypeMaster, StayBookingTypeMaster, StayBookingSourceMaster,
     MealCategoryMaster, MealTypeMaster, MealSourceMaster, MealProviderMaster,
     IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking,
-    HistoricalTripStop
+    HistoricalTripStop, FinanceWorkflowStep
 )
+
+class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
+    user_name = serializers.ReadOnlyField(source='user.name')
+    user_emp_id = serializers.ReadOnlyField(source='user.employee_id')
+
+    class Meta:
+        model = FinanceWorkflowStep
+        fields = ['id', 'user', 'user_name', 'user_emp_id', 'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active']
 from api_management.utils import encrypt_key, decrypt_key
 
 # --- MASTER SERIALIZERS ---
@@ -382,6 +390,7 @@ class BulkActivityBatchSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     reporting_manager_name = serializers.SerializerMethodField()
     trip_id_display = serializers.CharField(source='trip.trip_id', read_only=True)
+    current_approver_name = serializers.SerializerMethodField()
 
     class Meta:
         model = BulkActivityBatch
@@ -392,6 +401,22 @@ class BulkActivityBatchSerializer(serializers.ModelSerializer):
 
     def get_reporting_manager_name(self, obj):
         return obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else 'N/A'
+
+    def get_current_approver_name(self, obj):
+        if not obj.approver_position:
+            return obj.current_approver.name if obj.current_approver else 'Pending'
+        
+        # Try to find user by position ID
+        from core.models import User
+        target_user = User.objects.filter(active_position_id=obj.approver_position, is_active=True).first()
+        if target_user:
+            return target_user.name
+        
+        # Fallback to current_approver name if it exists
+        if obj.current_approver:
+            return obj.current_approver.name
+            
+        return f"Position {obj.approver_position}"
 
 class TripSerializer(serializers.ModelSerializer):
     advances = TravelAdvanceSerializer(many=True, read_only=True)
@@ -415,7 +440,7 @@ class TripSerializer(serializers.ModelSerializer):
     has_vehicle_booking = serializers.SerializerMethodField()
     job_reports = JobReportSerializer(many=True, read_only=True)
     activity_batches = BulkActivityBatchSerializer(many=True, read_only=True)
-    current_approver_name = serializers.ReadOnlyField(source='current_approver.name')
+    current_approver_name = serializers.SerializerMethodField()
     approval_chain = serializers.SerializerMethodField()
     is_bulk_upload = serializers.SerializerMethodField()
 
@@ -430,7 +455,8 @@ class TripSerializer(serializers.ModelSerializer):
             'vehicle_type', 'members', 'lifecycle_events', 'created_at', 'updated_at',
             'advances', 'expenses', 'odometer', 'claim', 'reporting_manager_name', 'senior_manager_name', 'hod_director_name',
             'current_approver', 'current_approver_name', 'total_approved_advance', 'total_expenses', 'wallet_balance', 'has_gh_booking', 'has_vehicle_booking',
-            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches', 'approval_chain', 'is_bulk_upload'
+            'rejection_reason', 'rejected_by', 'fuel_rate_snapshot', 'job_reports', 'activity_batches', 'approval_chain', 'is_bulk_upload',
+            'payment_mode', 'transaction_id', 'payment_date', 'finance_remarks', 'paid_amount', 'executive_approved_amount'
         ]
         read_only_fields = ('trip_id', 'user', 'user_name', 'user_emp_id', 'status', 'cost_estimate', 'created_at', 'updated_at', 'lifecycle_events', 'approval_chain')
 
@@ -441,6 +467,22 @@ class TripSerializer(serializers.ModelSerializer):
     def get_reporting_manager_name(self, obj):
         # Use snapshot if available, otherwise fallback to dynamic property
         return obj.reporting_manager_name or (obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else None)
+
+    def get_current_approver_name(self, obj):
+        if not obj.approver_position:
+            return obj.current_approver.name if obj.current_approver else 'Pending'
+        
+        # Try to find user by position ID
+        from core.models import User
+        target_user = User.objects.filter(active_position_id=obj.approver_position, is_active=True).first()
+        if target_user:
+            return target_user.name
+        
+        # Fallback to current_approver name if it exists
+        if obj.current_approver:
+            return obj.current_approver.name
+            
+        return f"Position {obj.approver_position}"
 
     def get_total_approved_advance(self, obj):
         return sum(

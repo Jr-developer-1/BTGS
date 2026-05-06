@@ -132,24 +132,26 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         date: _selectedDate != null
             ? DateFormat('yyyy-MM-dd').format(_selectedDate!)
             : null,
-        page: _currentPage,
       );
 
-      // If we got fewer than 5 items, we likely don't have more
-      if (finalTasks.length < 5) {
-        _hasMore = false;
-      }
+      // Disable pagination/infinite scroll as per requirement to show all records
+      _hasMore = false;
 
       // FRONTEND-SIDE FILTERING (Safeguard)
-      // Ensure Bulk Uploads NEVER appear in the 'special' (Special Requests) tab
-      if (_viewType == 'special') {
+      // 1. Ensure Bulk Uploads NEVER appear in the 'special' (Special Requests) tab
+      // 2. Hide Bulk Upload (Yellow) cards for all Finance users as they use Blue Claim cards
+      final isFinance = isFinanceExec || isFinanceHead;
+      if (_viewType == 'special' || isFinance) {
         finalTasks = finalTasks.where((t) {
           final isBatch =
               t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true;
           return !isBatch;
         }).toList();
-      } else if (_viewType == 'monthly') {
+      }
+
+      // Ensure correct labels for Monthly Tour Plan tab
+      if (_viewType == 'monthly') {
         finalTasks = finalTasks.map((t) {
           if (t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true) {
@@ -203,15 +205,23 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       }
 
       List<Map<String, dynamic>> processedMore = moreTasks;
-      if (_viewType == 'special') {
-        processedMore = moreTasks.where((t) {
+
+      // FRONTEND-SIDE FILTERING (Safeguard)
+      // 1. Ensure Bulk Uploads NEVER appear in the 'special' tab
+      // 2. Hide Bulk Upload (Yellow) cards for all Finance users
+      final isFinance = isFinanceExec || isFinanceHead;
+      if (_viewType == 'special' || isFinance) {
+        processedMore = processedMore.where((t) {
           final isBatch =
               t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true;
           return !isBatch;
         }).toList();
-      } else if (_viewType == 'monthly') {
-        processedMore = moreTasks.map((t) {
+      }
+
+      // Ensure correct labels for Monthly Tour Plan tab
+      if (_viewType == 'monthly') {
+        processedMore = processedMore.map((t) {
           if (t['type'] == 'Bulk Upload' ||
               t['id']?.toString().startsWith('BATCH-') == true) {
             t['type'] = 'Monthly Tour Plan';
@@ -274,10 +284,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     try {
       final Map<String, dynamic> finalExtra = {
         ...?extra,
-        if (isFinanceExec && _batchAmounts.containsKey(id)) ...{
+        if (_batchAmounts.containsKey(id)) ...{
           'executive_approved_amount': _batchAmounts[id],
-          'approved_amount':
-              _batchAmounts[id], // Fallback matching backend data.get('approved_amount')
+          'approved_amount': _batchAmounts[id],
         },
       };
 
@@ -975,15 +984,30 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     ? Colors.deepOrange
                     : const Color(0xFFF59E0B)));
 
+    final bool isClaim =
+        task['type']?.toString().toLowerCase().contains('claim') == true;
+
+    Color cardBg = Colors.white;
+    Color cardBorder = const Color(0xFFF1F5F9);
+    Color accentColor = const Color(0xFF0D9488);
+    Color shadowColor = const Color(0xFF0F172A).withOpacity(0.03);
+
+    if (isClaim) {
+      cardBg = const Color(0xFFF0F9FF);
+      cardBorder = const Color(0xFF7DD3FC);
+      accentColor = const Color(0xFF0369A1);
+      shadowColor = const Color(0xFF0369A1).withOpacity(0.04);
+    }
+
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: cardBg,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        border: Border.all(color: cardBorder, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.03),
+            color: shadowColor,
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -1041,13 +1065,17 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      backgroundColor: const Color(0xFFF1F5F9),
+                      backgroundColor: isClaim
+                          ? const Color(0xFFE0F2FE)
+                          : const Color(0xFFF1F5F9),
                       child: Text(
                         (task['requester']?.toString() ?? '?')[0].toUpperCase(),
                         style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w900,
                           fontSize: 14,
-                          color: const Color(0xFF0F172A),
+                          color: isClaim
+                              ? const Color(0xFF0369A1)
+                              : const Color(0xFF0F172A),
                         ),
                       ),
                     ),
@@ -1064,6 +1092,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               color: const Color(0xFF0F172A),
                               letterSpacing: -0.3,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           Text(
                             task['type']?.toString().toUpperCase() ?? 'REQUEST',
@@ -1117,11 +1147,19 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       ],
                     ),
                     Text(
-                      task['cost'] ?? '₹0',
+                      (task['details']?['executive_approved_amount'] != null &&
+                              double.tryParse(
+                                    task['details']?['executive_approved_amount']
+                                            .toString() ??
+                                        '0',
+                                  )! >
+                                  0)
+                          ? '₹${NumberFormat('#,##,###.##').format(double.parse(task['details']['executive_approved_amount'].toString()))}'
+                          : (task['cost'] ?? '₹0'),
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 18,
                         fontWeight: FontWeight.w900,
-                        color: const Color(0xFF0D9488),
+                        color: accentColor,
                       ),
                     ),
                   ],
@@ -1262,15 +1300,22 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
     final bool isExpanded = _expandedBatchIds.contains(batchId);
 
+    final bool canEdit =
+        (task['details']?['permissions']?['can_edit_amount'] ?? task['permissions']?['can_edit_amount']) ?? isFinanceExec;
+
     // Initialize amount and controller for Finance Executive if not already set
-    if (isFinanceExec && !_batchControllers.containsKey(batchId)) {
-      final execRaw = task['executive_approved_amount']?.toString();
+    // Initialize amount and controller based on Admin-defined permissions
+    if (canEdit && !_batchControllers.containsKey(batchId)) {
+      final dynamic details = task['details'] ?? {};
+      final execRaw = (task['executive_approved_amount'] ?? details['executive_approved_amount'])?.toString();
       final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
+      
       String initialValue;
       if (execRaw != null && execVal > 0) {
         initialValue = execRaw;
       } else {
         initialValue =
+            details['requested_amount']?.toString() ??
             task['cost']?.toString().replaceAll('₹', '').replaceAll(',', '') ??
             '';
       }
@@ -1281,18 +1326,38 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     final String currentExecAmount =
         _batchAmounts[batchId] ?? _batchControllers[batchId]?.text ?? '';
 
+    final bool isBatch = taskId.startsWith('BATCH-');
+
+    Color bgColor = Colors.white;
+    Color borderColor = const Color(0xFFF1F5F9);
+    Color iconColor = const Color(0xFF0D9488);
+    Color iconBgColor = const Color(0xFF0D9488).withOpacity(0.06);
+    Color shadowColor = const Color(0xFF0F172A).withOpacity(0.04);
+
+    if (isBatch) {
+      bgColor = const Color(0xFFFFFBEB);
+      borderColor = const Color(0xFFFBBF24);
+      iconColor = const Color(0xFFD97706);
+      iconBgColor = const Color(0xFFFEF3C7);
+      shadowColor = const Color(0xFFD97706).withOpacity(0.06);
+    } else if (isClaim) {
+      bgColor = const Color(0xFFF0F9FF);
+      borderColor = const Color(0xFF7DD3FC);
+      iconColor = const Color(0xFF0369A1);
+      iconBgColor = const Color(0xFFE0F2FE);
+      shadowColor = const Color(0xFF0369A1).withOpacity(0.06);
+    }
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: bgColor,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
+        border: Border.all(color: borderColor, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: isClaim
-                ? const Color(0xFF3B82F6).withOpacity(0.04)
-                : const Color(0xFF0D9488).withOpacity(0.04),
+            color: shadowColor,
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -1323,18 +1388,14 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: isClaim
-                              ? const Color(0xFF3B82F6).withOpacity(0.06)
-                              : const Color(0xFF0D9488).withOpacity(0.06),
+                          color: iconBgColor,
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
                           isClaim
                               ? Icons.receipt_long_rounded
-                              : Icons.inventory_2_rounded,
-                          color: isClaim
-                              ? const Color(0xFF3B82F6)
-                              : const Color(0xFF0D9488),
+                              : Icons.upload_file_rounded,
+                          color: iconColor,
                           size: 20,
                         ),
                       ),
@@ -1344,28 +1405,24 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              requester,
+                              isBatch ? 'Bulk Upload Submitted' : requester,
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w900,
-                                color: const Color(0xFF0F172A),
+                                color: isBatch
+                                    ? const Color(0xFF92400E)
+                                    : const Color(0xFF0F172A),
                               ),
                             ),
-                            if ((task['purpose'] ?? '')
-                                .toString()
-                                .isNotEmpty) ...[
-                              const SizedBox(height: 2),
+                            if (isBatch)
                               Text(
-                                task['purpose'].toString(),
+                                'by $requester',
                                 style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: const Color(0xFFBB0633),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFFB45309),
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ],
                             const SizedBox(height: 2),
                             Text(
                               'Trip ID: $tripId',
@@ -1375,6 +1432,58 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                 color: const Color(0xFF64748B),
                               ),
                             ),
+                            if (isExpanded) ...[
+                              if ((task['purpose'] ?? '').toString().isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  task['purpose'].toString(),
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFFBB0633),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(
+                                    Icons.summarize_rounded,
+                                    size: 12,
+                                    color: iconColor.withOpacity(0.7),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      '${filteredRows.length} daily entries',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: iconColor,
+                                      ),
+                                    ),
+                                  ),
+                                  if (task['file_name'] != null) ...[
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      '•',
+                                      style: TextStyle(color: Colors.grey),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'File: ${task['file_name']}',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: const Color(0xFF64748B),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -1560,9 +1669,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   ],
 
                   // Executive Amount Adjustment Field (Moved outside filteredRows check)
-                  if (isFinanceExec &&
+                  if (canEdit &&
                       [
                         'PENDING_EXECUTIVE',
+                        'PENDING_HEAD',
+                        'APPROVED',
                         'HR APPROVED',
                         'REJECTED_BY_HEAD',
                         'PENDING_FINAL_RELEASE',
@@ -1607,14 +1718,10 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             controller: _batchControllers[batchId],
                             onChanged: (v) {
                               double entered = double.tryParse(v) ?? 0.0;
-                              final requestedStr =
-                                  task['cost']
-                                      ?.toString()
-                                      .replaceAll('₹', '')
-                                      .replaceAll(',', '') ??
-                                  '0';
-                              double requested =
-                                  double.tryParse(requestedStr) ?? 0.0;
+                              final rawRequested = task['details']?['requested_amount']?.toString() ?? 
+                                                 task['cost']?.toString() ?? '0';
+                              final requestedStr = rawRequested.replaceAll('₹', '').replaceAll(',', '').trim();
+                              double requested = double.tryParse(requestedStr) ?? 0.0;
 
                               if (entered > requested) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1645,45 +1752,51 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     ),
                   ],
 
-                  // Finance Head view of Executive Recommendation
-                  if (isFinanceHead &&
-                      (task['executive_approved_amount'] ??
-                              task['details']?['executive_approved_amount']) !=
-                          null) ...[
-                    const SizedBox(height: 24),
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F9FF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFBAE6FD)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Executive Recommendation',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: const Color(0xFF0369A1),
+                  // Dynamic Recommendation Card (visible to any subsequent level)
+                  Builder(builder: (context) {
+                    final rawInherited = (task['executive_approved_amount'] ?? task['details']?['executive_approved_amount'])?.toString();
+                    final inheritedAmt = double.tryParse(rawInherited ?? '0') ?? 0.0;
+                    
+                    if (inheritedAmt <= 0) return const SizedBox.shrink();
+
+                    return Column(
+                      children: [
+                        const SizedBox(height: 24),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0F9FF),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFBAE6FD)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  task['workflow_label'] ?? 'Previous Level Recommendation',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF0369A1),
+                                  ),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Text(
+                                '₹${inheritedAmt.toStringAsFixed(2)}',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  color: const Color(0xFFBB0633),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '₹${task['executive_approved_amount'] ?? task['details']?['executive_approved_amount']}',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w900,
-                              color: const Color(0xFFBB0633),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                        ),
+                      ],
+                    );
+                  }),
 
                   const SizedBox(height: 20),
 
@@ -1700,9 +1813,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               size: 20,
                             ),
                             label: Text(
-                              isFinanceExec
-                                  ? 'Verify & Send to Head (₹$currentExecAmount)'
-                                  : 'Approve All',
+                              canEdit
+                                  ? 'Verify & Approve (₹$currentExecAmount)'
+                                  : (isFinanceExec || isFinanceHead)
+                                      ? 'Authorize Payment (₹$currentExecAmount)'
+                                      : 'Approve All',
                               style: GoogleFonts.plusJakartaSans(
                                 fontWeight: FontWeight.w900,
                                 fontSize: 13,
@@ -2039,6 +2154,29 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               ],
             ),
           ),
+          if (row['jobReportAttachments'] != null ||
+              row['odoStartImg'] != null ||
+              row['odoEndImg'] != null) ...[
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    if (row['odoStartImg'] != null)
+                      _miniImageThumbnail(row['odoStartImg'], "Start"),
+                    if (row['odoEndImg'] != null)
+                      _miniImageThumbnail(row['odoEndImg'], "End"),
+                    if (row['jobReportAttachments'] != null)
+                      ...(row['jobReportAttachments'] as List)
+                          .map((s) => _miniImageThumbnail(s.toString(), "Job Pic"))
+                          .toList(),
+                  ],
+                ),
+              ),
+            ),
+          ],
           // Show remarks from server or from locally-saved rejection (before next refresh)
           if ((row['_remarks'] ?? editState['remark'] ?? '')
               .toString()
@@ -2815,6 +2953,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           }(),
                           if (details['odoStartImg'] != null ||
                               details['odoEndImg'] != null ||
+                              details['jobReportAttachments'] != null ||
                               (details['selfies'] != null &&
                                   (details['selfies'] as List).isNotEmpty)) ...[
                             const SizedBox(height: 8),
@@ -2838,6 +2977,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                           (s) => _miniImageThumbnail(
                                             s.toString(),
                                             "Selfie",
+                                          ),
+                                        )
+                                        .toList(),
+                                  if (details['jobReportAttachments'] != null)
+                                    ...(details['jobReportAttachments'] as List)
+                                        .map(
+                                          (s) => _miniImageThumbnail(
+                                            s.toString(),
+                                            "Job Pic",
                                           ),
                                         )
                                         .toList(),
@@ -2942,34 +3090,64 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         color: Colors.red,
       );
     }
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Stack(
-          children: [
-            Positioned.fill(child: imageWidget),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                color: Colors.black.withOpacity(0.5),
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 8),
+    return GestureDetector(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: const EdgeInsets.all(10),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                InteractiveViewer(
+                  panEnabled: true,
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: imageWidget,
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            children: [
+              Positioned.fill(child: imageWidget),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.black.withOpacity(0.5),
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white, fontSize: 8),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -3022,16 +3200,16 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     _currentUser = ApiService().getUser();
     _computeRoles();
 
-    // Prefill amount exactly like web
-    final execRaw = widget.task['details']?['executive_approved_amount']
-        ?.toString();
+    // Prefill amount exactly like web: Use previously edited amount if available, else requested amount
+    final dynamic details = widget.task['details'] ?? {};
+    final execRaw = (widget.task['executive_approved_amount'] ?? details['executive_approved_amount'])?.toString();
     final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
 
     if (execRaw != null && execVal > 0) {
       execAmount = execRaw;
     } else {
       execAmount =
-          widget.task['details']?['requested_amount']?.toString() ??
+          details['requested_amount']?.toString() ??
           widget.task['cost']
               ?.toString()
               .replaceAll('₹', '')
@@ -3371,19 +3549,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   const SizedBox(height: 24),
                 ],
                 _buildInfoGrid(task),
-                // finance executives should be able to adjust recommendation similar to web
-                if (isFinanceExec &&
-                    [
-                      'PENDING_EXECUTIVE',
-                      'HR APPROVED',
-                      'REJECTED_BY_HEAD',
-                      'PENDING_FINAL_RELEASE',
-                    ].contains(
-                      widget.task['status']?.toString().toUpperCase(),
-                    )) ...[
+                // Dynamic Finance Editing: Show edit field if permission is granted from Admin configuration
+                if (widget.task['permissions']?['can_edit_amount'] == true ||
+                    widget.task['details']?['permissions']?['can_edit_amount'] == true) ...[
                   const SizedBox(height: 32),
                   Text(
-                    'Total Valid Expense (Gross)',
+                    'Audit Finalization (Edit Amount)',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
@@ -3419,14 +3590,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           controller: _detailExecController,
                           onChanged: (v) {
                             double entered = double.tryParse(v) ?? 0.0;
-                            final requestedStr =
-                                widget.task['cost']
-                                    ?.toString()
-                                    .replaceAll('₹', '')
-                                    .replaceAll(',', '') ??
-                                '0';
-                            double requested =
-                                double.tryParse(requestedStr) ?? 0.0;
+                            final rawRequested = widget.task['details']?['requested_amount']?.toString() ?? 
+                                               widget.task['cost']?.toString() ?? '0';
+                            final requestedStr = rawRequested.replaceAll('₹', '').replaceAll(',', '').trim();
+                            double requested = double.tryParse(requestedStr) ?? 0.0;
 
                             if (entered > requested) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -3559,11 +3726,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       color: const Color(0xFF94A3B8),
                     ),
                   ),
-                ] else if (isFinanceHead &&
-                    (widget.task['executive_approved_amount'] ??
-                            widget
-                                .task['details']?['executive_approved_amount']) !=
-                        null) ...[
+                ] else if ((widget.task['executive_approved_amount'] ??
+                        widget.task['details']?['executive_approved_amount']) !=
+                    null) ...[
                   const SizedBox(height: 32),
                   Container(
                     padding: const EdgeInsets.all(16),
@@ -3577,7 +3742,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       children: [
                         Expanded(
                           child: Text(
-                            'Executive Recommendation',
+                            'Previous Level Recommendation',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
@@ -3766,16 +3931,25 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFF1F5F9)),
       ),
-      child: GridView.count(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisCount: 2,
-        childAspectRatio: 2.5,
+      child: Column(
         children: [
-          _infoBlock('Request Type', task['type'] ?? 'N/A'),
-          _infoBlock('Estimated Cost', task['cost'] ?? '0'),
-          _infoBlock('Submitted Date', task['date'] ?? 'N/A'),
-          _infoBlock('Risk Score', task['risk'] ?? 'Low'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _infoBlock('Request Type', task['type'] ?? 'N/A')),
+              const SizedBox(width: 16),
+              Expanded(child: _infoBlock('Estimated Cost', task['cost'] ?? '0')),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _infoBlock('Submitted Date', task['date'] ?? 'N/A')),
+              const SizedBox(width: 16),
+              Expanded(child: _infoBlock('Risk Score', task['risk'] ?? 'Low')),
+            ],
+          ),
         ],
       ),
     );
@@ -3853,15 +4027,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     // Detect if this is a bulk batch
     final bool isBulk = widget.task['data_json'] != null;
 
-    if (isFinanceExec &&
-        [
-          'PENDING_EXECUTIVE',
-          'HR Approved',
-          'REJECTED_BY_HEAD',
-          'PENDING_FINAL_RELEASE',
-        ].contains(status)) {
-      approveLabel = 'Verify & Send to Head (₹$execAmount)';
-    } else if (isFinanceHead) {
+    if (widget.task['permissions']?['can_edit_amount'] == true) {
+      approveLabel = 'Verify & Approve (₹$execAmount)';
+    } else if (isFinanceHead || isFinanceExec) {
       approveLabel = 'Authorize Payment (₹$execAmount)';
     } else if (isBulk) {
       approveLabel = 'Authorize Valid Entries';
@@ -5056,6 +5224,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           }(),
                           if (details['odoStartImg'] != null ||
                               details['odoEndImg'] != null ||
+                              details['jobReportAttachments'] != null ||
                               (details['selfies'] != null &&
                                   (details['selfies'] as List).isNotEmpty)) ...[
                             const SizedBox(height: 8),
@@ -5079,6 +5248,15 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                           (s) => _miniImageThumbnail(
                                             s.toString(),
                                             "Selfie",
+                                          ),
+                                        )
+                                        .toList(),
+                                  if (details['jobReportAttachments'] != null)
+                                    ...(details['jobReportAttachments'] as List)
+                                        .map(
+                                          (s) => _miniImageThumbnail(
+                                            s.toString(),
+                                            "Job Pic",
                                           ),
                                         )
                                         .toList(),
@@ -5426,34 +5604,64 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.only(right: 8),
-      width: 60,
-      height: 60,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.withOpacity(0.3)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
-        child: Stack(
-          children: [
-            Positioned.fill(child: imageWidget),
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                color: Colors.black.withOpacity(0.5),
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 8),
+    return GestureDetector(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: const EdgeInsets.all(10),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                InteractiveViewer(
+                  panEnabled: true,
+                  minScale: 0.5,
+                  maxScale: 4.0,
+                  child: imageWidget,
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.withOpacity(0.3)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Stack(
+            children: [
+              Positioned.fill(child: imageWidget),
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  color: Colors.black.withOpacity(0.5),
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white, fontSize: 8),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

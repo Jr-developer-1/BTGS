@@ -1758,13 +1758,18 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  DateFormat('dd-MM-yyyy').format(value),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    DateFormat('dd-MM-yyyy').format(value),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
+                const SizedBox(width: 4),
                 const Icon(
                   Icons.calendar_today_rounded,
                   size: 12,
@@ -1813,13 +1818,18 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  value.format(context),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                Expanded(
+                  child: Text(
+                    value.format(context),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
+                const SizedBox(width: 4),
                 const Icon(
                   Icons.access_time_rounded,
                   size: 12,

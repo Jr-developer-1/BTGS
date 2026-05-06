@@ -69,12 +69,36 @@ const Profile = () => {
             photo: profileData.photo || profileData.employee?.photo || null
         },
         position: {
-            name: profileData.role || profileData.position?.name || user?.role || '',
-            department: profileData.department || profileData.position?.department || '',
-            section: profileData.section || profileData.position?.section || '',
-            reporting_to: (profileData.positions_details && profileData.positions_details[0]?.reporting_to) || 
-                          profileData.reporting_to || 
-                          profileData.position?.reporting_to || []
+            name: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos) return activePos.name || activePos.role_name || '';
+                }
+                return profileData.role || profileData.position?.name || user?.role || '';
+            })(),
+            department: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos) return activePos.department_name || activePos.department || '';
+                }
+                return profileData.department || profileData.position?.department || '';
+            })(),
+            section: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos) return activePos.section_name || activePos.section || '';
+                }
+                return profileData.section || profileData.position?.section || '';
+            })(),
+            reporting_to: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos && activePos.reporting_to) return activePos.reporting_to;
+                }
+                return (profileData.positions_details && profileData.positions_details[0]?.reporting_to) || 
+                       profileData.reporting_to || 
+                       profileData.position?.reporting_to || [];
+            })()
         },
         project: {
             name: profileData.project?.name || '',

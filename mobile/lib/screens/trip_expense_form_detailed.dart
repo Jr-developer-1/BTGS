@@ -932,6 +932,32 @@ class _TripExpenseFormDetailedScreenState
   Future<void> _submitEntry() async {
     if (!_formKey.currentState!.validate()) return;
 
+    // --- ODO VALIDATION: If reading exists, image must exist ---
+    if (widget.category == 'Local Travel' && !_isPublicTransport) {
+      final startVal = _odoStartController.text.trim();
+      final endVal = _odoEndController.text.trim();
+
+      if (startVal.isNotEmpty && _odoStartImg == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please capture Start Odometer Image'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      if (endVal.isNotEmpty && _odoEndImg == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please capture End Odometer Image'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() => _isProcessing = true);
     try {
       double amount = double.tryParse(_amountController.text) ?? 0.0;
@@ -2229,7 +2255,7 @@ class _TripExpenseFormDetailedScreenState
               isLocation: true,
               initialOptions: _masterLocations,
               onChanged: (v) => setState(() => _originController.text = v),
-              enabled: !_isTravelo,
+              enabled: !_fromBulkUpload,
             ),
             const SizedBox(height: 20),
             SearchableDropdown(
@@ -2239,7 +2265,7 @@ class _TripExpenseFormDetailedScreenState
               isLocation: true,
               initialOptions: _masterLocations,
               onChanged: (v) => setState(() => _destController.text = v),
-              enabled: !_isTravelo,
+              enabled: !_fromBulkUpload,
             ),
           ],
         ),
@@ -2702,7 +2728,7 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.map_rounded,
           color: const Color(0xFF4F46E5),
           children: [
-            if (_isTravelo && !_isDeviated) ...[
+            if (_isTravelo && _fromBulkUpload && !_isDeviated) ...[
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -2968,52 +2994,49 @@ class _TripExpenseFormDetailedScreenState
                   onTime: (t) => setState(() => _startTime = t),
                   onImg: (img) => setState(() => _odoStartImg = img),
                   isStart: true,
-                  isEnabled: true,
-                  isLocationEnabled: !_isTravelo,
+                  // Lock start fields if already saved/present in an existing record
+                  isEnabled: widget.expenseData == null ||
+                      (_odoStartController.text.isEmpty && _odoStartImg == null),
+                  isLocationEnabled: !_fromBulkUpload,
                 ),
                 const SizedBox(height: 32),
-                // Functional Divider
-                Row(
-                  children: [
-                    Expanded(
-                      child: Divider(color: Colors.grey.withOpacity(0.1)),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Icon(
-                        Icons.arrow_downward_rounded,
-                        size: 16,
-                        color: Colors.grey.withOpacity(0.3),
+                // END SECTION - Only open if start is complete
+                if (isStartFieldsComplete) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Divider(color: Colors.grey.withOpacity(0.1)),
                       ),
-                    ),
-                    Expanded(
-                      child: Divider(color: Colors.grey.withOpacity(0.1)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 32),
-                // END SECTION
-                AbsorbPointer(
-                  absorbing: !isStartFieldsComplete,
-                  child: Opacity(
-                    opacity: isStartFieldsComplete ? 1.0 : 0.5,
-                    child: _buildOdoSegment(
-                      label: 'END JOURNEY DETAILS',
-                      color: const Color(0xFF10B981),
-                      date: _endDate,
-                      time: _endTime,
-                      locationController: _destController,
-                      odoController: _odoEndController,
-                      odoImg: _odoEndImg,
-                      onDate: (d) => setState(() => _endDate = d),
-                      onTime: (t) => setState(() => _endTime = t),
-                      onImg: (img) => setState(() => _odoEndImg = img),
-                      isStart: false,
-                      isEnabled: isStartFieldsComplete,
-                      isLocationEnabled: !_isTravelo,
-                    ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Icon(
+                          Icons.arrow_downward_rounded,
+                          size: 16,
+                          color: Colors.grey.withOpacity(0.3),
+                        ),
+                      ),
+                      Expanded(
+                        child: Divider(color: Colors.grey.withOpacity(0.1)),
+                      ),
+                    ],
                   ),
-                ),
+                  const SizedBox(height: 32),
+                  _buildOdoSegment(
+                    label: 'END JOURNEY DETAILS',
+                    color: const Color(0xFF10B981),
+                    date: _endDate,
+                    time: _endTime,
+                    locationController: _destController,
+                    odoController: _odoEndController,
+                    odoImg: _odoEndImg,
+                    onDate: (d) => setState(() => _endDate = d),
+                    onTime: (t) => setState(() => _endTime = t),
+                    onImg: (img) => setState(() => _odoEndImg = img),
+                    isStart: false,
+                    isEnabled: isStartFieldsComplete,
+                    isLocationEnabled: !_fromBulkUpload,
+                  ),
+                ],
               ],
             ] else ...[
               Center(
@@ -3077,7 +3100,7 @@ class _TripExpenseFormDetailedScreenState
                       controller: _originController,
                       hint: 'Starting point',
                       icon: Icons.location_on_rounded,
-                      enabled: !_isTravelo,
+                      enabled: !_fromBulkUpload,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -3087,7 +3110,7 @@ class _TripExpenseFormDetailedScreenState
                       controller: _destController,
                       hint: 'Target location',
                       icon: Icons.flag_rounded,
-                      enabled: !_isTravelo,
+                      enabled: !_fromBulkUpload,
                     ),
                   ),
                 ],
@@ -3557,6 +3580,221 @@ class _TripExpenseFormDetailedScreenState
     );
   }
 
+  void _showBillPreviewDialog(int index) {
+    final bill = _incidentals[index]['bill'];
+    if (bill == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        Widget imageWidget;
+        final billStr = bill.toString().trim();
+        if (billStr.startsWith('http://') || billStr.startsWith('https://')) {
+          imageWidget = Image.network(
+            billStr,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+            ),
+          );
+        } else if (billStr.length > 200) {
+          // Definitely a base64 encoded image
+          try {
+            String base64Str = billStr;
+            if (base64Str.contains('base64,')) {
+              base64Str = base64Str.split('base64,').last;
+            }
+            base64Str = base64Str.replaceAll('\n', '').replaceAll('\r', '').replaceAll(' ', '');
+            imageWidget = Image.memory(
+              base64Decode(base64Str),
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const Center(
+                child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+              ),
+            );
+          } catch (e) {
+            imageWidget = const Center(
+              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+            );
+          }
+        } else {
+          // Local File Path
+          imageWidget = Image.file(
+            File(billStr),
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+            ),
+          );
+        }
+
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          backgroundColor: Colors.white,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                title: Text(
+                  'BILL PREVIEW',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    color: const Color(0xFF1E293B),
+                  ),
+                ),
+                centerTitle: true,
+                automaticallyImplyLeading: false,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.grey),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.5,
+                  maxWidth: MediaQuery.of(context).size.width * 0.8,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: imageWidget,
+                ),
+              ),
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'CATEGORY',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF64748B),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            (_incidentals[index]['category'] ?? 'Not Selected').toString().toUpperCase(),
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF1E293B),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'EXPENSE COST',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF64748B),
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '₹${_incidentals[index]['amount'] ?? '0.00'}',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF0D9488),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const ForensicCamera()),
+                          );
+                          if (result != null && result is Map) {
+                            final bytes = await File(result['path']).readAsBytes();
+                            setState(() => _incidentals[index]['bill'] = base64Encode(bytes));
+                          }
+                        },
+                        icon: const Icon(Icons.camera_alt_rounded, size: 16),
+                        label: Text(
+                          'RECAPTURE',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                          side: const BorderSide(color: Colors.redAccent),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF0D9488),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: Text(
+                          'CLOSE',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildIncidentalBillButton(int index) {
     final hasBill = _incidentals[index]['bill'] != null;
     return Column(
@@ -3572,13 +3810,17 @@ class _TripExpenseFormDetailedScreenState
         const SizedBox(height: 8),
         InkWell(
           onTap: () async {
-            final result = await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ForensicCamera()),
-            );
-            if (result != null && result is Map) {
-              final bytes = await File(result['path']).readAsBytes();
-              setState(() => _incidentals[index]['bill'] = base64Encode(bytes));
+            if (hasBill) {
+              _showBillPreviewDialog(index);
+            } else {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ForensicCamera()),
+              );
+              if (result != null && result is Map) {
+                final bytes = await File(result['path']).readAsBytes();
+                setState(() => _incidentals[index]['bill'] = base64Encode(bytes));
+              }
             }
           },
           child: Container(
@@ -4927,14 +5169,19 @@ class _TripExpenseFormDetailedScreenState
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  DateFormat('dd MMM yyyy').format(value),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF134E4A),
+                Expanded(
+                  child: Text(
+                    DateFormat('dd MMM yyyy').format(value),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF134E4A),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
+                const SizedBox(width: 4),
                 const Icon(
                   Icons.calendar_today_rounded,
                   size: 18,
@@ -4984,14 +5231,19 @@ class _TripExpenseFormDetailedScreenState
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  value.format(context),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF134E4A),
+                Expanded(
+                  child: Text(
+                    value.format(context),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF134E4A),
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                 ),
+                const SizedBox(width: 4),
                 const Icon(
                   Icons.access_time_filled_rounded,
                   size: 18,

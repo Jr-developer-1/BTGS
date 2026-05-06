@@ -1272,7 +1272,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
             const SizedBox(height: 12),
             _finBoxLarge(
               'WALLET BALANCE',
-              '₹${_trip!.walletBalance?.abs().toStringAsFixed(0) ?? '0'}',
+              '${(_trip!.walletBalance ?? 0) < 0 ? '-' : ''}₹${_trip!.walletBalance?.abs().toStringAsFixed(0) ?? '0'}',
               (_trip!.walletBalance ?? 0) >= 0
                   ? const Color(0xFF10B981)
                   : const Color(0xFFEF4444),

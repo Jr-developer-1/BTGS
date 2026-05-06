@@ -220,9 +220,7 @@ const FinanceDashboard = () => {
         if (!selectedRecord) return;
 
         const amtVal = parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0);
-        const advVal = parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0);
-        const walletVal = parseFloat(selectedRecord?.raw?.details?.wallet_balance_used || 0);
-        const netToPay = amtVal - advVal - walletVal;
+        const netToPay = amtVal;
 
         if (netToPay > 0 && transferData.payment_mode !== 'Cash' && !transferData.transaction_id) {
             showToast("Transaction ID is required for payouts", "warning");
@@ -476,7 +474,7 @@ const FinanceDashboard = () => {
                         {activeTab !== 'completed' && (
                             <button className="btn-primary" onClick={handleTransfer}>
                                 <Send size={18} />
-                                {(parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0)) > 0
+                                {parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) > 0
                                     ? " Confirm Transfer"
                                     : " Confirm Reconciliation"}
                             </button>
@@ -509,8 +507,8 @@ const FinanceDashboard = () => {
                                             </div>
                                         )}
                                         <div className="breakdown-row net" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#10b981', marginTop: '6px', paddingTop: '4px', borderTop: '1px solid #f1f5f9' }}>
-                                            <span>Net Payout to Bank:</span>
-                                            <span>₹{Math.max(0, parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord.raw.details.total_advance_taken || 0) - parseFloat(selectedRecord.raw.details.wallet_balance_used || 0)).toLocaleString()}</span>
+                                            <span>Requested Amount:</span>
+                                            <span>₹{parseFloat(selectedRecord.raw.details.requested_amount || selectedRecord.raw.details.total_amount || 0).toLocaleString()}</span>
                                         </div>
                                     </div>
                                 )}
@@ -518,7 +516,7 @@ const FinanceDashboard = () => {
                         </div>
                     </div>
 
-                    {(activeTab === 'completed' || (parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) - parseFloat(selectedRecord?.raw?.details?.total_advance_taken || 0) - parseFloat(selectedRecord?.raw?.details?.wallet_balance_used || 0)) > 0) ? (
+                    {(activeTab === 'completed' || parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) > 0) ? (
                         <>
                             <div className="form-grid-2">
                                 <div className="form-group">

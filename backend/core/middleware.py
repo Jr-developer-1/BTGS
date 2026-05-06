@@ -50,7 +50,9 @@ class CustomAuthMiddleware:
                         session.last_activity = timezone.now()
                         session.save(update_fields=['last_activity'])
                         
-                        request.custom_user = session.user
+                        user = session.user
+                        request.custom_user = user
+                        request.user = user
                         request.active_session = session
                     else:
                         request.custom_user = None
@@ -99,7 +101,6 @@ class ThreadLocalMiddleware:
             '/api/bot/chat',
             '/api/audit-logs/', 
             '/api/login-history/', 
-            '/api/dashboard-stats/',
             '/api/audit-history',
             '/api/session-history'
         ]

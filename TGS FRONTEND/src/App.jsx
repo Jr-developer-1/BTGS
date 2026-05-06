@@ -48,6 +48,7 @@ import SupportBot from './components/SupportBot';
 import AppVersionManagement from './pages/AppVersionManagement';
 import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
+import FinanceWorkflowConfig from './pages/FinanceWorkflowConfig';
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -352,6 +353,7 @@ function App() {
             <Route path="/AdminMasters" element={<ProtectedRoute><AdminMasters /></ProtectedRoute>} />
             <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/finance-workflow" element={<AdminRoute><FinanceWorkflowConfig /></AdminRoute>} />
             <Route path="/app-version" element={<AdminRoute><AppVersionManagement /></AdminRoute>} />
           </Routes>
         </Router>

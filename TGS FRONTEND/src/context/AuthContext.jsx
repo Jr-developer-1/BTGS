@@ -64,6 +64,33 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const switchPosition = async (positionId) => {
+    try {
+      const response = await api.post('/api/auth/switch-position', {
+        position_id: positionId
+      });
+      
+      const { user: userDetails } = response.data;
+      const updatedUser = {
+        ...user,
+        ...userDetails,
+        role: userDetails?.role?.toLowerCase() || 'employee'
+      };
+      
+      setUser(updatedUser);
+      sessionStorage.setItem('tgs_user', JSON.stringify(updatedUser));
+      showToast(`Switched to ${userDetails.designation}`, 'success');
+      
+      // Force a full application state refresh by navigating to home
+      window.location.href = '/';
+      return updatedUser;
+    } catch (error) {
+      console.error('Switch position failed:', error);
+      showToast(error.response?.data?.error || 'Failed to switch position', 'error');
+      throw error;
+    }
+  };
+
   useEffect(() => {
     const initAuth = async () => {
       const savedUser = sessionStorage.getItem('tgs_user');
@@ -142,7 +169,7 @@ export const AuthProvider = ({ children }) => {
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, heartbeatData, fetchHeartbeat }}>
+    <AuthContext.Provider value={{ user, login, logout, switchPosition, loading, heartbeatData, fetchHeartbeat }}>
       {children}
     </AuthContext.Provider>
   );

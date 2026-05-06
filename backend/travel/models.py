@@ -60,6 +60,7 @@ class Trip(SoftDeleteModel):
     ]
 
     user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='trips', null=True, blank=True)
+    requester_position = models.CharField(max_length=50, null=True, blank=True)
     trip_id = models.CharField(max_length=100, unique=True, primary_key=True, editable=False)
     source = models.CharField(max_length=100) 
     destination = models.CharField(max_length=100) 
@@ -78,6 +79,7 @@ class Trip(SoftDeleteModel):
     project_code = models.CharField(max_length=100, default='General', blank=True)
     consider_as_local = models.BooleanField(default=True)
     current_approver = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='trips_to_approve')
+    approver_position = models.CharField(max_length=50, null=True, blank=True)
     status = models.CharField(max_length=50, default='Submitted') # Submitted, Forwarded, Manager Approved, Approved, Rejected, Completed
     hierarchy_level = models.IntegerField(default=1) # 1: Manager, 2: Senior Manager, 3: Director
     cost_estimate = models.CharField(max_length=50, default='₹0 (Estimated)')
@@ -91,8 +93,17 @@ class Trip(SoftDeleteModel):
     rejection_reason = models.TextField(blank=True, null=True)
     rejected_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_trips')
     fuel_rate_snapshot = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    executive_approved_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
     # Full ordered approval chain, populated at submission time
     approval_chain = models.JSONField(default=list, blank=True)
+
+    # Finance/Payment fields (Aligned with TravelClaim/TravelAdvance)
+    payment_mode = models.CharField(max_length=50, blank=True, null=True)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True)
+    payment_date = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_trips')
+    finance_remarks = models.TextField(blank=True, null=True)
+    paid_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0.00)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -318,6 +329,7 @@ class TravelClaim(SoftDeleteModel):
     ]
 
     trip = models.OneToOneField(Trip, on_delete=models.CASCADE, related_name='claim')
+    requester_position = models.CharField(max_length=50, null=True, blank=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     approved_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     hr_approved_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -325,6 +337,7 @@ class TravelClaim(SoftDeleteModel):
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
     current_approver = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='claims_to_approve')
+    approver_position = models.CharField(max_length=50, null=True, blank=True)
     sent_by_executive = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_claims')
     final_executive = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='final_processed_claims')
     
@@ -407,12 +420,14 @@ class TravelAdvance(SoftDeleteModel):
     ]
 
     trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='advances')
+    requester_position = models.CharField(max_length=50, null=True, blank=True)
     requested_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     hr_approved_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     executive_approved_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='Draft')
     
     current_approver = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='advances_to_approve')
+    approver_position = models.CharField(max_length=50, null=True, blank=True)
     sent_by_executive = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_advances')
     final_executive = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='final_processed_advances')
     
@@ -535,6 +550,7 @@ class BulkActivityBatch(SoftDeleteModel):
     ]
 
     user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='activity_batches')
+    requester_position = models.CharField(max_length=50, null=True, blank=True)
     trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='activity_batches', null=True, blank=True)
     file_name = models.CharField(max_length=255)
     
@@ -543,6 +559,7 @@ class BulkActivityBatch(SoftDeleteModel):
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Draft')
     current_approver = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='batches_to_approve')
+    approver_position = models.CharField(max_length=50, null=True, blank=True)
     hierarchy_level = models.IntegerField(default=1) 
     remarks = models.TextField(blank=True, null=True)
     
@@ -757,4 +774,25 @@ class HistoricalTripStop(models.Model):
 
     def __str__(self):
         return f"Stop at {self.location_name} for {self.user.name} on {self.date}"
+
+class FinanceWorkflowStep(SoftDeleteModel):
+    VISIBILITY_CHOICES = [
+        ('INBOX', 'Inbox Only'),
+        ('FINANCE_HUB', 'Finance Hub Only'),
+        ('BOTH', 'Both Inbox and Finance Hub'),
+    ]
+
+    user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='finance_workflow_steps')
+    sequence_order = models.PositiveIntegerField(unique=True)
+    can_edit_amount = models.BooleanField(default=False)
+    visibility_type = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default='INBOX')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['sequence_order']
+        verbose_name = "Finance Workflow Step"
+        verbose_name_plural = "Finance Workflow Steps"
+
+    def __str__(self):
+        return f"Step {self.sequence_order}: {self.user.name if self.user else 'Unknown'} ({self.visibility_type})"
 

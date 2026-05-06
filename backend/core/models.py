@@ -33,6 +33,7 @@ class User(models.Model):
     ])
 
     created_at = models.DateTimeField(auto_now_add=True)
+    active_position_id = models.CharField(max_length=50, null=True, blank=True)
 
     # Finance Reconcilition Wallet
     carry_forward_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -131,26 +132,26 @@ class User(models.Model):
         if lower_id == 'admin': return 'Administrator'
         if lower_id == 'guesthousemanager': return 'Facility Manager'
         if lower_id == 'hr': return 'HR Head'
-        data = self._get_api_data()
-        return data.get('position', {}).get('name', '') if data else ''
+        pos = self.get_current_position()
+        return pos.get('name', '') if pos else ''
 
     @property
     def role_from_api(self):
-        data = self._get_api_data()
-        return data.get('position', {}).get('role_name', '') if data else ''
+        pos = self.get_current_position()
+        return pos.get('role_name', '') if pos else ''
 
     @property
     def department(self):
         lower_id = self.employee_id.lower()
         if lower_id in ['admin', 'hr', 'guesthousemanager', 'finance', 'cfo']:
              return 'Management'
-        data = self._get_api_data()
-        return data.get('position', {}).get('department') or 'N/A' if data else 'N/A'
+        pos = self.get_current_position()
+        return pos.get('department_name') or pos.get('department') or 'N/A' if pos else 'N/A'
 
     @property
     def section(self):
-        data = self._get_api_data()
-        return data.get('position', {}).get('section') or 'N/A' if data else 'N/A'
+        pos = self.get_current_position()
+        return pos.get('section_name') or pos.get('section') or 'N/A' if pos else 'N/A'
 
     @property
     def project_name(self):
@@ -199,21 +200,21 @@ class User(models.Model):
 
     @property
     def level_rank(self):
-        data = self._get_api_data()
-        return data.get('position', {}).get('level_rank', 10) if data else 10
+        pos = self.get_current_position()
+        return pos.get('level_rank', 10) if pos else 10
 
     @property
     def bank_name(self):
         data = self._get_api_data()
         if not data: return ''
-        bank_info = data.get('bank_details', {})
+        bank_info = data.get('bank_details', {}) or {}
         return bank_info.get('bank_name', '')
 
     @property
     def account_no(self):
         data = self._get_api_data()
         if not data: return ''
-        bank_info = data.get('bank_details', {})
+        bank_info = data.get('bank_details', {}) or {}
         raw_acc = str(bank_info.get('account_no') or '')
         if not raw_acc: return ''
         
@@ -227,22 +228,21 @@ class User(models.Model):
         """Unmasked account number for finance exports."""
         data = self._get_api_data()
         if not data: return ''
-        bank_info = data.get('bank_details', {})
+        bank_info = data.get('bank_details', {}) or {}
         return str(bank_info.get('account_no') or '')
 
     @property
     def ifsc_code(self):
         data = self._get_api_data()
         if not data: return ''
-        bank_info = data.get('bank_details', {})
+        bank_info = data.get('bank_details', {}) or {}
         return bank_info.get('ifsc_code', '')
 
     def _get_hierarchy_manager(self, index):
         """Helper to resolve a manager from the API hierarchy at a specific depth."""
-        data = self._get_api_data()
-        if not data: return None
+        pos = self.get_current_position()
+        if not pos: return None
         # Support both 'position' (current) and 'positions_details' (legacy)
-        pos = data.get('position') or (data.get('positions_details', [{}])[0])
         reporting_to = pos.get('reporting_to', [])
         if len(reporting_to) <= index:
              return None
@@ -261,21 +261,45 @@ class User(models.Model):
             
         # If the emp_code is still purely numeric (a raw HR database ID), attempt an active resolution
         if emp_code and str(emp_code).isdigit():
-            from api_management.services import resolve_hr_id_to_code
-            from api_management.models import SystemConfig
-            from api_management.utils import decrypt_key
-            try:
-                if SystemConfig.objects.filter(key='external_api_url').exists() and SystemConfig.objects.filter(key='external_api_key').exists():
-                    v_url = SystemConfig.objects.get(key='external_api_url').value
-                    v_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
-                    v_headers = {"X-Api-Key": v_key, "Accept": "application/json"}
-                    resolved = resolve_hr_id_to_code(emp_code, v_url, v_headers)
-                    if resolved:
-                        emp_code = resolved
-            except Exception as e:
-                print(f"HR fallback resolution failed for {emp_code}: {e}")
+                    from api_management.services import resolve_hr_id_to_info
+                    from api_management.models import SystemConfig
+                    from api_management.utils import decrypt_key
+                    try:
+                        if SystemConfig.objects.filter(key='external_api_url').exists() and SystemConfig.objects.filter(key='external_api_key').exists():
+                            v_url = SystemConfig.objects.get(key='external_api_url').value
+                            v_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
+                            v_headers = {"X-Api-Key": v_key, "Accept": "application/json"}
+                            resolved_code, resolved_name = resolve_hr_id_to_info(emp_code, v_url, v_headers)
+                            if resolved_code:
+                                emp_code = resolved_code
+                    except Exception as e:
+                        print(f"HR fallback resolution failed for {emp_code}: {e}")
             
         return self._get_or_create_shell_user(str(emp_code)) if emp_code else None
+
+    def _get_hierarchy_manager_position(self, index):
+        """Helper to get the raw manager position ID from the API hierarchy."""
+        pos = self.get_current_position()
+        if not pos: return None
+        reporting_to = pos.get('reporting_to', [])
+        if len(reporting_to) <= index:
+             return None
+        mgr_info = reporting_to[index]
+        if isinstance(mgr_info, dict):
+            return mgr_info.get('id') or mgr_info.get('position_id')
+        return mgr_info
+
+    @property
+    def reporting_manager_position(self):
+        return self._get_hierarchy_manager_position(0)
+
+    @property
+    def senior_manager_position(self):
+        return self._get_hierarchy_manager_position(1)
+
+    @property
+    def hod_director_position(self):
+        return self._get_hierarchy_manager_position(2)
 
     @property
     def reporting_manager(self):
@@ -288,6 +312,32 @@ class User(models.Model):
     @property
     def hod_director(self):
         return self._get_hierarchy_manager(2)
+
+    def get_current_position(self):
+        """Returns the currently active position object from the API data."""
+        data = self._get_api_data()
+        if not data: return None
+        
+        pos_details = data.get('positions_details', [])
+        
+        # 1. Try to match active_position_id
+        if self.active_position_id:
+            active_id_str = str(self.active_position_id)
+            for p in pos_details:
+                p_id_str = str(p.get('id'))
+                if p_id_str == active_id_str:
+                    return p
+        
+        # 2. Fallback to the main 'position' object if it matches the current view
+        # or just return the first one as default
+        fallback = data.get('position') or (pos_details[0] if pos_details else None)
+        return fallback
+
+    def get_available_positions(self):
+        """Returns a list of all positions the user holds."""
+        data = self._get_api_data()
+        if not data: return []
+        return data.get('positions_details', [])
 
 class Session(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -365,30 +415,6 @@ class FaceRegistrationRequest(models.Model):
     face_photo = models.TextField(null=True, blank=True) # Stored as base64 in DB
     status = models.CharField(max_length=20, default='Pending') # Pending, Approved, Rejected
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    remarks = models.TextField(blank=True, null=True)
-
-    def __str__(self):
-        return f"Face Registration Request from {self.user.name}"
-
-    class Meta:
-        ordering = ['-created_at']
-
-class PhotoUpdateRequest(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='photo_update_requests')
-    reason = models.TextField()
-    status = models.CharField(max_length=20, default='Pending') # Pending, Approved, Rejected
-    created_at = models.DateTimeField(auto_now_add=True)
-    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='decided_photo_updates')
-    remarks = models.TextField(blank=True, null=True)
-
-    def __str__(self):
-        return f"Photo Update Request from {self.user.name}"
-
-    class Meta:
-        ordering = ['-created_at']
-
-
     updated_at = models.DateTimeField(auto_now=True)
     remarks = models.TextField(blank=True, null=True)
 

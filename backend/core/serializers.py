@@ -10,6 +10,7 @@ class RoleSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     role_name = serializers.CharField(source='role.name', read_only=True)
     role_permissions = serializers.SerializerMethodField()
+    available_positions = serializers.SerializerMethodField()
     
     def get_role_permissions(self, obj):
         if not obj.role:
@@ -24,10 +25,14 @@ class UserSerializer(serializers.ModelSerializer):
             return matching_role.permissions
         return obj.role.permissions
 
+    def get_available_positions(self, obj):
+        return obj.get_available_positions()
+
     class Meta:
         model = User
         fields = ['id', 'name', 'employee_id', 'role_name', 'role_permissions', 'designation', 'department', 
-                  'is_face_enrolled', 'face_photo', 'allow_photo_reset', 'theme', 'carry_forward_balance']
+                  'is_face_enrolled', 'face_photo', 'allow_photo_reset', 'theme', 'carry_forward_balance',
+                  'active_position_id', 'available_positions']
 
 class SessionSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.name', read_only=True)

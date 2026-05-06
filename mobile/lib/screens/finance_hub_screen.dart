@@ -634,7 +634,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('NET PAYOUT', style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8))),
-        Text('₹${NumberFormat('#,##,###').format(net > 0 ? net : gross)}', style: GoogleFonts.plusJakartaSans(fontSize: 22, fontWeight: FontWeight.w900, color: const Color(0xFFBB0633))),
+        Text('₹${NumberFormat('#,##,###').format(net > 0 ? net : 0.0)}', style: GoogleFonts.plusJakartaSans(fontSize: 22, fontWeight: FontWeight.w900, color: const Color(0xFFBB0633))),
         if (adv > 0 || wallet > 0)
           Text('Gross: ₹${gross.toStringAsFixed(0)} | Adv: ₹${adv.toStringAsFixed(0)}', style: GoogleFonts.inter(fontSize: 9, color: Colors.grey)),
       ],
@@ -758,17 +758,22 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('TRANSFER TO', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8))),
-                          const SizedBox(height: 4),
-                          Text(
-                            rec['requester']?.toString().toUpperCase() ?? 'EMPLOYEE',
-                            style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.w900, color: const Color(0xFFBB0633)),
-                          ),
-                        ],
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('TRANSFER TO', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8))),
+                            const SizedBox(height: 4),
+                            Text(
+                              rec['requester']?.toString().toUpperCase() ?? 'EMPLOYEE',
+                              style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.w900, color: const Color(0xFFBB0633)),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
+                      const SizedBox(width: 16),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [

@@ -117,6 +117,13 @@ def login_view(request):
             details={'agent': user_agent, 'method': 'API'}
         )
         
+        # Ensure an active_position_id is set
+        if not user.active_position_id:
+            available = user.get_available_positions()
+            if available:
+                user.active_position_id = str(available[0].get('id'))
+                user.save()
+
         return Response({
             'token': token,
             'requires_password_change': user.requires_password_change,
@@ -130,7 +137,9 @@ def login_view(request):
                 'designation': getattr(user, 'designation', 'N/A'),
                 'office_level': getattr(user, 'office_level', 3),
                 'email': getattr(user, 'email', ''),
-                'theme': getattr(user, 'theme', 'classic')
+                'theme': getattr(user, 'theme', 'classic'),
+                'active_position_id': user.active_position_id,
+                'available_positions': user.get_available_positions()
             }
         })
         
@@ -361,7 +370,9 @@ def me_view(request):
             'designation': getattr(user, 'designation', 'N/A'),
             'office_level': getattr(user, 'office_level', 3),
             'email': getattr(user, 'email', ''),
-            'theme': getattr(user, 'theme', 'classic')
+            'theme': getattr(user, 'theme', 'classic'),
+            'active_position_id': user.active_position_id,
+            'available_positions': user.get_available_positions()
         })
     except Exception as e:
         import traceback
@@ -403,6 +414,69 @@ def logout_view(request):
             return Response({'message': 'Logged out successfully'})
 
     return Response({'error': 'Invalid token'}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@permission_classes([IsCustomAuthenticated])
+def switch_position_view(request):
+    user = request.custom_user
+    position_id = request.data.get('position_id')
+    
+    if not position_id:
+        return Response({'error': 'Position ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # Verify if the user actually has this position
+    available = user.get_available_positions()
+    valid_ids = [str(p.get('id')) for p in available]
+    
+    if str(position_id) not in valid_ids:
+        return Response({'error': 'The selected position is not assigned to your profile.'}, status=status.HTTP_403_FORBIDDEN)
+        
+    try:
+        user.active_position_id = str(position_id)
+        user.save()
+        
+        # Force refresh properties by clearing cache
+        from api_management.services import CACHE_EMPLOYEE_DATA
+        if user.employee_id in CACHE_EMPLOYEE_DATA:
+            del CACHE_EMPLOYEE_DATA[user.employee_id]
+            
+        # Safely resolve role and permissions
+        user_role_obj = user.role
+        role_name = user_role_obj.name if user_role_obj else 'Employee'
+        
+        permissions = {}
+        if user_role_obj:
+            permissions = user_role_obj.permissions
+            try:
+                # Attempt to find a more specific role based on API data
+                api_role = Role.objects.filter(Q(name__iexact=user.role_from_api) | Q(name__iexact=user.designation)).first()
+                if api_role:
+                    permissions = api_role.permissions
+            except:
+                pass
+
+        # Return updated user data (sync with login/me response structure)
+        return Response({
+            'message': 'Position switched successfully',
+            'user': {
+                'id': user.id,
+                'employee_id': user.employee_id,
+                'name': str(user.name),
+                'role': role_name,
+                'role_permissions': permissions,
+                'department': str(user.department),
+                'designation': str(user.designation),
+                'office_level': user.office_level,
+                'email': user.email,
+                'active_position_id': user.active_position_id,
+                'available_positions': available
+            }
+        })
+    except Exception as e:
+        import traceback
+        print(f"DEBUG: Switch Position Error: {str(e)}")
+        traceback.print_exc()
+        return Response({'error': f'Failed to switch position: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
@@ -826,6 +900,11 @@ def profile_view(request):
             # Flatten common fields for easier UI access
             data['phone'] = details['employee'].get('phone')
             data['email'] = details['employee'].get('email') or data['email']
+            
+            # Ensure position data is present for switching
+            data['role'] = user.role.name if user.role else 'Employee'
+            data['active_position_id'] = user.active_position_id
+            data['available_positions'] = user.get_available_positions()
     except Exception as e:
         print(f"Failed to fetch external profile data: {e}")
         data['external_profile'] = None
@@ -997,9 +1076,11 @@ def heartbeat_view(request):
     user = request.custom_user
     now = timezone.now()
     
-    # 1. Notifications (Latest 10)
-    notifications_qs = Notification.objects.filter(user=user).order_by('-created_at')[:10]
-    unread_count = Notification.objects.filter(user=user, unread=True).count()
+    # 1. Notifications (Latest 10) - Filtered by active position
+    from django.db.models import Q
+    notif_filter = Q(user=user) & (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position=user.active_position_id))
+    notifications_qs = Notification.objects.filter(notif_filter).order_by('-created_at')[:10]
+    unread_count = Notification.objects.filter(notif_filter, unread=True).count()
     
     # 2. Approval Counts
     from travel.models import Trip, TravelAdvance, TravelClaim

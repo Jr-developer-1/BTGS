@@ -10,7 +10,13 @@ class NotificationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCustomAuthenticated]
 
     def get_queryset(self):
-        queryset = Notification.objects.filter(user=self.request.custom_user)
+        user = self.request.custom_user
+        # Filter by user AND (target_position is null OR matches active_position_id)
+        from django.db.models import Q
+        queryset = Notification.objects.filter(
+            Q(user=user) & 
+            (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position=user.active_position_id))
+        )
         unread = self.request.query_params.get('unread')
         if unread is not None:
             is_unread = unread.lower() == 'true'

@@ -31,7 +31,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 
 const Header = () => {
-    const { user, logout, heartbeatData, fetchHeartbeat } = useAuth();
+    const { user, logout, switchPosition, heartbeatData, fetchHeartbeat } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     const [showManagement, setShowManagement] = useState(false);
@@ -106,6 +106,7 @@ const Header = () => {
         { title: 'System Policy', icon: <BookOpen size={18} />, path: '/policy', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'] },
         // { title: 'CFO Room', icon: <BarChart3 size={18} />, path: '/cfo-war-room', roles: ['cfo', 'admin'] },
         { title: 'User Management', icon: <Users size={18} />, path: '/employees', roles: ['admin'] },
+        { title: 'Finance Workflow', icon: <ShieldCheck size={18} />, path: '/finance-workflow', roles: ['admin'] },
         { title: 'Room Requests', icon: <Building2 size={18} />, path: '/guesthouse', roles: ['admin', 'cfo', 'guesthousemanager'] },
         { title: 'Vehicle Requests', icon: <Car size={18} />, path: '/fleet', roles: ['admin', 'guesthousemanager'] },
         { title: 'API Management', icon: <Settings size={18} />, path: '/api-management', roles: ['admin'] },
@@ -281,6 +282,35 @@ const Header = () => {
                                         <Settings size={18} />
                                         <span>System Settings</span>
                                     </NavLink>
+                                    
+                                    {user?.available_positions?.length > 1 && (
+                                        <>
+                                            <div className="dropdown-divider"></div>
+                                            <div className="dropdown-section-title">Switch Position</div>
+                                            {user.available_positions.map(pos => (
+                                                <button 
+                                                    key={pos.id} 
+                                                    className={`dropdown-item position-item ${String(pos.id) === String(user.active_position_id || user.available_positions[0]?.id) ? 'active-pos' : ''}`}
+                                                    onClick={() => {
+                                                        if (String(pos.id) !== String(user.active_position_id || user.available_positions[0]?.id)) {
+                                                            switchPosition(pos.id);
+                                                        }
+                                                        setShowProfileDropdown(false);
+                                                    }}
+                                                >
+                                                    <div className="pos-icon-box">
+                                                        <ShieldCheck size={16} />
+                                                    </div>
+                                                    <div className="pos-item-details">
+                                                        <span className="pos-name">{pos.name}</span>
+                                                        <span className="pos-dept">{pos.department_name || pos.department}</span>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </>
+                                    )}
+
+                                    <div className="dropdown-divider"></div>
                                     <button className="dropdown-item logout-item" onClick={logout}>
                                         <LogOut size={18} />
                                         <span>Logout</span>

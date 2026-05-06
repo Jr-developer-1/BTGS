@@ -9,39 +9,50 @@ from core.models import User, Role
 # Global in-memory cache for dynamic data to avoid N+1 API calls
 # In a production environment, this should be replaced with Redis/Memcached.
 CACHE_EMPLOYEE_DATA = {}
-CACHE_TIMEOUT = 300 # 5 minutes
+CACHE_TIMEOUT = 300 # Restored to 5 minutes to fix global app slowness
 
-# HR ID to Employee Code mapping
-HR_ID_TO_CODE_CACHE = {}
+# HR ID to Info mapping (code and name)
+HR_ID_TO_INFO_CACHE = {}
 
 # Full employee list cache for team filtering
 GLOBAL_EMPLOYEE_CACHE = {'timestamp': 0, 'data': []}
 GLOBAL_CACHE_TIMEOUT = 600 # 10 minutes
 
-def resolve_hr_id_to_code(hr_id, api_url, headers):
-    """Resolves an internal HR ID to an employee code by fetching details."""
-    if not hr_id: return None
-    if hr_id in HR_ID_TO_CODE_CACHE:
-        return HR_ID_TO_CODE_CACHE[hr_id]
+def resolve_hr_id_to_info(hr_id, api_url, headers):
+    """Resolves an internal HR ID to (employee_code, name) by fetching details."""
+    if not hr_id: return None, None
+    hr_id_str = str(hr_id)
+    if hr_id_str in HR_ID_TO_INFO_CACHE:
+        info = HR_ID_TO_INFO_CACHE[hr_id_str]
+        return info.get('code'), info.get('name')
     
     try:
-        url = f"{api_url.rstrip('/')}/{hr_id}/"
-        # Ensure we don't have double slashes from api_url itself if it was misconfigured
+        url = f"{api_url.rstrip('/')}/{hr_id_str}/"
         url = url.replace('//', '/').replace(':/', '://')
-        resp = requests.get(url, headers=headers, timeout=5)
+        resp = requests.get(url, headers=headers, timeout=1.0)
         if resp.status_code == 200:
             data = resp.json() or {}
-            # Try nested employee object first, then top level fallback
             emp_obj = data.get('employee', {})
             code = emp_obj.get('employee_code') or data.get('employee_code')
+            name = emp_obj.get('name') or data.get('name')
             
             if code:
-                HR_ID_TO_CODE_CACHE[hr_id] = code
-                return code
+                HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': code, 'name': name}
+                return code, name
+            else:
+                HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
+        else:
+            HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
     except Exception as e:
         print(f"Error resolving HR ID {hr_id}: {e}")
+        HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
     
-    return None
+    return None, None
+
+def resolve_hr_id_to_code(hr_id, api_url, headers):
+    """Legacy wrapper for resolve_hr_id_to_info."""
+    code, _ = resolve_hr_id_to_info(hr_id, api_url, headers)
+    return code
 
 def get_dynamic_employee_data(employee_code):
     """
@@ -224,69 +235,111 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             
             if employee_id_filter and emp_id_api:
                 try:
-                    detail_url = api_url + f"{emp_id_api}/"
+                    detail_url = api_url.rstrip('/') + f"/{emp_id_api}/"
                     detail_resp = requests.get(detail_url, headers=headers, timeout=5)
                     if detail_resp.status_code == 200:
                         detail_data = detail_resp.json() or {}
                         pos_list = detail_data.get('positions_details') or []
                         pos_detail = (pos_list[0] if pos_list else {}) or {}
                         
-                        # Use top-level reporting_to if available from the rich list payload first
-                        raw_reporting_to = item.get('position', {}).get('reporting_to', [])
-                        if not raw_reporting_to:
-                            raw_reporting_to = detail_data.get('reporting_to', [])
-                        if not raw_reporting_to and pos_detail:
-                             raw_reporting_to = pos_detail.get('reporting_to', [])
-
-                        # If raw_reporting_to is a list of IDs or a single ID, resolve to objects
-                        reporting_to_names = detail_data.get('reporting_to_names', [])
-                        resolved_reporting_to = []
+                        # Resolve hierarchy for ALL positions in the list
+                        top_reporting_names = detail_data.get('reporting_to_names', [])
                         
-                        if isinstance(raw_reporting_to, list):
-                            for i, mgr in enumerate(raw_reporting_to):
-                                if isinstance(mgr, int) or (isinstance(mgr, str) and str(mgr).isdigit()):
-                                    # It's a pure numeric ID, try to get name from reporting_to_names and resolve code
-                                    name = reporting_to_names[i] if i < len(reporting_to_names) else f"Manager {mgr}"
-                                    code = resolve_hr_id_to_code(mgr, api_url, headers)
-                                    resolved_reporting_to.append({"id": mgr, "name": name, "employee_code": code})
-                                else:
-                                    # It's an object or a long-form string code (letters/numbers/symbols)
-                                    if isinstance(mgr, dict):
-                                        emp_id = mgr.get('employee_id')
-                                        if emp_id and not mgr.get('employee_code'):
-                                            # The manager object is missing the full login code, resolve it
-                                            mgr['employee_code'] = resolve_hr_id_to_code(emp_id, api_url, headers)
-                                    resolved_reporting_to.append(mgr)
-                        elif isinstance(raw_reporting_to, int) or (isinstance(raw_reporting_to, str) and str(raw_reporting_to).isdigit()):
-                            name = detail_data.get('reporting_to_name', f"Manager {raw_reporting_to}")
-                            code = resolve_hr_id_to_code(raw_reporting_to, api_url, headers)
-                            resolved_reporting_to = [{"id": raw_reporting_to, "name": name, "employee_code": code}]
-                        else:
-                            if isinstance(raw_reporting_to, dict):
-                                emp_id = raw_reporting_to.get('employee_id')
-                                if emp_id and not raw_reporting_to.get('employee_code'):
-                                    raw_reporting_to['employee_code'] = resolve_hr_id_to_code(emp_id, api_url, headers)
-                                resolved_reporting_to = [raw_reporting_to]
+                        for pos in pos_list:
+                            raw_reporting_to = pos.get('reporting_to', [])
+                            pos_reporting_names = pos.get('reporting_to_names') or top_reporting_names
+                            
+                            if not raw_reporting_to:
+                                # Fallback to top-level if this position is missing it
+                                raw_reporting_to = detail_data.get('reporting_to', [])
+                            
+                            resolved_reporting_to = []
+                            if isinstance(raw_reporting_to, list):
+                                for i, mgr in enumerate(raw_reporting_to):
+                                    if isinstance(mgr, int) or (isinstance(mgr, str) and str(mgr).isdigit()):
+                                        code, resolved_name = resolve_hr_id_to_info(mgr, api_url, headers)
+                                        name = resolved_name or (pos_reporting_names[i] if i < len(pos_reporting_names) else f"Manager {mgr}")
+                                        
+                                        # CRITICAL WORKFLOW FIX: If it's a Position ID, code will be None.
+                                        # We MUST resolve the name to an employee_code so the Trip Approval can route to a User!
+                                        if not code and name and not name.startswith("Manager"):
+                                            # Cache check for position name
+                                            cache_key = f"pos_name_{name}"
+                                            if cache_key in HR_ID_TO_INFO_CACHE:
+                                                code = HR_ID_TO_INFO_CACHE[cache_key].get('code')
+                                            else:
+                                                try:
+                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=2.0)
+                                                    if s_resp.status_code == 200:
+                                                        s_data = s_resp.json() or {}
+                                                        s_res = s_data.get('results', [])
+                                                        if s_res:
+                                                            code = s_res[0].get('employee', {}).get('employee_code')
+                                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': code}
+                                                        else:
+                                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                                except:
+                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                        
+                                        resolved_reporting_to.append({"id": mgr, "name": name, "employee_code": code})
+                                    else:
+                                        if isinstance(mgr, dict):
+                                            emp_id = mgr.get('employee_id')
+                                            if emp_id and not mgr.get('employee_code'):
+                                                code, resolved_name = resolve_hr_id_to_info(emp_id, api_url, headers)
+                                                mgr['employee_code'] = code
+                                                if resolved_name:
+                                                    mgr['name'] = resolved_name
+                                        resolved_reporting_to.append(mgr)
+                            elif isinstance(raw_reporting_to, int) or (isinstance(raw_reporting_to, str) and str(raw_reporting_to).isdigit()):
+                                code, resolved_name = resolve_hr_id_to_info(raw_reporting_to, api_url, headers)
+                                name = resolved_name or (pos_reporting_names[0] if pos_reporting_names else f"Manager {raw_reporting_to}")
+                                
+                                if not code and name and not name.startswith("Manager"):
+                                    cache_key = f"pos_name_{name}"
+                                    if cache_key in HR_ID_TO_INFO_CACHE:
+                                        code = HR_ID_TO_INFO_CACHE[cache_key].get('code')
+                                    else:
+                                        try:
+                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=2.0)
+                                            if s_resp.status_code == 200:
+                                                s_res = s_resp.json().get('results', [])
+                                                if s_res:
+                                                    code = s_res[0].get('employee', {}).get('employee_code')
+                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': code}
+                                                else:
+                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                        except:
+                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                
+                                resolved_reporting_to = [{"id": raw_reporting_to, "name": name, "employee_code": code}]
                             else:
-                                resolved_reporting_to = [raw_reporting_to] if raw_reporting_to else []
+                                if isinstance(raw_reporting_to, dict):
+                                    emp_id = raw_reporting_to.get('employee_id')
+                                    if emp_id and not raw_reporting_to.get('employee_code'):
+                                        code, resolved_name = resolve_hr_id_to_info(emp_id, api_url, headers)
+                                        raw_reporting_to['employee_code'] = code
+                                        if resolved_name:
+                                            raw_reporting_to['name'] = resolved_name
+                                    resolved_reporting_to = [raw_reporting_to]
+                                else:
+                                    resolved_reporting_to = [raw_reporting_to] if raw_reporting_to else []
+                            
+                            pos['reporting_to'] = resolved_reporting_to
 
-                        # Update pos_detail with resolved hierarchy
-                        if pos_detail:
-                            pos_detail['reporting_to'] = resolved_reporting_to
-
-                        # Safely inject the resolved reporting hierarchy into the existing rich list item
-                        if 'position' not in item:
-                            item['position'] = {}
-                        if 'employee' not in item:
-                            item['employee'] = {}
-
-                        item['position']['reporting_to'] = resolved_reporting_to
+                        # We NO LONGER inject the primary position's reporting_to into the top-level item['position']
+                        # because that causes stale data when switching roles. 
+                        # The User model's get_current_position() will now handle picking the right one from positions_details.
                         
                         # Only enrich fields that might be missing from list view (like photo or bank details)
                         if detail_data.get('photo') and not item['employee'].get('photo'):
                             item['employee']['photo'] = detail_data.get('photo')
                         if detail_data.get('bank_details'):
                             item['bank_details'] = detail_data.get('bank_details')
+                        
+                        # CRITICAL: Include all positions for multi-position switching
+                        if detail_data.get('positions_details'):
+                            item['positions_details'] = detail_data.get('positions_details')
                             
                         transformed_results.append(item)
                         continue 
@@ -318,6 +371,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                     "level_name": pos_info.get("level_name") or (f"Level {pos_info.get('level_rank')}" if pos_info.get("level_rank") else None)
                 },
                 "project": proj_info,
+                "positions_details": item.get("positions_details") or [],
                 "office": {
                     "name": off_info.get("name") or off_info.get("office_name"),
                     "level": off_info.get("level") or off_info.get("office_level"),

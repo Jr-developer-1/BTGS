@@ -97,6 +97,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://192.168.1.147:6787",
     "http://10.2.1.122:6786/",
     "http://192.168.29.89:6786",
+    "http://10.2.1.16:6786",
 ]
 
 # Disable SSL/HTTPS enforcement for HTTP-only deployment
@@ -111,7 +112,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',
+        'core.auth.CustomTokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'core.permissions.IsCustomAuthenticated',
@@ -139,6 +140,7 @@ EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False").lower() == "true"
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER

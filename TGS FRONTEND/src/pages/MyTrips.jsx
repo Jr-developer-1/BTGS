@@ -175,8 +175,11 @@ const MyTrips = () => {
             const allData = [...tripsData, ...travelsData].sort((a, b) => {
                 const getPriority = (status) => {
                     const s = (status || '').toLowerCase();
-                    if (['approved', 'completed'].includes(s)) return 1;
+                    // Priority 1: Actionable / Pending Approval
+                    if (s.includes('pending') || s === 'approved' || s === 'manager approved' || s === 'hr approved') return 1;
+                    // Priority 3: Finalized / Settled
                     if (['settled', 'paid', 'transferred', 'completed & settled'].some(term => s.includes(term))) return 3;
+                    // Priority 2: Everything else
                     return 2;
                 };
                 const pA = getPriority(a.status);
@@ -267,12 +270,7 @@ const MyTrips = () => {
 
     const filteredTrips = trips.filter(t => {
         const s = (t.status || '').toLowerCase();
-
-        // Comprehensive list of states to hide as per user request (Pending/Processing states)
-        const hideStates = ['pending', 'submitted', 'forwarded', 'draft', 'under process', 'in progress', 'ongoing', 'rejected'];
-        const isHidden = hideStates.some(state => s === state || s.includes('pending'));
-
-        if (isHidden) return false;
+        if (s === 'pending') return false;
 
         const matchesStatus = filter === 'All Status' || t.status === filter;
         const matchesType = typeFilter === 'All' ||
@@ -343,8 +341,8 @@ const MyTrips = () => {
                     </div>
                 ) : (
                     filteredTrips.map(trip => (
-                        <div key={trip.id} className={`trip-card premium-card ${trip.status?.toLowerCase() === 'settled' ? 'completed-blocked' : ''} ${trip.considerAsLocal ? 'travel-card' : ''}`}>
-                            {trip.status?.toLowerCase() === 'settled' && (
+                        <div key={trip.id} className={`trip-card premium-card ${['settled', 'completed', 'paid', 'transferred'].includes(trip.status?.toLowerCase()) ? 'completed-blocked' : ''} ${trip.considerAsLocal ? 'travel-card' : ''}`}>
+                            {['settled', 'completed', 'paid', 'transferred'].includes(trip.status?.toLowerCase()) && (
                                 <div className="settled-overlay">
                                     <div className="settled-badge">
                                         <CheckCircle2 size={20} />

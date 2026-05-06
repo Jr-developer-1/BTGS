@@ -28,7 +28,8 @@ import {
     Download,
     X,
     ClipboardList,
-    RotateCcw
+    RotateCcw,
+    Calendar
 } from 'lucide-react';
 import api from '../api/api';
 import { useToast } from '../context/ToastContext';
@@ -71,6 +72,12 @@ const ApprovalInbox = ({ enforceTab = null }) => {
     const [batchItemEdits, setBatchItemEdits] = useState({});
     const [selectedJobReport, setSelectedJobReport] = useState(null);
     const [isJobReportModalOpen, setIsJobReportModalOpen] = useState(false);
+    const [showGlobalRejectModal, setShowGlobalRejectModal] = useState(false);
+    const [rejectType, setRejectType] = useState('task'); // 'task' or 'batch'
+    const [rejectAction, setRejectAction] = useState(''); // Specific action name
+    const [globalRejectionRemarks, setGlobalRejectionRemarks] = useState('');
+    const [rejectId, setRejectId] = useState(null);
+    const [pendingBatchData, setPendingBatchData] = useState(null);
 
     const rawRole = user?.role?.toLowerCase() || '';
     const dept = user?.department?.toLowerCase() || '';
@@ -147,17 +154,30 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         fetchBatches();
         // Show breakdown by default for claims
         setShowBreakdown(true);
-    }, [activeTab, filterType]);
+    }, [activeTab, filterType, user?.active_position_id]);
 
     const fetchBatches = async () => {
         try {
             const resp = await api.get('/api/bulk-activities/');
             const all = resp.data.results || resp.data || [];
             // Filter to show ONLY batches where the current user is the approver
-            const pendingForMe = all.filter(b =>
-                ['Submitted', 'Manager Approved', 'Resubmitted'].includes(b.status) &&
-                String(b.current_approver) === String(user?.id)
-            );
+            // OR if the user is HR/Admin, show batches at Manager Approved stage
+            const pendingForMe = all.filter(b => {
+                const isAssignedToMe = String(b.current_approver) === String(user?.id) && 
+                                     String(b.approver_position) === String(user?.active_position_id);
+                const isRelevantStatus = [
+                    'Submitted', 'Manager Approved', 'Resubmitted', 
+                    'HR Approved', 'Under Process', 'Forwarded',
+                    'PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE'
+                ].includes(b.status);
+                
+                if (isFinance || isHR || rawRole === 'admin') {
+                    // Privileged users see what is assigned to them OR what is in a status they can act on
+                    return isAssignedToMe || (isRelevantStatus && (b.status === 'Manager Approved' || isFinance));
+                }
+                
+                return isAssignedToMe && isRelevantStatus;
+            });
             setBatches(pendingForMe);
         } catch (e) {
             console.error('Failed to fetch batches', e);
@@ -190,12 +210,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
 
         if (action === 'reject') {
-            remarks = window.prompt("Please enter the reason for rejection (or leave blank if detailed below):");
-            if (remarks === null) return; // User cancelled
-            if (!remarks.trim() && Object.keys(edits).length === 0) {
-                showToast("Rejection reason is mandatory if no items are marked", "error");
-                return;
-            }
+            setRejectType('batch');
+            setRejectId(batchId);
+            setRejectAction('reject');
+            setGlobalRejectionRemarks('');
+            setPendingBatchData(dataJsonToSave);
+            setShowGlobalRejectModal(true);
+            return;
         }
 
         try {
@@ -204,8 +225,12 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                 data_json: dataJsonToSave
             });
             showToast(`Batch ${action}d successfully!`, 'success');
-            // remove approved/rejected batch from list and collapse details
-            setBatches(prev => prev.filter(b => b.id !== batchId));
+            
+            // Refresh data automatically
+            fetchTasks(activeTab);
+            fetchCounts();
+            fetchBatches();
+            
             if (expandedBatch === batchId) setExpandedBatch(null);
         } catch (error) {
             showToast(error.response?.data?.error || 'Action failed', 'error');
@@ -221,12 +246,12 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
         let remarks = "";
         if (action === 'Reject' || action === 'RejectByFinance') {
-            remarks = window.prompt("Please enter the reason for rejection:");
-            if (remarks === null) return; // User cancelled
-            if (!remarks.trim()) {
-                showToast("Rejection reason is mandatory", "error");
-                return;
-            }
+            setRejectType('task');
+            setRejectId(selectedTask.id);
+            setRejectAction(action);
+            setGlobalRejectionRemarks('');
+            setShowGlobalRejectModal(true);
+            return;
         }
 
         try {
@@ -338,6 +363,57 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
     };
 
+    const confirmGlobalRejection = async () => {
+        if (!globalRejectionRemarks.trim() && (rejectType === 'task' || (rejectType === 'batch' && !pendingBatchData))) {
+            showToast("Rejection reason is mandatory", "error");
+            return;
+        }
+
+        try {
+            if (rejectType === 'batch') {
+                await api.post(`/api/bulk-activities/${rejectId}/reject/`, {
+                    remarks: globalRejectionRemarks || 'Some lines were rejected',
+                    data_json: pendingBatchData
+                });
+                showToast(`Batch rejected successfully!`, 'success');
+                
+                fetchTasks(activeTab);
+                fetchCounts();
+                fetchBatches();
+                
+                if (expandedBatch === rejectId) setExpandedBatch(null);
+            } else {
+                const payload = {
+                    id: rejectId,
+                    action: rejectAction,
+                    remarks: globalRejectionRemarks,
+                    executive_approved_amount: execAmount,
+                    payment_mode: paymentMode,
+                    transaction_id: transactionId,
+                    receipt_file: receiptFile
+                };
+
+                await api.post('/api/approvals/', payload);
+                showToast(`Request rejected successfully`, "success");
+
+                // Clear inputs
+                setPaymentMode('');
+                setTransactionId('');
+                setReceiptFile(null);
+
+                fetchTasks(activeTab);
+                fetchCounts();
+            }
+
+            setShowGlobalRejectModal(false);
+            setGlobalRejectionRemarks('');
+            setRejectId(null);
+        } catch (error) {
+            console.error(`Rejection failed:`, error);
+            showToast(error.response?.data?.error || `Rejection failed`, "error");
+        }
+    };
+
     const isHR = dept.includes('hr') || desig.includes('hr') || rawRole === 'hr';
     const getFullUrl = (path) => {
         if (!path) return '';
@@ -393,7 +469,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                         {isFinance && (
                             <div className="info-block highlight" style={{ minWidth: '220px' }}>
-                                <span>Executive Recommendation</span>
+                                <span>{task.details?.workflow_label || (task.details?.previous_approver_name ? `${task.details.previous_approver_name} Recommendation` : 'Executive Recommendation')}</span>
                                 <p className="text-blue-600 font-bold">₹{task.details?.executive_approved_amount || '0.00'}</p>
                                 {task.type === 'Expense Claim' && ((task.details?.total_advance_taken !== undefined && parseFloat(task.details?.total_advance_taken) > 0) || (task.details?.wallet_balance_used !== undefined && parseFloat(task.details?.wallet_balance_used) > 0)) && (
                                     <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem' }}>
@@ -482,7 +558,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                     <span>Requested Amount</span>
                                     <h2>₹{task.details.requested_amount}</h2>
                                 </div>
-                                {isFinanceExec && (['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
+                                {task.details?.permissions?.can_edit_amount && (['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
                                     <div className="exec-amount-editor animate-fade-in">
                                         <label>Set Approved Amount</label>
                                         <div className="amount-input-wrapper">
@@ -512,7 +588,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                     )}
 
-                    {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && isFinanceExec && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
+                    {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && task.details?.permissions?.can_edit_amount && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
                         <div className="detail-section animate-fade-in" style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
                             <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1e293b' }}>
                                 < IndianRupee size={18} className="text-indigo-600" /> Audit Finalization
@@ -700,7 +776,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                         </div>
 
                                                                         {/* Inline Job Report (new system) */}
-                                                                        {inlineJobReport && (
+                                                                        {(inlineJobReport || inlineJobFiles.length > 0) && (
                                                                             <div style={{ width: '100%', marginTop: '6px' }} onClick={e => e.stopPropagation()}>
                                                                                 <button
                                                                                     onClick={() => {
@@ -1068,8 +1144,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         );
     };
 
-    const tourPlanClaims = tasks.filter(t => t.is_local);
-    const specialRequestTasks = tasks.filter(t => !t.is_local);
+    const tourPlanClaims = tasks.filter(t => t.is_local && !String(t.id).startsWith('BATCH-'));
+    const specialRequestTasks = tasks.filter(t => !t.is_local && !String(t.id).startsWith('BATCH-'));
 
     return (
         <div className="approvals-page">
@@ -1159,7 +1235,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                         boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
                                         border: '1px solid #e2e8f0',
                                         marginBottom: '16px',
-                                        display: 'flex',
+                                                                        display: 'flex',
                                         justifyContent: 'space-between',
                                         alignItems: 'center',
                                         transition: 'all 0.3s ease'
@@ -1167,63 +1243,70 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                     className="hover:shadow-md"
                                 >
                                     <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1e293b', margin: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <Upload size={22} className="text-indigo-600" /> Monthly Tour Plan
-                                        <span style={{ fontSize: '0.8rem', background: '#e0e7ff', color: '#4338ca', padding: '2px 8px', borderRadius: '12px' }}>{batches.length + tourPlanClaims.length}</span>
+                                        <Calendar size={22} className="text-amber-600" /> Monthly Tour Plan
+                                        <span style={{ fontSize: '0.8rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '12px' }}>
+                                            {tasks.filter(t => t.type === 'Bulk Upload').length + tourPlanClaims.length}
+                                        </span>
                                     </h2>
                                     {isTourPlanOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                                 </div>
 
                                 {isTourPlanOpen && (
                                     <div className="animate-fade-in">
-                                        {(batches.length > 0 || tourPlanClaims.length > 0) ? (
+                                        {(tasks.filter(t => t.type === 'Bulk Upload').length > 0 || tourPlanClaims.length > 0) ? (
                                             <div>
                                                 {/* Existing Bulk Batches */}
-                                                {batches.map(batch => (
+                                                {tasks.filter(t => t.type === 'Bulk Upload').map(batch => (
                                                     <React.Fragment key={batch.id}>
                                                         <div style={{ background: '#fffbeb', border: '1px solid #fbbf24', borderRadius: '10px', padding: '16px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                                                             <div>
-                                                                <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{batch.user_name || 'Employee'}</div>
+                                                                <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{batch.user_name || batch.requester || 'Employee'}</div>
                                                                 <div style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>File: {batch.file_name}</div>
-                                                                <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{(batch.data_json || []).length} daily entries &bull; Submitted for approval</div>
+                                                                <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{batch.row_count || 0} daily entries &bull; Submitted for approval</div>
                                                             </div>
                                                             <div style={{ display: 'flex', gap: '10px' }}>
                                                                 <button
                                                                     onClick={() => {
-                                                                        if (expandedBatch !== batch.id) {
-                                                                            if (!batchItemEdits[batch.id]) {
-                                                                                setBatchItemEdits(prev => ({ ...prev, [batch.id]: {} }));
+                                                                        const targetId = batch.db_id || batch.id;
+                                                                        if (expandedBatch !== targetId) {
+                                                                            if (!batchItemEdits[targetId]) {
+                                                                                setBatchItemEdits(prev => ({ ...prev, [targetId]: {} }));
                                                                             }
                                                                         }
-                                                                        setExpandedBatch(expandedBatch === batch.id ? null : batch.id);
+                                                                        setExpandedBatch(expandedBatch === targetId ? null : targetId);
                                                                     }}
                                                                     style={{ padding: '8px 18px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
                                                                 >
-                                                                    {expandedBatch === batch.id ? 'Hide Data' : 'View Data'}
+                                                                    {expandedBatch === (batch.db_id || batch.id) ? 'Hide Data' : 'View Data'}
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => handleBatchAction(batch.id, 'approve')}
+                                                                    onClick={() => handleBatchAction(batch.db_id || batch.id, 'approve')}
                                                                     style={{ padding: '8px 18px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
                                                                 >
                                                                     ✓ Approve
                                                                 </button>
                                                                 <button
-                                                                    onClick={() => handleBatchAction(batch.id, 'reject')}
+                                                                    onClick={() => handleBatchAction(batch.db_id || batch.id, 'reject')}
                                                                     style={{ padding: '8px 18px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
                                                                 >
                                                                     ✕ Reject
                                                                 </button>
                                                             </div>
                                                         </div>
-                                                        {expandedBatch === batch.id && (
+                                                        {expandedBatch === (batch.db_id || batch.id) && (
                                                             <div className="premium-card animate-fade-in mb-4 overflow-hidden bg-white border border-slate-200 shadow-xl" style={{ borderRadius: '16px' }}>
                                                                 <div className="p-4 bg-slate-50 border-b flex justify-between items-center">
                                                                     <h5 className="font-extrabold text-slate-800 flex items-center gap-2">
                                                                         <ClipboardList size={18} className="text-indigo-600" />
-                                                                        Audit Daily Activities ({((batch.data_json || []).filter(r => !String(r.date || '').toLowerCase().includes('instruc'))).length} Entries)
+                                                                        Audit Daily Activities ({((batch.data_json || []).filter(r => {
+                                                                            const d = String(r.date || r.Date || '');
+                                                                            const hasData = Object.values(r).some(v => v !== null && v !== "" && String(v).trim() !== "");
+                                                                            return !d.toLowerCase().includes('instruc') && hasData;
+                                                                        })).length} Entries)
                                                                     </h5>
-                                                                    {Object.keys(batchItemEdits[batch.id] || {}).filter(k => batchItemEdits[batch.id][k].status === 'Rejected').length > 0 && (
+                                                                    {Object.keys(batchItemEdits[batch.db_id || batch.id] || {}).filter(k => batchItemEdits[batch.db_id || batch.id][k].status === 'Rejected').length > 0 && (
                                                                         <div className="animate-bounce bg-rose-100 text-rose-700 px-3 py-1 rounded-full text-xs font-bold border border-rose-200">
-                                                                            {Object.keys(batchItemEdits[batch.id] || {}).filter(k => batchItemEdits[batch.id][k].status === 'Rejected').length} Items marked for rejection
+                                                                            {Object.keys(batchItemEdits[batch.db_id || batch.id] || {}).filter(k => batchItemEdits[batch.db_id || batch.id][k].status === 'Rejected').length} Items marked for rejection
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -1231,7 +1314,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                     <table className="w-full text-xs border-collapse" style={{ minWidth: '1000px' }}>
                                                                         <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#f8fafc' }}>
                                                                             <tr className="text-slate-500 border-b">
-                                                                                {[...new Set(['date', 'mode', 'vehicle', 'origin_route', 'destination_route', 'start_time', 'reach_time', 'visit_intent', 'remarks', 'odo_start', 'odo_end', ...Object.keys(batch.data_json[0])])].filter(k => !k.startsWith('_') && Object.keys(batch.data_json[0]).includes(k)).map(key => {
+                                                                                {[...new Set(['date', 'mode', 'vehicle', 'origin_route', 'destination_route', 'start_time', 'reach_time', 'visit_intent', 'remarks', 'odo_start', 'odo_end', ...Object.keys(batch.data_json?.find(r => !String(r.date || r.Date || '').toLowerCase().includes('instruc')) || batch.data_json?.[0] || {})])].filter(k => !k.startsWith('_') && Object.keys(batch.data_json?.find(r => !String(r.date || r.Date || '').toLowerCase().includes('instruc')) || batch.data_json?.[0] || {}).includes(k)).map(key => {
                                                                                     const map = {
                                                                                         date: 'Date',
                                                                                         start_time: 'Start Time',
@@ -1258,11 +1341,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                         </thead>
                                                                         <tbody>
                                                                             {((batch.data_json || []).map((row, rIdx) => ({ ...row, __idx: rIdx })).filter(r => {
-                                                                                const d = String(r.date || '');
-                                                                                return d && !d.toLowerCase().includes('instruc');
+                                                                                const d = String(r.date || r.Date || '');
+                                                                                const isInstruction = d.toLowerCase().includes('instruc');
+                                                                                const hasAnyData = Object.values(r).some(v => v !== null && v !== "" && String(v).trim() !== "");
+                                                                                return !isInstruction && hasAnyData;
                                                                             })).map((row, filterIdx) => {
                                                                                 const originalIdx = row.__idx;
-                                                                                const itemEdit = (batchItemEdits[batch.id] || {})[originalIdx] || {};
+                                                                                const itemEdit = (batchItemEdits[batch.db_id || batch.id] || {})[originalIdx] || {};
                                                                                 const isActuallyRejected = row._status === 'Rejected' || itemEdit.status === 'Rejected';
 
                                                                                 return (
@@ -1297,10 +1382,10 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                     const isRejected = itemEdit.status === 'Rejected';
                                                                                                     setBatchItemEdits(prev => ({
                                                                                                         ...prev,
-                                                                                                        [batch.id]: {
-                                                                                                            ...(prev[batch.id] || {}),
+                                                                                                        [batch.db_id || batch.id]: {
+                                                                                                            ...(prev[batch.db_id || batch.id] || {}),
                                                                                                             [originalIdx]: {
-                                                                                                                ...((prev[batch.id] || {})[originalIdx] || {}),
+                                                                                                                ...((prev[batch.db_id || batch.id] || {})[originalIdx] || {}),
                                                                                                                 status: isRejected ? 'Pending' : 'Rejected'
                                                                                                             }
                                                                                                         }
@@ -1337,10 +1422,10 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                     onChange={e => {
                                                                                                         setBatchItemEdits(prev => ({
                                                                                                             ...prev,
-                                                                                                            [batch.id]: {
-                                                                                                                ...(prev[batch.id] || {}),
+                                                                                                            [batch.db_id || batch.id]: {
+                                                                                                                ...(prev[batch.db_id || batch.id] || {}),
                                                                                                                 [originalIdx]: {
-                                                                                                                    ...((prev[batch.id] || {})[originalIdx] || {}),
+                                                                                                                    ...((prev[batch.db_id || batch.id] || {})[originalIdx] || {}),
                                                                                                                     remarks: e.target.value
                                                                                                                 }
                                                                                                             }
@@ -1644,27 +1729,44 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                     <span>Attachments ({selectedJobReport.attachments.length})</span>
                                 </div>
                                 <div className="jr-attachments-list">
-                                    {selectedJobReport.attachments.map((file, fIdx) => (
-                                        <div key={fIdx} className="jr-attachment-item">
-                                            <div className="jr-file-icon">
-                                                <FileText size={18} />
-                                            </div>
-                                            <div className="jr-file-info">
-                                                <span className="jr-file-name">{file.name}</span>
-                                                <span className="jr-file-size">Proof Document</span>
-                                            </div>
-                                            <a
-                                                href={getFullUrl(file.data)}
-                                                download={file.name}
-                                                className="jr-download-btn"
-                                                onClick={(e) => {
-                                                    // Download action
-                                                }}
+                                    {selectedJobReport.attachments.map((file, fIdx) => {
+                                        const fileUrl = getFullUrl(file.data);
+                                        const isImage = fileUrl.startsWith('data:image') || 
+                                                       fileUrl.match(/\.(jpeg|jpg|gif|png)$/i);
+                                        
+                                        return (
+                                            <div 
+                                                key={fIdx} 
+                                                className="jr-attachment-item"
+                                                onClick={() => isImage && setPreviewImageUrl(fileUrl)}
+                                                style={{ cursor: isImage ? 'pointer' : 'default' }}
                                             >
-                                                <Download size={14} />
-                                            </a>
-                                        </div>
-                                    ))}
+                                                <div className="jr-file-icon">
+                                                    {isImage ? (
+                                                        <img 
+                                                            src={fileUrl} 
+                                                            alt="Preview" 
+                                                            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} 
+                                                        />
+                                                    ) : (
+                                                        <FileText size={18} />
+                                                    )}
+                                                </div>
+                                                <div className="jr-file-info">
+                                                    <span className="jr-file-name">{file.name}</span>
+                                                    <span className="jr-file-size">{isImage ? 'Image Proof - Click to Preview' : 'Document Proof'}</span>
+                                                </div>
+                                                <a
+                                                    href={fileUrl}
+                                                    download={file.name}
+                                                    className="jr-download-btn"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <Download size={14} />
+                                                </a>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -1673,6 +1775,78 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             <button className="jr-btn-primary" onClick={() => setIsJobReportModalOpen(false)}>
                                 Close Report
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Global Rejection Modal (Batches and Tasks) */}
+            {showGlobalRejectModal && (
+                <div className="custom-confirm-overlay" style={{ zIndex: 4000 }}>
+                    <div className="custom-confirm-modal animate-scale-in" style={{ maxWidth: '450px', border: 'none', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+                        <div className="modal-content-p" style={{ padding: '2rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ background: '#fef2f2', padding: '10px', borderRadius: '12px' }}>
+                                        <XCircle size={24} color="#ef4444" />
+                                    </div>
+                                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700, color: '#0f172a' }}>Reason for Rejection</h3>
+                                </div>
+                                <button onClick={() => setShowGlobalRejectModal(false)} className="hover:bg-slate-100 p-2 rounded-full transition-colors">
+                                    <X size={20} color="#64748b" />
+                                </button>
+                            </div>
+
+                            <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                                Please provide a clear reason why this request is being rejected. This will be sent as a notification to the employee.
+                            </p>
+
+                            <div className="field-group" style={{ marginBottom: '2rem' }}>
+                                <textarea
+                                    autoFocus
+                                    placeholder="Enter rejection remarks here..."
+                                    value={globalRejectionRemarks}
+                                    onChange={(e) => setGlobalRejectionRemarks(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '1rem',
+                                        borderRadius: '12px',
+                                        border: '2px solid #e2e8f0',
+                                        minHeight: '120px',
+                                        fontSize: '0.95rem',
+                                        outline: 'none',
+                                        transition: 'border-color 0.2s',
+                                        background: '#f8fafc'
+                                    }}
+                                    onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
+                                    onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
+                                />
+                            </div>
+
+                            <div className="modal-actions-p" style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                                <button
+                                    className="modal-btn-minimal"
+                                    onClick={() => setShowGlobalRejectModal(false)}
+                                    style={{ padding: '10px 20px', borderRadius: '10px', fontWeight: 600, color: '#64748b', cursor: 'pointer', border: 'none', background: 'transparent' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="jr-btn-primary"
+                                    onClick={confirmGlobalRejection}
+                                    style={{
+                                        padding: '10px 24px',
+                                        borderRadius: '10px',
+                                        border: 'none',
+                                        background: '#ef4444',
+                                        color: '#fff',
+                                        cursor: 'pointer',
+                                        fontWeight: 600,
+                                        boxShadow: '0 4px 6px -1px rgba(239, 68, 68, 0.2)'
+                                    }}
+                                >
+                                    Confirm Rejection
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

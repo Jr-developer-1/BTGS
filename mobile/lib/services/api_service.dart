@@ -127,7 +127,7 @@ class ApiService {
 
   /// Fetch latest user profile from server and update local session.
   Future<Map<String, dynamic>> fetchFreshUser() async {
-    final response = await get(ApiConstants.authProfile, includeAuth: true);
+    final response = await get(ApiConstants.authMe, includeAuth: true);
     if (response is Map<String, dynamic>) {
       await setUser(response);
       return response;
@@ -140,6 +140,31 @@ class ApiService {
 
   /// Whether a valid session is loaded.
   bool get isAuthenticated => _authToken != null && _authToken!.isNotEmpty;
+
+  /// Switch between multiple positions if available.
+  Future<Map<String, dynamic>> switchPosition(String positionId) async {
+    try {
+      final response = await post(
+        ApiConstants.authSwitchPosition,
+        body: {'position_id': positionId},
+        includeAuth: true,
+      );
+
+      if (response is Map<String, dynamic> && response.containsKey('user')) {
+        final updatedUser = response['user'] as Map<String, dynamic>;
+        // Sync token from memory to updated user map
+        updatedUser['token'] = _authToken ?? '';
+        await setUser(updatedUser);
+        LoggerService.log(
+            'SESSION: Switched position to ${updatedUser['designation']}');
+        return updatedUser;
+      }
+      throw Exception('Failed to switch position: Invalid response');
+    } catch (e) {
+      LoggerService.log('SESSION: Position switch failed: $e', isError: true);
+      rethrow;
+    }
+  }
 
   // ─── Headers ─────────────────────────────────────────────────────────────
 

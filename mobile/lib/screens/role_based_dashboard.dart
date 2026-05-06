@@ -17,6 +17,7 @@ import 'guest_house_screen.dart';
 import 'trip_approvals_screen.dart';
 import 'my_trips_screen.dart';
 import 'help_support_screen.dart';
+import 'login_screen.dart';
 
 /// Comprehensive role-based dashboard that displays modules as cards
 class RoleBasedDashboard extends StatefulWidget {
@@ -109,6 +110,15 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
     } catch (e) {
       debugPrint('INIT_SAFE_DATA: $e');
     }
+
+    // Refresh profile in background to catch any position changes
+    try {
+      _apiService.fetchFreshUser().then((_) {
+        if (mounted) _initializeModules();
+      });
+    } catch (e) {
+      debugPrint('INIT_SAFE_PROFILE_REFRESH: $e');
+    }
   }
 
   Future<void> _fetchDashboardData() async {
@@ -158,6 +168,101 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
 
     if (result == true && mounted) {
       setState(() => _frsVerifiedThisSession = true);
+    }
+  }
+
+  Future<void> _handleSwitchPosition(String positionId) async {
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+
+      await _apiService.switchPosition(positionId);
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        // Force app restart to home
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => RoleBasedDashboard(
+              username: _apiService.getUser()?['name'] ?? widget.username,
+              userRole: _apiService.getUser()?['role'] ?? widget.userRole,
+            ),
+          ),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to switch position: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        title: Text(
+          'SIGN OUT',
+          style: GoogleFonts.plusJakartaSans(
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: const Color(0xFF134E4A),
+            letterSpacing: 1,
+          ),
+        ),
+        content: Text(
+          'Are you sure you want to end your current session?',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            color: const Color(0xFF64748B),
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(
+              'CANCEL',
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF94A3B8),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              'LOGOUT',
+              style: GoogleFonts.plusJakartaSans(
+                color: const Color(0xFFEF4444),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _apiService.clearToken();
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (route) => false,
+        );
+      }
     }
   }
 
@@ -408,6 +513,12 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   Widget _buildDashboardHome() {
     return RefreshIndicator(
       onRefresh: () async {
+        try {
+          await _apiService.fetchFreshUser();
+          if (mounted) _initializeModules(); // Re-sync modules if role changed
+        } catch (e) {
+          debugPrint('Profile refresh failed: $e');
+        }
         await _fetchDashboardData();
         await _fetchNotifications();
         await LocationTrackingService.syncTrackingWithTrips();
@@ -1042,7 +1153,8 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   }
 
   Widget _buildWalletDisplay() {
-    final balance = _dashboardStats?['wallet_balance'] ?? 0.0;
+    final double rawBalance = double.tryParse((_dashboardStats?['wallet_balance'] ?? 0.0).toString()) ?? 0.0;
+    final balance = rawBalance < 0 ? 0.0 : rawBalance;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -1413,46 +1525,51 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
   }
 
   void _showAccountMenu(BuildContext context) {
+    final user = _apiService.getUser();
+    final List<dynamic> availablePositions = user?['available_positions'] ?? [];
+    final String activePosId = (user?['active_position_id'] ??
+            (availablePositions.isNotEmpty
+                ? availablePositions[0]['id'].toString()
+                : ''))
+        .toString();
+
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
 
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
-        overlay.size.width - 200,
-        overlay.size.height - 180,
+        overlay.size.width - 260,
+        overlay.size.height - (availablePositions.length > 1 ? 420 : 260),
         20,
         0,
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      elevation: 25,
       color: Colors.white,
       items: [
         PopupMenuItem(
-          value: 'profile',
+          enabled: false,
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0D9488).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.person_rounded,
-                    color: Color(0xFF0D9488),
-                    size: 18,
+                Text(
+                  widget.username.toUpperCase(),
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF134E4A),
+                    letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(width: 14),
                 Text(
-                  'My Profile',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
+                  widget.userRole.replaceAll('_', ' ').toUpperCase(),
+                  style: GoogleFonts.inter(
+                    fontSize: 9,
                     fontWeight: FontWeight.w700,
-                    color: const Color(0xFF0F172A),
+                    color: const Color(0xFF94A3B8),
                   ),
                 ),
               ],
@@ -1461,49 +1578,144 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
         ),
         const PopupMenuDivider(height: 1),
         PopupMenuItem(
+          value: 'profile',
+          child: _buildMenuItem(
+            Icons.person_rounded,
+            'My Profile',
+            const Color(0xFF0D9488),
+          ),
+        ),
+        PopupMenuItem(
           value: 'help',
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.help_outline_rounded,
-                    color: Colors.blue,
-                    size: 18,
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  'Help & Support',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF0F172A),
-                  ),
-                ),
-              ],
+          child: _buildMenuItem(
+            Icons.help_outline_rounded,
+            'Help & Support',
+            Colors.blue,
+          ),
+        ),
+        if (availablePositions.length > 1) ...[
+          const PopupMenuDivider(height: 1),
+          PopupMenuItem(
+            enabled: false,
+            child: Text(
+              'SWITCH POSITION',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF94A3B8),
+                letterSpacing: 1.2,
+              ),
             ),
+          ),
+          ...availablePositions.map((pos) {
+            final isSelected = pos['id'].toString() == activePosId;
+            return PopupMenuItem(
+              value: 'switch_${pos['id']}',
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      isSelected
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      color: isSelected
+                          ? const Color(0xFF0D9488)
+                          : const Color(0xFF94A3B8),
+                      size: 18,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            pos['name'] ?? 'Position',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13,
+                              fontWeight: isSelected
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              color: isSelected
+                                  ? const Color(0xFF0D9488)
+                                  : const Color(0xFF0F172A),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            pos['department_name'] ?? pos['department'] ?? '',
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              color: const Color(0xFF64748B),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ],
+        const PopupMenuDivider(height: 1),
+        PopupMenuItem(
+          value: 'logout',
+          child: _buildMenuItem(
+            Icons.logout_rounded,
+            'Logout',
+            const Color(0xFFEF4444),
           ),
         ),
       ],
     ).then((value) {
+      if (value == null) return;
       if (value == 'profile') {
-        setState(() {
-          _currentIndex = 2;
-        });
+        setState(() => _currentIndex = 2);
       } else if (value == 'help') {
         Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const HelpSupportScreen()),
         );
+      } else if (value == 'logout') {
+        _handleLogout();
+      } else if (value.startsWith('switch_')) {
+        final posId = value.replaceFirst('switch_', '');
+        _handleSwitchPosition(posId);
       }
     });
+  }
+
+  Widget _buildMenuItem(IconData icon, String title, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              icon,
+              color: color,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Text(
+            title,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF0F172A),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   IconData _getKpiIcon(String iconName) {

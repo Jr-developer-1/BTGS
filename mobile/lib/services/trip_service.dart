@@ -156,15 +156,18 @@ class TripService {
   Future<List<Map<String, dynamic>>> fetchApprovals({
     String tab = 'pending',
     String type = 'all',
-    String viewType = 'special',
+    String viewType = 'all',
     String? search,
     String? date,
-    int page = 1,
+    int page = 0,
     String? source,
     Map<String, String>? extraParams,
   }) async {
     String url =
-        '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType&page=$page';
+        '${ApiConstants.approvals}?tab=$tab&type=$type&view_type=$viewType';
+    if (page > 0) {
+      url += '&page=$page';
+    }
     if (search != null && search.isNotEmpty) {
       url += '&search=$search';
     }

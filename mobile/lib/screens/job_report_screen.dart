@@ -636,6 +636,8 @@ class _JobReportScreenState extends State<JobReportScreen> {
                 if (details['odoStartImg'] != null) _buildEvidenceChip('Start ODO', details['odoStartImg']),
                 if (details['odoEndImg'] != null) _buildEvidenceChip('End ODO', details['odoEndImg']),
                 ...selfies.map((s) => _buildEvidenceChip('Task Selfie', s)),
+                if (details['jobReportAttachments'] != null)
+                  ...(details['jobReportAttachments'] as List).map((s) => _buildEvidenceChip('Job Pic', s.toString())).toList(),
               ],
             ),
           ),

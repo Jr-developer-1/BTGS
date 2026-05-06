@@ -152,6 +152,33 @@ const UserManagement = () => {
         }
     };
 
+    const handleResendEmail = async (employee) => {
+        const empCode = employee.employee_code || employee.employee?.employee_code;
+        const empName = employee.name || employee.employee?.name;
+
+        if (!empCode) return;
+
+        setProcessingId(`resend-${empCode}`);
+
+        try {
+            const payload = {
+                employee_id: empCode,
+                resend: true
+            };
+
+            const response = await api.post('/api/signup/', payload);
+
+            if (response.status === 201 || response.status === 200) {
+                showToast(`Activation email resent successfully to ${empName}.`, 'success');
+            }
+        } catch (err) {
+            console.error("Error resending email:", err);
+            showToast('Failed to resend email.', 'error');
+        } finally {
+            setProcessingId(null);
+        }
+    };
+
     const handleSyncAllUsers = async () => {
         setIsSyncingAll(true);
         setSyncProgress({ current: 0, total: 0, step: 'Initializing...' });
@@ -390,35 +417,68 @@ const UserManagement = () => {
                                                     )}
                                                 </td>
                                                 <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                                                    <button
-                                                        onClick={() => !emp.isUser && handleMakeUser(emp)}
-                                                        disabled={processingId === displayCode || emp.isUser}
-                                                        style={{
-                                                            padding: '8px 16px',
-                                                            borderRadius: '8px',
-                                                            border: 'none',
-                                                            cursor: emp.isUser ? 'default' : 'pointer',
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: '6px',
-                                                            fontSize: '13px',
-                                                            fontWeight: '600',
-                                                            transition: 'all 0.2s',
-                                                            backgroundColor: emp.isUser ? '#f8fafc' : '#e0e7ff',
-                                                            color: emp.isUser ? '#94a3b8' : '#4338ca',
-                                                            boxShadow: emp.isUser ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
-                                                        }}
-                                                        onMouseOver={(e) => { if (!emp.isUser && processingId !== displayCode) e.currentTarget.style.backgroundColor = '#c7d2fe' }}
-                                                        onMouseOut={(e) => { if (!emp.isUser && processingId !== displayCode) e.currentTarget.style.backgroundColor = '#e0e7ff' }}
-                                                    >
-                                                        {processingId === displayCode ? (
-                                                            <><RefreshCcw size={14} className="spinning" /> Activating...</>
-                                                        ) : emp.isUser ? (
-                                                            <><CheckCircle2 size={14} /> Registered</>
-                                                        ) : (
-                                                            <><Mail size={14} /> Send Invite & Activate</>
+                                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                                        <button
+                                                            onClick={() => !emp.isUser && handleMakeUser(emp)}
+                                                            disabled={processingId === displayCode || emp.isUser}
+                                                            style={{
+                                                                padding: '8px 16px',
+                                                                borderRadius: '8px',
+                                                                border: 'none',
+                                                                cursor: emp.isUser ? 'default' : 'pointer',
+                                                                display: 'inline-flex',
+                                                                alignItems: 'center',
+                                                                gap: '6px',
+                                                                fontSize: '13px',
+                                                                fontWeight: '600',
+                                                                transition: 'all 0.2s',
+                                                                backgroundColor: emp.isUser ? '#f8fafc' : '#e0e7ff',
+                                                                color: emp.isUser ? '#94a3b8' : '#4338ca',
+                                                                boxShadow: emp.isUser ? 'none' : '0 1px 2px rgba(0,0,0,0.05)',
+                                                            }}
+                                                            onMouseOver={(e) => { if (!emp.isUser && processingId !== displayCode) e.currentTarget.style.backgroundColor = '#c7d2fe' }}
+                                                            onMouseOut={(e) => { if (!emp.isUser && processingId !== displayCode) e.currentTarget.style.backgroundColor = '#e0e7ff' }}
+                                                        >
+                                                            {processingId === displayCode ? (
+                                                                <><RefreshCcw size={14} className="spinning" /> Activating...</>
+                                                            ) : emp.isUser ? (
+                                                                <><CheckCircle2 size={14} /> Registered</>
+                                                            ) : (
+                                                                <><Mail size={14} /> Send Invite & Activate</>
+                                                            )}
+                                                        </button>
+
+                                                        {emp.isUser && (
+                                                            <button
+                                                                onClick={() => handleResendEmail(emp)}
+                                                                disabled={processingId === `resend-${displayCode}`}
+                                                                title="Resend Activation Email"
+                                                                style={{
+                                                                    padding: '8px 12px',
+                                                                    borderRadius: '8px',
+                                                                    border: '1px solid #cbd5e1',
+                                                                    backgroundColor: '#fff',
+                                                                    color: '#475569',
+                                                                    cursor: 'pointer',
+                                                                    display: 'inline-flex',
+                                                                    alignItems: 'center',
+                                                                    gap: '6px',
+                                                                    fontSize: '13px',
+                                                                    fontWeight: '600',
+                                                                    transition: 'all 0.2s',
+                                                                }}
+                                                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                                                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#fff'}
+                                                            >
+                                                                {processingId === `resend-${displayCode}` ? (
+                                                                    <RefreshCcw size={14} className="spinning" />
+                                                                ) : (
+                                                                    <RefreshCcw size={14} />
+                                                                )}
+                                                                <span>Resend Mail</span>
+                                                            </button>
                                                         )}
-                                                    </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         )

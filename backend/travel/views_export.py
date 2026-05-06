@@ -172,7 +172,7 @@ def _build_statement_data(trip: Trip) -> dict:
     # Advances that are actually released
     advances = float(sum(
         float(a.executive_approved_amount or a.requested_amount or 0)
-        for a in trip.advances.filter(status__in=['COMPLETED', 'Paid', 'Transferred', 'COMPLETED'])
+        for a in trip.advances.filter(status__in=['COMPLETED', 'Paid', 'Transferred', 'PARTIALLY_COMPLETED'])
     ))
     to_be_refunded   = max(0.0, advances - grand_total)
     to_be_reimbursed = max(0.0, grand_total - advances)

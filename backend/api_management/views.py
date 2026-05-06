@@ -164,7 +164,8 @@ class SignupView(APIView):
             defaults=defaults
         )
 
-        if created:
+        resend_requested = request.data.get('resend', False)
+        if created or resend_requested:
             import datetime
             subject = 'Welcome to BTGS - Your Account is Activated'
             plain_message = f'Hello {first_name},\n\nWelcome to BTGS.\n\nYour account has been activated. Your temporary password is: {generated_password}\n\nPlease login and change your password.\n\nThank you.'
@@ -271,7 +272,7 @@ class SignupView(APIView):
                 html_message=html_message
             )
 
-        message_response = "User created and email sent successfully" if created else "User linked/updated successfully"
+        message_response = "User created and email sent successfully" if created else ("Email resent successfully" if resend_requested else "User linked/updated successfully")
         return Response({'message': message_response}, status=status.HTTP_201_CREATED)
 
 class SyncAllUsersView(APIView):

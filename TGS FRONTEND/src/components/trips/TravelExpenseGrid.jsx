@@ -833,29 +833,34 @@ const TravelExpenseGrid = ({
                     }
                 }
 
-                if (subType === 'Own Car') {
-                    if (!odoStart || !odoEnd) {
-                        showToast(`Item #${rowNum}: Both start and end odometer readings are required for Own Car.`, "error");
+                const odoDrivenSubtypes = ['Own Car', 'Own Bike', 'Self Drive Rental', 'Company Car'];
+                if (odoDrivenSubtypes.includes(subType)) {
+                    // Conditional Validation: If reading exists, photo MUST exist
+                    if (odoStart && !row.details.odoStartImg) {
+                        showToast(`Item #${rowNum}: Start Odometer photo is required since reading is entered.`, "error");
+                        setRowError(row.id, 'odoStartImg', 'Photo required');
                         return false;
                     }
-                    if (isNaN(parseFloat(odoStart)) || isNaN(parseFloat(odoEnd))) {
-                        showToast(`Item #${rowNum}: Odometer readings must be numeric.`, "error");
+                    if (odoEnd && !row.details.odoEndImg) {
+                        showToast(`Item #${rowNum}: End Odometer photo is required since reading is entered.`, "error");
+                        setRowError(row.id, 'odoEndImg', 'Photo required');
                         return false;
                     }
-                    if (parseFloat(odoEnd) <= parseFloat(odoStart)) {
-                        showToast(`Item #${rowNum}: End Odometer should be greater than Start Odometer.`, "error");
+
+                    // Value validation
+                    if (odoStart && isNaN(parseFloat(odoStart))) {
+                        showToast(`Item #${rowNum}: Start Odometer must be numeric.`, "error");
                         return false;
                     }
-                    // require photos for both start and end readings
-                    if (!row.details.odoStartImg || !row.details.odoEndImg) {
-                        showToast(`Item #${rowNum}: Please capture both start and end odometer photos.`, "error");
-                        if (!row.details.odoStartImg) setRowError(row.id, 'odoStartImg', 'Start odometer photo required.');
-                        if (!row.details.odoEndImg) setRowError(row.id, 'odoEndImg', 'End odometer photo required.');
+                    if (odoEnd && isNaN(parseFloat(odoEnd))) {
+                        showToast(`Item #${rowNum}: End Odometer must be numeric.`, "error");
                         return false;
                     }
-                } else if (['Self Drive Rental', 'Own Bike'].includes(subType)) {
+
+                    // Comparison only if both are present
                     if (odoStart && odoEnd && parseFloat(odoEnd) <= parseFloat(odoStart)) {
-                        showToast(`Item #${rowNum}: ODO End must be greater than ODO Start.`, "error");
+                        showToast(`Item #${rowNum}: End Odometer must be greater than Start Odometer.`, "error");
+                        setRowError(row.id, 'odoEnd', 'Must be > Start');
                         return false;
                     }
                 }

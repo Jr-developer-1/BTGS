@@ -146,22 +146,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
         final rawStatus = t.status.trim().toLowerCase();
         final status = rawStatus.replaceAll(' ', '').replaceAll('-', '');
 
-        // PERMANENT EXCLUSION of pre-approval/pending states as per user request
-        final List<String> hideStates = [
-          'pending',
-          'submitted',
-          'forwarded',
-          'draft',
-          'underprocess',
-          'inprogress',
-          'ongoing',
-          'rejected',
-          'validated',
-        ];
-        bool isHidden =
-            hideStates.contains(status) || status.contains('pending');
-
-        if (isHidden) return false;
+        // Only hide if the status is exactly 'pending' as requested by the user
+        if (status == 'pending') return false;
 
         final filterLabel = _filter.trim().toLowerCase();
         final filterClean = filterLabel.replaceAll(' ', '').replaceAll('-', '');
@@ -193,8 +179,11 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       _visibleTrips.sort((a, b) {
         int getPriority(String status) {
           final s = status.toLowerCase();
-          if (['approved', 'completed'].contains(s)) return 1;
-          if (['settled', 'paid', 'transferred', 'completed & settled'].any((term) => s.contains(term))) return 3;
+          // Priority 1: Actionable / Pending Approval
+          if (s.contains('pending') || s == 'approved' || s == 'manager approved' || s == 'hr approved') return 1;
+          // Priority 3: Finalized / Settled
+          if (['settled', 'paid', 'completed', 'transferred', 'completed & settled'].any((term) => s.contains(term))) return 3;
+          // Priority 2: Intermediate states (Under Process, etc.)
           return 2;
         }
 
@@ -667,7 +656,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               ),
                 ],
               ),
-              if (t.status.toLowerCase() == 'settled')
+              if (['settled', 'paid', 'completed', 'transferred'].contains(t.status.toLowerCase()))
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
