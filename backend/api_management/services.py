@@ -1,5 +1,7 @@
 import requests
 import time
+import threading
+from django.core.cache import cache
 from .models import SystemConfig
 from .utils import decrypt_key
 from core.models import User, Role
@@ -149,14 +151,16 @@ def _enrich_employee_locations_from_db(transformed_items):
                         'country': global_geo.get('country') or "India"
                     }
 
-def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_override=None, fetch_all_pages=False, page_size=20):
+def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_override=None, fetch_all_pages=False, page_size=20, force_fresh=False):
     """
     Fetches employee data with direct pagination and search forwarding.
     Supports a custom page_size by fetching multiple pages from external API if needed.
     """
     # Early Cache check for full downloads (massive performance boost & timeout avoidance)
-    if fetch_all_pages and not employee_id_filter and not search:
+    if fetch_all_pages and not employee_id_filter and not search and not force_fresh:
         now = time.time()
+        
+        # 1. Check per-worker in-memory global cache first
         cached = GLOBAL_EMPLOYEE_CACHE
         if now - cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and cached['data']:
             data_list = cached['data']
@@ -165,6 +169,18 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 "next": None,
                 "previous": None,
                 "results": data_list
+            }
+            
+        # 2. Fallback to persistent Django cache framework
+        persistent_data = cache.get('GLOBAL_EMPLOYEE_DATA')
+        if persistent_data:
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
+            GLOBAL_EMPLOYEE_CACHE['data'] = persistent_data
+            return {
+                "count": len(persistent_data),
+                "next": None,
+                "previous": None,
+                "results": persistent_data
             }
 
     try:
@@ -495,8 +511,13 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
 
         # Update Global Cache if we just fetched everything fresh
         if fetch_all_pages and not employee_id_filter and not search:
-            GLOBAL_EMPLOYEE_CACHE['timestamp'] = time.time()
+            now_time = time.time()
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = now_time
             GLOBAL_EMPLOYEE_CACHE['data'] = transformed_results
+            
+            # Also write to persistent cache for cross-worker re-use
+            cache.set('GLOBAL_EMPLOYEE_DATA', transformed_results, timeout=86400)
+            cache.set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now_time, timeout=86400)
 
 
         return {
@@ -511,29 +532,71 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
     except Exception as e:
         return {"error": f"Data Transformation Error: {str(e)}"}
 
+def _bg_refresh_global_employee_cache():
+    """Safely refreshes global employee cache in background thread to guarantee no block."""
+    lock_key = 'GLOBAL_EMPLOYEE_DATA_REFRESH_LOCK'
+    try:
+        from django.db import connection
+        connection.close()
+        
+        resp = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
+        if resp and not resp.get('error') and "results" in resp:
+            data = resp.get('results', [])
+            now = time.time()
+            cache.set('GLOBAL_EMPLOYEE_DATA', data, timeout=86400)
+            cache.set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now, timeout=86400)
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = now
+            GLOBAL_EMPLOYEE_CACHE['data'] = data
+    except Exception as e:
+        print(f"Background global cache refresh failed: {e}")
+    finally:
+        cache.delete(lock_key)
+
 def get_manager_reports_locations(manager_code):
     """
     Returns unique office locations of employees who report directly to the given manager.
-    Uses a global cache to avoid fetching thousands of records on every call.
+    Optimized with Stale-While-Revalidate and Persistent Cache for INSTANT template downloads.
     """
     import time
     now = time.time()
     
-    # Check global cache first
+    # 1. Resolve cache
+    all_emps_results = None
     cached = GLOBAL_EMPLOYEE_CACHE
     if now - cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and cached['data']:
         all_emps_results = cached['data']
     else:
-        # Fetch fresh data (summary version is faster)
-        # Note: fetch_all_pages=True iterates through all results
-        response_data = fetch_employee_data(fetch_all_pages=True)
-        if "error" in response_data:
-            return []
-        
-        all_emps_results = response_data.get('results', [])
-        # Update cache
-        GLOBAL_EMPLOYEE_CACHE['timestamp'] = now
-        GLOBAL_EMPLOYEE_CACHE['data'] = all_emps_results
+        persistent_data = cache.get('GLOBAL_EMPLOYEE_DATA')
+        if persistent_data:
+            cached_ts = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = cached_ts
+            GLOBAL_EMPLOYEE_CACHE['data'] = persistent_data
+            all_emps_results = persistent_data
+
+    # 2. Trigger background refresh if empty or stale (older than 2 hours)
+    cached_ts = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or 0
+    is_expired = (now - cached_ts > 7200)
+    is_empty = (all_emps_results is None)
+    
+    if is_empty or is_expired:
+        lock_key = 'GLOBAL_EMPLOYEE_DATA_REFRESH_LOCK'
+        # Set lock to prevent concurrent background downloads
+        if cache.add(lock_key, '1', timeout=600):
+            t = threading.Thread(target=_bg_refresh_global_employee_cache)
+            t.daemon = True
+            t.start()
+
+    # 3. Fast Fallback for complete Cache Miss (so first run does NOT hang)
+    if not all_emps_results:
+        try:
+            from travel_masters.models import Location
+            # Return popular configured Mandals/Districts instantly
+            db_locs = list(Location.objects.filter(location_type__in=['District', 'Mandal']).values_list('name', flat=True).order_by('name')[:100])
+            if db_locs:
+                return sorted(list(set([str(l).upper().strip() for l in db_locs if l])))
+        except Exception:
+            pass
+        return ["HEAD OFFICE", "FIELD OFFICE", "CLIENT SITE"]
 
     # 1. Resolve manager's internal employee ID from the manager_code
     manager_id = None
