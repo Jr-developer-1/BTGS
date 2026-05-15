@@ -7,7 +7,7 @@ from .models import (
     StayTypeMaster, RoomTypeMaster, StayBookingTypeMaster, StayBookingSourceMaster,
     MealCategoryMaster, MealTypeMaster, MealSourceMaster, MealProviderMaster,
     IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking,
-    HistoricalTripStop, FinanceWorkflowStep
+    HistoricalTripStop, FinanceWorkflowStep, HRPositionConfig, HRIntimation
 )
 
 class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
@@ -16,7 +16,23 @@ class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FinanceWorkflowStep
-        fields = ['id', 'user', 'user_name', 'user_emp_id', 'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active']
+        fields = ['id', 'user', 'user_name', 'user_emp_id', 'position_id', 'position_name', 'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active']
+
+class HRPositionConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HRPositionConfig
+        fields = ['id', 'position_id', 'position_name', 'department_name', 'is_active']
+
+class HRIntimationSerializer(serializers.ModelSerializer):
+    hr_user_name = serializers.ReadOnlyField(source='hr_user.name')
+    trip_id = serializers.ReadOnlyField(source='trip.trip_id')
+    claim_id = serializers.ReadOnlyField(source='claim.id')
+    advance_id = serializers.ReadOnlyField(source='advance.id')
+
+    class Meta:
+        model = HRIntimation
+        fields = ['id', 'trip', 'trip_id', 'claim', 'claim_id', 'advance', 'advance_id', 'hr_user', 'hr_user_name', 'hr_position', 'is_read', 'read_at', 'created_at']
+
 from api_management.utils import encrypt_key, decrypt_key
 
 # --- MASTER SERIALIZERS ---

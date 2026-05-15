@@ -113,13 +113,32 @@ const Profile = () => {
             })()
         },
         office: {
-            name: profileData.office?.name || '',
-            level: profileData.office?.level || '',
-            geo_location: profileData.office?.geo_location || {
-                district: '',
-                state: '',
-                country: ''
-            }
+            name: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos && activePos.office_name) return activePos.office_name;
+                }
+                return profileData.office?.name || '';
+            })(),
+            level: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    if (activePos && activePos.office_level) return activePos.office_level;
+                }
+                return profileData.office?.level || '';
+            })(),
+            geo_location: (() => {
+                if (user?.active_position_id && profileData.positions_details) {
+                    const activePos = profileData.positions_details.find(p => String(p.id) === String(user.active_position_id));
+                    // Consume accurate database-enriched geographical District from active position
+                    if (activePos && activePos.geo_location) return activePos.geo_location;
+                }
+                return profileData.office?.geo_location || {
+                    district: '',
+                    state: '',
+                    country: ''
+                };
+            })()
         }
     } : {
         employee: {

@@ -183,8 +183,11 @@ export default function AdminMasterManagement() {
             setIsConfirmOpen(false);
             fetchData();
         } catch (error) {
-            showToast("Deletion failed", "error");
+            const errorData = error.response?.data;
+            const errorMsg = errorData?.detail || errorData?.error || "Deletion failed";
+            showToast(errorMsg, "error");
         }
+
     };
 
     const handleRestore = async (id) => {

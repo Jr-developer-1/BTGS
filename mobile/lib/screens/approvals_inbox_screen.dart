@@ -290,7 +290,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         },
       };
 
-      if (id.startsWith('BATCH-')) {
+      if (id.startsWith('BATCH-') && action.toLowerCase() != 'markread') {
         final batchId = id.replaceAll('BATCH-', '');
         await _tripService.handleBulkBatchAction(
           batchId,
@@ -318,6 +318,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           break;
         case 'pay':
           verb = 'Paid';
+          break;
+        case 'markread':
+          verb = 'Marked as Read';
           break;
         default:
           verb = '${action}ed';
@@ -1802,29 +1805,27 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
                   // Action Buttons
                   if (_activeTab != 'history')
-                    Row(
-                      children: [
-                        Expanded(
+                    if (task['can_mark_read'] == true || task['is_intimation'] == true)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: SizedBox(
+                          width: double.infinity,
                           child: ElevatedButton.icon(
                             onPressed: () =>
-                                _handleAction(task['id'], 'Approve'),
+                                _handleAction(task['id'], 'MarkRead'),
                             icon: const Icon(
-                              Icons.check_circle_rounded,
+                              Icons.mark_email_read_rounded,
                               size: 20,
                             ),
                             label: Text(
-                              canEdit
-                                  ? 'Verify & Approve (₹$currentExecAmount)'
-                                  : (isFinanceExec || isFinanceHead)
-                                      ? 'Authorize Payment (₹$currentExecAmount)'
-                                      : 'Approve All',
+                              'Mark as Read',
                               style: GoogleFonts.plusJakartaSans(
                                 fontWeight: FontWeight.w900,
-                                fontSize: 13,
+                                fontSize: 14,
                               ),
                             ),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF10B981),
+                              backgroundColor: const Color(0xFFA9052E),
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
@@ -1834,31 +1835,65 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () =>
-                                _handleAction(task['id'], 'Reject'),
-                            icon: const Icon(Icons.cancel_rounded, size: 20),
-                            label: Text(
-                              'Reject All',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 13,
+                      )
+                    else
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: () =>
+                                  _handleAction(task['id'], 'Approve'),
+                              icon: const Icon(
+                                Icons.check_circle_rounded,
+                                size: 20,
                               ),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFEF4444),
-                              side: const BorderSide(color: Color(0xFFFEE2E2)),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
+                              label: Text(
+                                canEdit
+                                    ? 'Verify & Approve (₹$currentExecAmount)'
+                                    : (isFinanceExec || isFinanceHead)
+                                        ? 'Authorize Payment (₹$currentExecAmount)'
+                                        : 'Approve All',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                elevation: 0,
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () =>
+                                  _handleAction(task['id'], 'Reject'),
+                              icon: const Icon(Icons.cancel_rounded, size: 20),
+                              label: Text(
+                                'Reject All',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFEF4444),
+                                side: const BorderSide(color: Color(0xFFFEE2E2)),
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                 ],
               ),
             ),
@@ -2223,7 +2258,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               rowStatus != 'Approved' &&
               !(task['type']?.toString() ?? '').toLowerCase().contains(
                 'claim',
-              )) ...[
+              ) &&
+              !(task['can_mark_read'] == true || task['is_intimation'] == true)) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -2675,10 +2711,14 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFFBEB),
+                        color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                            ? const Color(0xFFFEF2F2)
+                            : const Color(0xFFFFFBEB),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: const Color(0xFFF59E0B),
+                          color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                              ? const Color(0xFFFCA5A5)
+                              : const Color(0xFFF59E0B),
                           width: 1.2,
                         ),
                       ),
@@ -2687,18 +2727,26 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                         children: [
                           Row(
                             children: [
-                              const Icon(
-                                Icons.warning_amber_rounded,
+                              Icon(
+                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? Icons.remove_circle_outline_rounded
+                                    : Icons.warning_amber_rounded,
                                 size: 13,
-                                color: Color(0xFFF59E0B),
+                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? const Color(0xFFEF4444)
+                                    : const Color(0xFFF59E0B),
                               ),
                               const SizedBox(width: 5),
                               Text(
-                                'ROUTE DEVIATION',
+                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? 'NOT VISITED'
+                                    : 'ROUTE DEVIATION',
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 9,
                                   fontWeight: FontWeight.w900,
-                                  color: const Color(0xFF92400E),
+                                  color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                      ? const Color(0xFF991B1B)
+                                      : const Color(0xFF92400E),
                                   letterSpacing: 0.5,
                                 ),
                               ),
@@ -2827,7 +2875,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: const Color(0xFF92400E),
+                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? const Color(0xFF991B1B)
+                                    : const Color(0xFF92400E),
                               ),
                             ),
                           ],
@@ -4021,6 +4071,47 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       return _buildPayoutController();
     }
 
+    if (widget.task['can_mark_read'] == true || widget.task['is_intimation'] == true) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 20,
+              offset: const Offset(0, -4),
+            ),
+          ],
+          border: const Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: () => _triggerAction('MarkRead'),
+            icon: const Icon(Icons.mark_email_read_rounded, size: 20),
+            label: Text(
+              'Mark as Read',
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                letterSpacing: 0.5,
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFA9052E),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              elevation: 8,
+              shadowColor: const Color(0xFFA9052E).withOpacity(0.4),
+            ),
+          ),
+        ),
+      );
+    }
+
     String rejectLabel = isFinanceExec ? 'Return to HR' : 'Reject';
     String approveLabel;
 
@@ -4543,7 +4634,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               rowStatus != 'Rejected' &&
               !(widget.task['type']?.toString() ?? '').toLowerCase().contains(
                 'claim',
-              )) ...[
+              ) &&
+              !(widget.task['can_mark_read'] == true || widget.task['is_intimation'] == true)) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -5105,6 +5197,186 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     _miniImageThumbnail(
                       exp['receipt_image'].toString(),
                       "Receipt",
+                    ),
+                  ],
+                  // ── PLANNED vs ACTUAL DEVIATION ─────────────────────────
+                  if (exp['is_deviated'] == true) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                            ? const Color(0xFFFEF2F2)
+                            : const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                              ? const Color(0xFFFCA5A5)
+                              : const Color(0xFFF59E0B),
+                          width: 1.2,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? Icons.remove_circle_outline_rounded
+                                    : Icons.warning_amber_rounded,
+                                size: 13,
+                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? const Color(0xFFEF4444)
+                                    : const Color(0xFFF59E0B),
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? 'NOT VISITED'
+                                    : 'ROUTE DEVIATION',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                      ? const Color(0xFF991B1B)
+                                      : const Color(0xFF92400E),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // Planned row
+                          if ((exp['planned_origin']?.toString() ?? '')
+                                  .isNotEmpty ||
+                              (exp['planned_destination']?.toString() ?? '')
+                                  .isNotEmpty) ...[
+                            Text(
+                              'PLANNED',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF94A3B8),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      exp['planned_origin']?.toString() ?? '-',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(horizontal: 6),
+                                  child: Icon(
+                                    Icons.arrow_forward_rounded,
+                                    size: 12,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 5,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE2E8F0),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      exp['planned_destination']?.toString() ??
+                                          '-',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          // Actual row
+                          if ((exp['deviation_target']?.toString() ?? '')
+                              .isNotEmpty) ...[
+                            Text(
+                              'ACTUAL WENT',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF0D9488),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFCCFBF1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                exp['deviation_target']?.toString() ?? '-',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF0F766E),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          // Reason
+                          if ((exp['deviation_reason']?.toString() ?? '')
+                              .isNotEmpty) ...[
+                            Text(
+                              'REASON',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 8,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF94A3B8),
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              exp['deviation_reason']?.toString() ?? '',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                    ? const Color(0xFF991B1B)
+                                    : const Color(0xFF92400E),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
                   () {

@@ -125,8 +125,10 @@ const FuelMaster = () => {
             showToast("Rate deleted successfully", "success");
             fetchData();
         } catch (error) {
-            showToast("Deletion failed", "error");
+            const errorMsg = error.response?.data?.detail || error.response?.data?.error || "Deletion failed";
+            showToast(errorMsg, "error");
         }
+
     };
 
     const filteredRates = rates.filter(r =>

@@ -29,7 +29,7 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
     try:
         url = f"{api_url.rstrip('/')}/{hr_id_str}/"
         url = url.replace('//', '/').replace(':/', '://')
-        resp = requests.get(url, headers=headers, timeout=1.0)
+        resp = requests.get(url, headers=headers, timeout=5.0)
         if resp.status_code == 200:
             data = resp.json() or {}
             emp_obj = data.get('employee', {})
@@ -54,21 +54,33 @@ def resolve_hr_id_to_code(hr_id, api_url, headers):
     code, _ = resolve_hr_id_to_info(hr_id, api_url, headers)
     return code
 
-def get_dynamic_employee_data(employee_code):
+def get_dynamic_employee_data(employee_code, force_fresh=False):
     """
-    Fetches employee details in real-time. Checks local cache first.
+    Fetches employee details in real-time. Checks local caches first unless force_fresh=True.
     """
     import time
     now = time.time()
     
-    # Check cache
-    if employee_code in CACHE_EMPLOYEE_DATA:
+    # 1. Check per-employee cache (Fastest)
+    if not force_fresh and employee_code in CACHE_EMPLOYEE_DATA:
         entry = CACHE_EMPLOYEE_DATA[employee_code]
         if now - entry['timestamp'] < CACHE_TIMEOUT:
             return entry['data']
+
+    # 2. Check global employee cache (Second Fastest - In Memory)
+    g_cached = GLOBAL_EMPLOYEE_CACHE
+    if not force_fresh and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and g_cached['data']:
+        for item in g_cached['data']:
+            if item.get('employee', {}).get('employee_code') == employee_code:
+                # Cache it locally and return instantly
+                CACHE_EMPLOYEE_DATA[employee_code] = {
+                    'timestamp': now,
+                    'data': item
+                }
+                return item
             
-    # Fetch from API
-    data = fetch_employee_data(employee_id_filter=employee_code)
+    # 3. Fetch from API (Direct lookup with minimum page size to avoid parallel pagination overhead)
+    data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
     if data and not data.get('error') and data.get('results'):
         emp_data = data['results'][0]
         CACHE_EMPLOYEE_DATA[employee_code] = {
@@ -79,12 +91,84 @@ def get_dynamic_employee_data(employee_code):
         
     return None
 
+def _enrich_employee_locations_from_db(transformed_items):
+    """Enriches external API employee objects with official database-traced Districts"""
+    if not transformed_items:
+        return
+        
+    try:
+        from travel_masters.models import Location
+    except Exception:
+        return
+
+    def resolve_district_from_office_name(off_name):
+        if not off_name:
+            return None
+        words = off_name.strip().split()
+        target = words[-1].upper() if words else None
+        if target in ['OFFICE', 'OFFFICE'] and len(words) > 1:
+            target = words[-2].upper()
+            
+        if not target:
+            return None
+            
+        try:
+            candidates = Location.objects.filter(name__iexact=target)
+            for loc in candidates:
+                curr = loc
+                visited = set()
+                while curr and curr.external_id not in visited:
+                    visited.add(curr.external_id)
+                    if curr.location_type.lower() == 'district':
+                        return curr.name.upper()
+                    if not curr.parent_id:
+                        break
+                    curr = Location.objects.filter(external_id=curr.parent_id).first()
+        except Exception:
+            pass
+        return None
+
+    for item in transformed_items:
+        if not isinstance(item, dict):
+            continue
+            
+        global_geo = item.get('office', {}).get('geo_location') or {}
+        
+        # Enrich positions_details
+        pos_details = item.get('positions_details') or []
+        for pos in pos_details:
+            if not isinstance(pos, dict):
+                continue
+            off_name = pos.get('office_name')
+            if off_name:
+                res_district = resolve_district_from_office_name(off_name)
+                if res_district:
+                    pos['geo_location'] = {
+                        'district': res_district,
+                        'state': global_geo.get('state') or "ANDHRA PRADESH",
+                        'country': global_geo.get('country') or "India"
+                    }
+
 def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_override=None, fetch_all_pages=False, page_size=20):
     """
     Fetches employee data with direct pagination and search forwarding.
     Supports a custom page_size by fetching multiple pages from external API if needed.
     """
+    # Early Cache check for full downloads (massive performance boost & timeout avoidance)
+    if fetch_all_pages and not employee_id_filter and not search:
+        now = time.time()
+        cached = GLOBAL_EMPLOYEE_CACHE
+        if now - cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and cached['data']:
+            data_list = cached['data']
+            return {
+                "count": len(data_list),
+                "next": None,
+                "previous": None,
+                "results": data_list
+            }
+
     try:
+
         # Get configured API Key
         if api_key_override:
             api_key = api_key_override
@@ -170,9 +254,12 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 import math
                 # API seems hardcoded to 10 per page
                 target_page_count = math.ceil(count / 10)
-            elif int(page_size) > len(page_results):
+            elif int(page_size) > len(page_results) and count > len(page_results):
                 import math
-                target_page_count = math.ceil(int(page_size) / 10)
+                # Cap math at total records available (count) to prevent requesting empty extra pages
+                max_possible_records = min(int(count), int(page_size))
+                target_page_count = math.ceil(max_possible_records / 10)
+
 
             if target_page_count > 1:
                 from concurrent.futures import ThreadPoolExecutor
@@ -184,22 +271,33 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 
                 if pages_to_fetch:
                     def fetch_single_page(p_num):
-                        try:
-                            p_params = params.copy()
-                            p_params['page'] = p_num
-                            p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=20)
-                            if p_resp.status_code == 200:
-                                return p_resp.json().get('results', [])
-                        except Exception as e:
-                            print(f"Parallel fetch error on page {p_num}: {e}")
+                        retries = 3
+                        delay = 1.0
+                        for attempt in range(retries):
+                            try:
+                                p_params = params.copy()
+                                p_params['page'] = p_num
+                                # Use 30s timeout for reliable read buffered streaming
+                                p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=30)
+                                if p_resp.status_code == 200:
+                                    return p_resp.json().get('results', [])
+                                elif p_resp.status_code == 429:
+                                    time.sleep(delay * 2)
+                            except Exception as e:
+                                if attempt == retries - 1:
+                                    print(f"Parallel fetch error on page {p_num} after {retries} attempts: {e}")
+                                else:
+                                    time.sleep(delay)
+                                    delay *= 1.5
                         return []
 
-                    # Use up to 20 workers to avoid overwhelming the external API
-                    with ThreadPoolExecutor(max_workers=20) as executor:
+                    # Lower to 8 workers to prevent external system connection exhaustion
+                    with ThreadPoolExecutor(max_workers=8) as executor:
                         extra_results_list = list(executor.map(fetch_single_page, pages_to_fetch))
                     
                     for er in extra_results_list:
                         page_results.extend(er)
+
 
             # Slice to exact page_size in case we fetched too many (only if not fetching all)
             if not fetch_all_pages:
@@ -212,8 +310,13 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             print(f"External API Request failed (Timeout): {str(e)}")
             return {"error": error_msg, "status_code": 408}
         except requests.RequestException as e:
-            # If it's a 401/403, we should definitely notify the caller
-            status_code = getattr(e.response, 'status_code', 'Unknown')
+            # Safely obtain status code as an integer
+            status_code = 503  # Default to Service Unavailable
+            try:
+                if e.response is not None:
+                    status_code = int(getattr(e.response, 'status_code', 503))
+            except:
+                pass
             
             # CRITICAL FIX: Map external 401/403 to 503 so frontend doesn't log the user out
             if status_code in [401, 403]:
@@ -224,6 +327,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 
             print(f"External API Request failed (Status {status_code}): {str(e)}")
             return {"error": error_msg, "status_code": status_code}
+
 
         transformed_results = []
         for item in all_results:
@@ -362,10 +466,13 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                     "phone": emp_info.get("phone") or "",
                 },
                 "position": {
+                    "id": pos_info.get("id"),
+                    "code": pos_info.get("code"),
                     "name": pos_info.get("name"),
                     "role_name": pos_info.get("role_name"),
                     "department": pos_info.get("department_name") or pos_info.get("department"),
                     "section": pos_info.get("section_name") or pos_info.get("section"),
+
                     "reporting_to": pos_info.get("reporting_to", []),
                     "level_rank": pos_info.get("level_rank"),
                     "level_name": pos_info.get("level_name") or (f"Level {pos_info.get('level_rank')}" if pos_info.get("level_rank") else None)
@@ -378,10 +485,19 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                     "geo_location": off_info.get("geo_location") or item.get("location_details") or {}
                 }
             })
+            
+        # Globally enrich output objects with authoritative local DB Districts
+        _enrich_employee_locations_from_db(transformed_results)
 
         count = total_count
         if employee_id_filter:
             count = len(transformed_results)
+
+        # Update Global Cache if we just fetched everything fresh
+        if fetch_all_pages and not employee_id_filter and not search:
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = time.time()
+            GLOBAL_EMPLOYEE_CACHE['data'] = transformed_results
+
 
         return {
             "count": count,

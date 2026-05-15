@@ -7,6 +7,160 @@ import {
     ChevronsLeft, ChevronsRight, Download, Calendar, RefreshCcw, Loader2, Clock
 } from 'lucide-react';
 
+const getActionBadgeStyle = (action) => {
+    const normalized = (action || '').toUpperCase();
+    let bg = '#f1f5f9';
+    let color = '#475569';
+    let border = '#cbd5e1';
+
+    switch (normalized) {
+        case 'LOGIN':
+            bg = '#ecfdf5'; color = '#065f46'; border = '#a7f3d0';
+            break;
+        case 'LOGOUT':
+            bg = '#f8fafc'; color = '#64748b'; border = '#e2e8f0';
+            break;
+        case 'CREATE':
+            bg = '#f0fdfa'; color = '#0f766e'; border = '#99f6e4';
+            break;
+        case 'UPDATE':
+            bg = '#eef2ff'; color = '#3730a3'; border = '#c7d2fe';
+            break;
+        case 'DELETE':
+        case 'HARD_DELETE':
+        case 'REJECT':
+        case 'LOGIN_FAILED':
+            bg = '#fef2f2'; color = '#991b1b'; border = '#fecaca';
+            break;
+        case 'APPROVE':
+            bg = '#ecfeff'; color = '#0e7490'; border = '#a5f3fc';
+            break;
+        case 'PAY':
+        case 'TRANSFER':
+            bg = '#faf5ff'; color = '#6b21a8'; border = '#e9d5ff';
+            break;
+        case 'SUBMIT':
+            bg = '#fffbeb'; color = '#b45309'; border = '#fde68a';
+            break;
+        case 'VIEW':
+            bg = '#eff6ff'; color = '#1d4ed8'; border = '#bfdbfe';
+            break;
+    }
+    
+    return {
+        background: bg,
+        color: color,
+        border: `1px solid ${border}`,
+        padding: '4px 12px',
+        borderRadius: '8px',
+        fontSize: '0.7rem',
+        fontWeight: 800,
+        display: 'inline-flex',
+        alignItems: 'center',
+        letterSpacing: '0.03em',
+        lineHeight: '1.2'
+    };
+};
+
+const renderActivityDetails = (act) => {
+    const details = act.details;
+    const action = (act.action || '').toUpperCase();
+
+    if (!details || typeof details !== 'object') {
+        return <div className="text-muted" style={{ fontSize: '0.8rem', marginTop: '4px' }}>{act.object_repr}</div>;
+    }
+
+    if (['LOGIN', 'LOGOUT', 'PAGE_ACCESS', 'APPROVE', 'REJECT', 'PAY', 'TRANSFER'].includes(action)) {
+        let note = details.reason || details.remarks || details.note || '';
+        return (
+            <div style={{ marginTop: '4px' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>{act.object_repr}</div>
+                {note && <div style={{ fontSize: '0.75rem', color: '#d97706', marginTop: '2px', fontStyle: 'italic' }}>Note: {note}</div>}
+            </div>
+        );
+    }
+
+    if (action === 'UPDATE') {
+        const updates = Object.entries(details).filter(([k]) => k !== 'id' && k !== 'updated_at');
+        if (updates.length === 0) {
+            return <div className="text-muted" style={{ fontSize: '0.8rem', marginTop: '4px' }}>{act.object_repr} (No field changes recorded)</div>;
+        }
+        return (
+            <div style={{ marginTop: '4px' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>{act.object_repr}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {updates.map(([key, change]) => {
+                        const oldVal = change && typeof change === 'object' ? String(change.old ?? '') : '';
+                        const newVal = change && typeof change === 'object' ? String(change.new ?? '') : '';
+                        
+                        if (key.includes('password') || oldVal.length > 150 || newVal.length > 150) {
+                            return (
+                                <div key={key} style={{ fontSize: '0.7rem', color: '#4f46e5', fontFamily: 'monospace', fontWeight: 600 }}>
+                                    Modified {key}
+                                </div>
+                            );
+                        }
+                        
+                        return (
+                            <div key={key} style={{
+                                display: 'inline-flex',
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '0.75rem',
+                                fontFamily: 'monospace',
+                                background: '#f5f3ff',
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                border: '1px solid #ddd6fe',
+                                width: 'fit-content',
+                                maxWidth: '100%'
+                            }}>
+                                <span style={{ fontWeight: 700, color: '#4338ca' }}>{key}:</span>
+                                <span style={{ textDecoration: 'line-through', color: '#94a3b8', background: '#f1f5f9', padding: '0 4px', borderRadius: '4px', wordBreak: 'break-all' }}>{oldVal || '(empty)'}</span>
+                                <span style={{ fontWeight: 800, color: '#6366f1' }}>&rarr;</span>
+                                <span style={{ fontWeight: 700, color: '#047857', background: '#ecfdf5', padding: '0 4px', borderRadius: '4px', wordBreak: 'break-all' }}>{newVal || '(empty)'}</span>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
+    if (action === 'CREATE') {
+        const keys = Object.entries(details)
+            .filter(([k, v]) => v !== null && v !== '' && k !== 'id' && k !== 'created_at' && k !== 'updated_at')
+            .map(([k]) => k);
+            
+        return (
+            <div style={{ marginTop: '4px' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>{act.object_repr}</div>
+                {keys.length > 0 && (
+                    <div style={{ 
+                        fontSize: '0.7rem', 
+                        color: '#64748b', 
+                        marginTop: '6px', 
+                        background: '#f8fafc', 
+                        padding: '6px 10px', 
+                        borderRadius: '6px', 
+                        border: '1px solid #e2e8f0',
+                        lineHeight: '1.4'
+                    }}>
+                        <span style={{ fontWeight: 700, color: '#475569' }}>Populated fields:</span> {keys.join(', ')}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ marginTop: '4px' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#334155' }}>{act.object_repr}</div>
+        </div>
+    );
+};
+
 const LoginHistory = () => {
     const { user } = useAuth();
     const [logs, setLogs] = useState([]);
@@ -28,8 +182,11 @@ const LoginHistory = () => {
     });
 
     useEffect(() => {
-        fetchLogs(1);
-    }, [filters]);
+        const timer = setTimeout(() => {
+            fetchLogs(1);
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [filters.search, filters.startDate, filters.endDate]);
 
     const fetchLogs = async (page = 1) => {
         setIsLoading(true);
@@ -348,44 +505,80 @@ const LoginHistory = () => {
                                     </tr>
                                     {expandedRow === log.id && (
                                         <tr>
-                                            <td colSpan="6" className="bg-gray-50 p-4">
-                                                <div className="pl-10">
-                                                    <h4 className="font-bold text-sm mb-2">Session Activity</h4>
+                                            <td colSpan="6" style={{ backgroundColor: '#f8fafc', padding: '20px 40px' }}>
+                                                <div style={{ 
+                                                    borderLeft: '4px solid #6366f1', 
+                                                    paddingLeft: '24px',
+                                                    display: 'flex', 
+                                                    flexDirection: 'column', 
+                                                    gap: '12px'
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <Clock size={16} style={{ color: '#4f46e5' }} />
+                                                        <h4 style={{ 
+                                                            margin: 0,
+                                                            fontSize: '0.9rem', 
+                                                            fontWeight: 800, 
+                                                            color: '#1e293b', 
+                                                            textTransform: 'uppercase', 
+                                                            letterSpacing: '0.05em' 
+                                                        }}>Session Activity Timeline</h4>
+                                                    </div>
+                                                    
                                                     {loadingActivities[log.id] ? (
-                                                        <div className="flex items-center gap-2 text-muted py-4">
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748b', padding: '16px 0', fontSize: '0.85rem' }}>
                                                             <Loader2 size={16} className="animate-spin" />
-                                                            <span>Loading activities...</span>
+                                                            <span>Assembling activity logs...</span>
                                                         </div>
                                                     ) : rowActivities[log.id] && rowActivities[log.id].length > 0 ? (
-                                                        <div className="max-h-60 overflow-y-auto border rounded bg-white">
-                                                            <table className="w-full text-sm">
-                                                                <thead className="bg-gray-100 sticky top-0">
-                                                                    <tr>
-                                                                        <th className="p-2 text-left">Time</th>
-                                                                        <th className="p-2 text-left">Action</th>
-                                                                        <th className="p-2 text-left">Details</th>
+                                                        <div style={{ 
+                                                            maxHeight: '280px', 
+                                                            overflowY: 'auto', 
+                                                            border: '1px solid #e2e8f0', 
+                                                            borderRadius: '12px', 
+                                                            backgroundColor: '#ffffff',
+                                                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.03)'
+                                                        }}>
+                                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                                                <thead style={{ backgroundColor: '#f1f5f9', position: 'sticky', top: 0, zIndex: 10 }}>
+                                                                    <tr style={{ borderBottom: '1px solid #e2e8f0' }}>
+                                                                        <th style={{ padding: '10px 16px', textAlign: 'left', color: '#475569', fontWeight: 700, width: '100px' }}>Timestamp</th>
+                                                                        <th style={{ padding: '10px 16px', textAlign: 'left', color: '#475569', fontWeight: 700, width: '120px' }}>Action</th>
+                                                                        <th style={{ padding: '10px 16px', textAlign: 'left', color: '#475569', fontWeight: 700 }}>Change Artifact & Context</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody>
                                                                     {rowActivities[log.id].map((act, idx) => (
-                                                                        <tr key={idx} className="border-b last:border-0 hover:bg-gray-50">
-                                                                            <td className="p-2 text-xs text-muted font-mono whitespace-nowrap">
+                                                                        <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                                            <td style={{ 
+                                                                                padding: '12px 16px', 
+                                                                                fontSize: '0.75rem', 
+                                                                                color: '#64748b', 
+                                                                                fontFamily: 'monospace', 
+                                                                                verticalAlign: 'top' 
+                                                                            }}>
                                                                                 {format(new Date(act.timestamp), 'HH:mm:ss')}
                                                                             </td>
-                                                                            <td className="p-2">
-                                                                                <span className={`px-2 py-0.5 rounded text-xs font-semibold ${act.action === 'VIEW' ? 'bg-blue-100 text-blue-800' :
-                                                                                    act.action === 'LOGIN' ? 'bg-green-100 text-green-800' :
-                                                                                        act.action === 'LOGOUT' ? 'bg-gray-100 text-gray-800' :
-                                                                                            'bg-yellow-100 text-yellow-800'
-                                                                                    }`}>
+                                                                            <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
+                                                                                <span style={getActionBadgeStyle(act.action)}>
                                                                                     {act.action}
                                                                                 </span>
                                                                             </td>
-                                                                            <td className="p-2">
-                                                                                <div className="font-medium text-gray-900">{act.model_name}</div>
-                                                                                <div className="text-xs text-muted truncate max-w-lg" title={act.object_repr}>
-                                                                                    {act.object_repr}
+                                                                            <td style={{ padding: '12px 16px', verticalAlign: 'top', maxWidth: '500px' }}>
+                                                                                <div style={{ 
+                                                                                    fontWeight: 800, 
+                                                                                    color: '#0f172a', 
+                                                                                    fontSize: '0.7rem', 
+                                                                                    textTransform: 'uppercase', 
+                                                                                    letterSpacing: '0.04em', 
+                                                                                    display: 'flex', 
+                                                                                    alignItems: 'center', 
+                                                                                    gap: '6px' 
+                                                                                }}>
+                                                                                    <span style={{ height: '6px', width: '6px', backgroundColor: '#6366f1', borderRadius: '50%' }}></span>
+                                                                                    {act.model_name}
                                                                                 </div>
+                                                                                {renderActivityDetails(act)}
                                                                             </td>
                                                                         </tr>
                                                                     ))}

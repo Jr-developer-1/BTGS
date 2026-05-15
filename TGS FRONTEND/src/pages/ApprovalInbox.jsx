@@ -266,7 +266,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             };
 
             await api.post('/api/approvals/', payload);
-            showToast(`Request ${action}ed successfully`, "success");
+            const friendlyAction = action === 'MarkRead' ? 'marked as read' : `${action}ed`;
+            showToast(`Request ${friendlyAction} successfully`, "success");
 
             // Clear inputs
             setPaymentMode('');
@@ -673,9 +674,12 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                             const devReason = exp.deviation_reason || parsedDetails.deviation_reason;
                                                             const actualFrom = parsedDetails.actualFrom || "";
                                                             const actualTo = parsedDetails.actualTo || "";
+                                                            const isNotVisited = parsedDetails.isNotVisited === true || parsedDetails.travelStatus === 'Cancelled' || (devReason && String(devReason).toLowerCase().includes('[cancelled/skip]'));
 
                                                             let routeText = "";
-                                                            if (isDeviated) {
+                                                            if (isNotVisited) {
+                                                                routeText = `[NOT VISITED] (Planned: ${plannedRoute})`;
+                                                            } else if (isDeviated) {
                                                                 routeText = `[DEVIATED] ${actualFrom || parsedDetails.origin || 'Start'} → ${actualTo || parsedDetails.destination || 'End'} (Planned: ${plannedRoute})`;
                                                             } else {
                                                                 routeText = plannedRoute;
@@ -717,6 +721,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                     const devReason = exp.deviation_reason || parsedDetails.deviation_reason;
                                                     const actualFrom = parsedDetails.actualFrom || "";
                                                     const actualTo = parsedDetails.actualTo || "";
+                                                    const isNotVisited = parsedDetails.isNotVisited === true || parsedDetails.travelStatus === 'Cancelled' || (devReason && String(devReason).toLowerCase().includes('[cancelled/skip]'));
 
                                                     return (
                                                         <React.Fragment key={exp.id || index}>
@@ -965,7 +970,29 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                 </div>
 
                                                                                 {/* Deviation Information Section */}
-                                                                                {isDeviated && (
+                                                                                {isNotVisited ? (
+                                                                                    <div className="exp-section" style={{ marginTop: '16px' }}>
+                                                                                        <h5 className="exp-section-header" style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                            <AlertTriangle size={14} /> Visit Cancelled
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white" style={{ borderLeft: '4px solid #ef4444', background: '#fffafb' }}>
+                                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                                                                                                    <span style={{ color: '#64748b', fontWeight: 600 }}>Planned Strategy:</span>
+                                                                                                    <span style={{ fontWeight: 600, color: '#475569' }}>{parsedDetails.plannedOrigin || parsedDetails.origin} → {parsedDetails.plannedDestination || parsedDetails.destination}</span>
+                                                                                                </div>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', background: '#fef2f2', padding: '10px', borderRadius: '8px', border: '1px solid #fee2e2' }}>
+                                                                                                    <span style={{ color: '#b91c1c', fontWeight: 700 }}>Execution Status:</span>
+                                                                                                    <span style={{ fontWeight: 800, color: '#b91c1c' }}>NOT VISITED</span>
+                                                                                                </div>
+                                                                                                <div style={{ fontSize: '0.8rem', padding: '0 4px', borderTop: '1px dashed #fee2e2', paddingTop: '8px' }}>
+                                                                                                    <span style={{ color: '#64748b', display: 'block', marginBottom: '2px' }}>Cancellation Reason:</span>
+                                                                                                    <p style={{ fontWeight: 700, color: '#b91c1c', fontStyle: 'italic' }}>"{parsedDetails.cancellationReason || String(devReason || '').replace(/\[Cancelled\/Skip\]\s*/i, '') || 'No specific reason provided'}"</p>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ) : (isDeviated && (
                                                                                     <div className="exp-section" style={{ marginTop: '16px' }}>
                                                                                         <h5 className="exp-section-header" style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                                                             <AlertTriangle size={14} /> Deviation Insight
@@ -993,7 +1020,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                             </div>
                                                                                         </div>
                                                                                     </div>
-                                                                                )}
+                                                                                ))}
 
                                                                                 {/* Incidental Breakdown Section */}
                                                                                 {incidentals.length > 0 && (
@@ -1130,14 +1157,32 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
                 {activeTab !== 'history' && (
                     <div className="detail-actions-container">
-                        <div className="detail-actions">
-                            <button className="action-btn reject" onClick={() => handleAction('Reject')}>
-                                <XCircle size={18} /> <span>Reject</span>
-                            </button>
-                            <button className="action-btn approve" onClick={() => handleAction('Approve')}>
-                                <CheckCircle size={18} /> <span>Approve</span>
-                            </button>
-                        </div>
+                        {task.is_intimation ? (
+                            <div className="detail-actions" style={{ justifyContent: 'center' }}>
+                                {task.can_mark_read ? (
+                                    <button 
+                                        className="action-btn approve" 
+                                        style={{ width: '100%', maxWidth: '300px', backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' }} 
+                                        onClick={() => handleAction('MarkRead')}
+                                    >
+                                        <CheckCircle size={18} /> <span>Mark as Read</span>
+                                    </button>
+                                ) : (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#059669', fontWeight: '700', background: '#d1fae5', padding: '12px 24px', borderRadius: '30px' }}>
+                                        <CheckCircle size={18} /> Acknowledged (Outbox)
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className="detail-actions">
+                                <button className="action-btn reject" onClick={() => handleAction('Reject')}>
+                                    <XCircle size={18} /> <span>Reject</span>
+                                </button>
+                                <button className="action-btn approve" onClick={() => handleAction('Approve')}>
+                                    <CheckCircle size={18} /> <span>Approve</span>
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
@@ -1279,18 +1324,47 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                 >
                                                                     {expandedBatch === (batch.db_id || batch.id) ? 'Hide Data' : 'View Data'}
                                                                 </button>
-                                                                <button
-                                                                    onClick={() => handleBatchAction(batch.db_id || batch.id, 'approve')}
-                                                                    style={{ padding: '8px 18px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
-                                                                >
-                                                                    ✓ Approve
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handleBatchAction(batch.db_id || batch.id, 'reject')}
-                                                                    style={{ padding: '8px 18px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
-                                                                >
-                                                                    ✕ Reject
-                                                                </button>
+                                                                {batch.is_intimation ? (
+                                                                    batch.can_mark_read ? (
+                                                                        <button
+                                                                            onClick={async () => {
+                                                                                try {
+                                                                                    await api.post('/api/approvals/', {
+                                                                                        id: batch.id,
+                                                                                        action: 'MarkRead'
+                                                                                    });
+                                                                                    showToast("Marked as read successfully", "success");
+                                                                                    fetchTasks(activeTab);
+                                                                                    fetchCounts();
+                                                                                } catch (err) {
+                                                                                    showToast("Failed to mark as read", "error");
+                                                                                }
+                                                                            }}
+                                                                            style={{ padding: '8px 18px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
+                                                                        >
+                                                                            ✓ Mark as Read
+                                                                        </button>
+                                                                    ) : (
+                                                                        <span style={{ color: '#059669', background: '#d1fae5', padding: '8px 16px', borderRadius: '6px', fontWeight: 700, fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center' }}>
+                                                                            ✓ Acknowledged
+                                                                        </span>
+                                                                    )
+                                                                ) : (
+                                                                    <React.Fragment>
+                                                                        <button
+                                                                            onClick={() => handleBatchAction(batch.db_id || batch.id, 'approve')}
+                                                                            style={{ padding: '8px 18px', background: '#10b981', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
+                                                                        >
+                                                                            ✓ Approve
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => handleBatchAction(batch.db_id || batch.id, 'reject')}
+                                                                            style={{ padding: '8px 18px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer' }}
+                                                                        >
+                                                                            ✕ Reject
+                                                                        </button>
+                                                                    </React.Fragment>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         {expandedBatch === (batch.db_id || batch.id) && (

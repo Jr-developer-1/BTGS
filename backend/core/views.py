@@ -23,6 +23,16 @@ from .pagination import StandardResultsSetPagination
 from django.db.models import Q
 from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
+
+def get_client_ip(request):
+    """Retrieve the genuine client IP address, safely resolving proxy hops."""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        # Take the very first IP in the comma-separated forwarded list (original client)
+        ip = x_forwarded_for.split(',')[0].strip()
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
 from .frs_util import get_face_encoding_from_image, compare_faces, base64_to_file
 
 def hash_password(password):
@@ -60,7 +70,7 @@ def login_view(request):
                     action='LOGIN_FAILED',
                     model_name='User',
                     object_repr=employee_id,
-                    ip_address=request.META.get('REMOTE_ADDR'),
+                    ip_address=get_client_ip(request),
                     details={'reason': 'Invalid password'}
                 )
             except: pass # Don't let audit logging crash the login failure response
@@ -84,7 +94,7 @@ def login_view(request):
         }
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
         
-        ip = request.META.get('REMOTE_ADDR')
+        ip = get_client_ip(request)
         user_agent = request.META.get('HTTP_USER_AGENT', '')
         
         Session.objects.create(
@@ -139,7 +149,7 @@ def login_view(request):
                 'email': getattr(user, 'email', ''),
                 'theme': getattr(user, 'theme', 'classic'),
                 'active_position_id': user.active_position_id,
-                'available_positions': user.get_available_positions()
+                'available_positions': user.get_available_positions(force_fresh=True)
             }
         })
         
@@ -372,7 +382,7 @@ def me_view(request):
             'email': getattr(user, 'email', ''),
             'theme': getattr(user, 'theme', 'classic'),
             'active_position_id': user.active_position_id,
-            'available_positions': user.get_available_positions()
+            'available_positions': user.get_available_positions(force_fresh=True)
         })
     except Exception as e:
         import traceback
@@ -424,8 +434,8 @@ def switch_position_view(request):
     if not position_id:
         return Response({'error': 'Position ID is required'}, status=status.HTTP_400_BAD_REQUEST)
         
-    # Verify if the user actually has this position
-    available = user.get_available_positions()
+    # Verify if the user actually has this position (bypass compressed cache)
+    available = user.get_available_positions(force_fresh=True)
     valid_ids = [str(p.get('id')) for p in available]
     
     if str(position_id) not in valid_ids:
@@ -550,7 +560,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['user', 'ip_address']
-    search_fields = ['user__employee_id', 'ip_address', 'user__name']
+    search_fields = ['user__employee_id', 'ip_address']
     ordering_fields = ['login_time', 'logout_time']
     ordering = ['-login_time']
 
@@ -568,13 +578,29 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         if not is_privileged:
             queryset = queryset.filter(user=user)
 
-        # Date filtering
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date:
-            queryset = queryset.filter(login_time__date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(login_time__date__lte=end_date)
+        # Robust Range-based Date filtering to bypass DB timezone limitations
+        from django.utils.dateparse import parse_date
+        from django.utils import timezone
+        import datetime
+
+        start_date_str = self.request.query_params.get('start_date')
+        end_date_str = self.request.query_params.get('end_date')
+
+        if start_date_str:
+            parsed_start = parse_date(start_date_str)
+            if parsed_start:
+                start_dt = datetime.datetime.combine(parsed_start, datetime.time.min)
+                if timezone.is_aware(timezone.now()):
+                    start_dt = timezone.make_aware(start_dt)
+                queryset = queryset.filter(login_time__gte=start_dt)
+
+        if end_date_str:
+            parsed_end = parse_date(end_date_str)
+            if parsed_end:
+                end_dt = datetime.datetime.combine(parsed_end, datetime.time.max)
+                if timezone.is_aware(timezone.now()):
+                    end_dt = timezone.make_aware(end_dt)
+                queryset = queryset.filter(login_time__lte=end_dt)
             
         return queryset
 
@@ -588,7 +614,9 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             user=login_history.user,
             timestamp__gte=login_history.login_time,
             timestamp__lte=end_time
-        ).exclude(action='PAGE_ACCESS').order_by('timestamp')
+        ).exclude(action='PAGE_ACCESS').exclude(
+            model_name__in=['APILog', 'DynamicSubmission', 'ChatSession', 'ChatMessage', 'APIKeyHistory', 'Session']
+        ).order_by('timestamp')
         
         serializer = AuditLogSerializer(activities, many=True)
         return Response(serializer.data)
@@ -683,6 +711,22 @@ class RoleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCustomAuthenticated]
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
+
+    def destroy(self, request, *args, **kwargs):
+        from django.db.models.deletion import ProtectedError
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError as e:
+            referencing_users = list(e.protected_objects)
+            user_names = [f"{u.name}" for u in referencing_users[:5]]
+            
+            message = f"Cannot delete this role because it is currently assigned to {len(referencing_users)} user(s)"
+            if user_names:
+                message += f" (including: {', '.join(user_names)})"
+            message += ". Please re-assign or remove these users first before deleting the role."
+            
+            return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(['POST'])
 @permission_classes([IsCustomAuthenticated])
@@ -798,7 +842,7 @@ def verify_face_view(request):
             action='FRS_MISMATCH',
             model_name='AttendanceFRS',
             object_repr=f'Mismatch for {user.employee_id}',
-            ip_address=request.META.get('REMOTE_ADDR'),
+            ip_address=get_client_ip(request),
             details={'distance': distance, 'location': address}
         )
         return Response({'match': False, 'message': 'Face Mismatch. Access Denied.'}, status=status.HTTP_403_FORBIDDEN)
@@ -874,6 +918,59 @@ def handle_photo_update_request_view(request):
 
     return Response({'error': 'Request not found'}, status=status.HTTP_404_NOT_FOUND)
 
+def _enrich_geo_locations_from_db(details):
+    """Smart helper to enrich external profile details with resolved District/State from DB"""
+    if not details:
+        return
+        
+    from travel_masters.models import Location
+    
+    def resolve_district_from_office_name(off_name):
+        if not off_name:
+            return None
+        # Strip and split; grab the last meaningful word
+        words = off_name.strip().split()
+        target = words[-1].upper() if words else None
+        # Skip stop-words like OFFICE
+        if target in ['OFFICE', 'OFFFICE'] and len(words) > 1:
+            target = words[-2].upper()
+            
+        if not target:
+            return None
+            
+        candidates = Location.objects.filter(name__iexact=target)
+        for loc in candidates:
+            curr = loc
+            visited = set()
+            while curr and curr.external_id not in visited:
+                visited.add(curr.external_id)
+                if curr.location_type.lower() == 'district':
+                    return curr.name.upper()
+                if not curr.parent_id:
+                    break
+                curr = Location.objects.filter(external_id=curr.parent_id).first()
+        return None
+
+    # 1. Extract global geo references for fallback
+    global_office = details.get('office') or {}
+    global_geo = global_office.get('geo_location') or {}
+
+    # 2. Enrich each position item inside positions_details
+    positions = details.get('positions_details') or []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+            
+        off_name = pos.get('office_name')
+        if off_name:
+            res_district = resolve_district_from_office_name(off_name)
+            if res_district:
+                pos['geo_location'] = {
+                    'district': res_district,
+                    'state': global_geo.get('state') or "ANDHRA PRADESH",
+                    'country': global_geo.get('country') or "India"
+                }
+
 @api_view(['GET'])
 @permission_classes([IsCustomAuthenticated])
 def profile_view(request):
@@ -895,6 +992,9 @@ def profile_view(request):
         ext_data = fetch_employee_data(employee_id_filter=user.employee_id)
         if ext_data.get('results') and len(ext_data['results']) > 0:
             details = ext_data['results'][0]
+            # Enrich details with accurate, database-resolved geographical Districts
+            _enrich_geo_locations_from_db(details)
+            
             # Merge external details into response
             data['external_profile'] = details
             # Flatten common fields for easier UI access
@@ -904,7 +1004,7 @@ def profile_view(request):
             # Ensure position data is present for switching
             data['role'] = user.role.name if user.role else 'Employee'
             data['active_position_id'] = user.active_position_id
-            data['available_positions'] = user.get_available_positions()
+            data['available_positions'] = user.get_available_positions(force_fresh=True)
     except Exception as e:
         print(f"Failed to fetch external profile data: {e}")
         data['external_profile'] = None
@@ -1175,7 +1275,7 @@ def update_theme_view(request):
         model_name='User',
         object_id=str(user.id),
         object_repr=str(user),
-        ip_address=request.META.get('REMOTE_ADDR'),
+        ip_address=get_client_ip(request),
         details={'new_theme': theme}
     )
     

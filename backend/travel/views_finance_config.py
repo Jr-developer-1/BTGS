@@ -2,8 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.db import models, transaction
-from .models import FinanceWorkflowStep
-from .serializers import FinanceWorkflowStepSerializer
+from .models import FinanceWorkflowStep, HRPositionConfig
+from .serializers import FinanceWorkflowStepSerializer, HRPositionConfigSerializer
 from core.models import User
 from core.permissions import IsCustomAuthenticated
 
@@ -36,10 +36,64 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
         
         return Response({"message": "Order updated successfully"})
 
+    @action(detail=False, methods=['get'], url_path='search-positions')
+    def search_positions(self, request):
+        """
+        Dynamic search to fetch all available positions across all employees (using the API cache)
+        """
+        query = request.query_params.get('q', '').lower()
+        from api_management.services import fetch_employee_data
+        
+        if query:
+            # Fetch only matching subset directly via external API search (lightning fast, 0.2s)
+            response_data = fetch_employee_data(search=query, page_size=100)
+        else:
+            # Default to local global cache only if query is empty
+            response_data = fetch_employee_data(fetch_all_pages=True)
+
+        results = []
+        seen_positions = set()
+        
+        if response_data and not response_data.get('error'):
+            all_emps = response_data.get('results', [])
+            for item in all_emps:
+                pos_list = []
+                if item.get('position'):
+                    pos_list.append(item['position'])
+                pos_details = item.get('positions_details') or []
+                pos_list.extend(pos_details)
+                
+                for pos in pos_list:
+                    p_raw_id = str(pos.get('id') or pos.get('position_id') or '')
+                    p_code = str(pos.get('code') or pos.get('position_code') or '').strip()
+                    
+                    # Prefer Position Code from API as the primary matching identifier
+                    p_id = p_code if p_code else p_raw_id
+                    p_name = (pos.get('name') or pos.get('position_name') or '').strip()
+                    p_dept = (pos.get('department_name') or pos.get('department') or '').strip()
+                    
+                    # Combine name & code for a richer descriptive visualization in dropdowns
+                    display_name = f"{p_name} ({p_code})" if p_code and p_name else (p_name or p_code)
+                    
+                    if p_id and p_name and p_id not in seen_positions:
+                        if not query or query in p_name.lower() or query in p_id.lower() or query in p_dept.lower() or query in p_code.lower():
+                            seen_positions.add(p_id)
+                            results.append({
+                                "id": p_id,              # Natively consumed by frontend
+                                "name": display_name,    # Natively consumed by frontend
+                                "position_id": p_id,
+                                "position_name": display_name,
+                                "position_code": p_code,
+                                "department": p_dept
+                            })
+                            
+        return Response(results[:30])
+
+
     @action(detail=False, methods=['get'], url_path='search-users')
     def search_users(self, request):
         """
-        Search users to add to the finance workflow.
+        Legacy: Search users to add to the finance workflow.
         """
         query = request.query_params.get('q', '')
         if not query:
@@ -91,5 +145,11 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
             serializer.save(sequence_order=max_order + 1)
         else:
             serializer.save()
+
+class HRPositionConfigViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsCustomAuthenticated]
+    queryset = HRPositionConfig.objects.all().order_by('position_name')
+    serializer_class = HRPositionConfigSerializer
+    pagination_class = None
 
 

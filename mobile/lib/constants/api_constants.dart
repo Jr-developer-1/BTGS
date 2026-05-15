@@ -8,7 +8,7 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  static const String baseUrl = 'http://10.2.1.16:4567';
+  static const String baseUrl = 'http://10.2.1.16:6789';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -124,7 +124,7 @@ class ApiConstants {
   };
 
   // Request timeout in milliseconds
-  static const int requestTimeout = 30000;
+  static const int requestTimeout = 90000;
 
   // System API Key (Matches backend AccessKey entries)
   static const String apiKey = 'MOBILE-APP-PROD-2025-V11';

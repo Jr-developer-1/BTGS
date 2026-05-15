@@ -260,6 +260,32 @@ const MyTrips = () => {
         }
     };
 
+    const getDisplayStatus = (backendStatus) => {
+        if (!backendStatus) return 'Pending';
+        const s = backendStatus.toLowerCase();
+        
+        // 1. Settled / Paid / Completed
+        if (['settled', 'completed', 'paid', 'transferred'].includes(s)) {
+            return 'Settled';
+        }
+        
+        // 2. Approved / Mid-lifecycle
+        if (['approved', 'claim submitted', 'manager approved', 'hr approved', 'under process', 'partially completed', 'forwarded'].includes(s)) {
+            return 'Approved';
+        }
+        
+        // 3. Pending Approval / Submitted
+        if (['pending', 'submitted', 'resubmitted', 'draft', 'pending_hr', 'pending_executive', 'pending_head', 'pending_final_release'].includes(s)) {
+            return 'Pending';
+        }
+        
+        // Fallbacks
+        if (s.includes('pending')) return 'Pending';
+        if (s.includes('reject')) return 'Rejected';
+        
+        return 'Approved'; // Default fallback to Approved
+    };
+
     useEffect(() => {
         const debounceTimer = setTimeout(() => {
             fetchTrips();
@@ -269,8 +295,9 @@ const MyTrips = () => {
     }, [searchTerm]);
 
     const filteredTrips = trips.filter(t => {
-        const s = (t.status || '').toLowerCase();
-        if (s === 'pending') return false;
+        // Exclude any trips that resolve to "Pending" display status
+        const displayStatus = getDisplayStatus(t.status);
+        if (displayStatus === 'Pending') return false;
 
         const matchesStatus = filter === 'All Status' || t.status === filter;
         const matchesType = typeFilter === 'All' ||
@@ -351,8 +378,8 @@ const MyTrips = () => {
                                 </div>
                             )}
                             <div className="card-top">
-                                <div className={`status-pill ${trip.status?.toLowerCase() || 'pending'}`}>
-                                    {trip.status}
+                                <div className={`status-pill ${getDisplayStatus(trip.status).toLowerCase()}`}>
+                                    {getDisplayStatus(trip.status)}
                                 </div>
                                 <span className="trip-card-id">{trip.id}</span>
                             </div>
@@ -495,8 +522,8 @@ const MyTrips = () => {
                                 <div className="details-info-grid">
                                     <div className="info-tile">
                                         <label>Current Status</label>
-                                        <div className={`status-tag ${(selectedTrip.status || 'pending').toLowerCase()}`}>
-                                            {selectedTrip.status || 'Pending'}
+                                        <div className={`status-tag ${getDisplayStatus(selectedTrip.status).toLowerCase()}`}>
+                                            {getDisplayStatus(selectedTrip.status)}
                                         </div>
                                     </div>
                                     <div className="info-tile">

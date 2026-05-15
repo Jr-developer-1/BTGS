@@ -156,33 +156,53 @@ class _ProfilePageState extends State<ProfilePage> {
         _userData?['email'] ??
         '';
 
+    // Resolve the currently active position
+    final activePositionId = _userData?['active_position_id']?.toString();
+    
+    Map<String, dynamic>? activePosition;
+    final List<dynamic> posDetails = _profileData?['positions_details'] ?? 
+                                     _userData?['external_profile']?['positions_details'] ?? 
+                                     [];
+    
+    if (activePositionId != null && activePositionId.isNotEmpty && posDetails.isNotEmpty) {
+      for (var pos in posDetails) {
+        if (pos is Map && pos['id']?.toString() == activePositionId) {
+          activePosition = Map<String, dynamic>.from(pos);
+          break;
+        }
+      }
+    }
+    
+    // Fallbacks for activePosition if not found in details
+    activePosition ??= (_profileData?['position'] is Map ? Map<String, dynamic>.from(_profileData!['position']) : null) ??
+                       (_userData?['external_profile']?['position'] is Map ? Map<String, dynamic>.from(_userData!['external_profile']!['position']) : null) ??
+                       (posDetails.isNotEmpty && posDetails[0] is Map ? Map<String, dynamic>.from(posDetails[0]) : null);
+
     final designation =
+        activePosition?['name'] ??
+        activePosition?['role_name'] ??
         _profileData?['role'] ??
-        _profileData?['position']?['name'] ??
-        _userData?['external_profile']?['position']?['name'] ??
         _userData?['designation'] ??
         _userData?['role'] ??
         '';
     final department =
+        activePosition?['department_name'] ??
+        activePosition?['department'] ??
         _profileData?['department'] ??
-        _profileData?['position']?['department'] ??
-        _userData?['external_profile']?['position']?['department'] ??
         _userData?['department'] ??
         '';
     final section =
+        activePosition?['section_name'] ??
+        activePosition?['section'] ??
         _profileData?['section'] ??
-        _profileData?['position']?['section'] ??
-        _userData?['external_profile']?['position']?['section'] ??
         '';
-    List<dynamic> managers =
-        _profileData?['positions_details']?[0]?['reporting_to'] ??
-        _profileData?['reporting_to'] ??
-        _profileData?['position']?['reporting_to'] ??
-        _userData?['external_profile']?['positions_details']?[0]?['reporting_to'] ??
-        _userData?['external_profile']?['reporting_to'] ??
-        _userData?['external_profile']?['position']?['reporting_to'] ??
-        [];
-
+    List<dynamic> managers = [];
+    if (activePosition?['reporting_to'] != null && activePosition?['reporting_to'] is List) {
+      managers = List<dynamic>.from(activePosition?['reporting_to']);
+    } else if (_profileData?['reporting_to'] != null && _profileData?['reporting_to'] is List) {
+      managers = List<dynamic>.from(_profileData?['reporting_to']);
+    }
+    
     if (managers.isEmpty) {
       if (_userData?['reporting_manager'] != null) {
         managers.add({'name': _userData!['reporting_manager'], 'role': 'Reporting Manager'});
@@ -196,11 +216,13 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     final projectName =
+        activePosition?['project_name'] ??
         _profileData?['project']?['name'] ??
         _userData?['external_profile']?['project']?['name'] ??
         '';
 
     String derivedProjectCode =
+        activePosition?['project_code'] ??
         _profileData?['project']?['code'] ??
         _userData?['external_profile']?['project']?['code'] ??
         '';
@@ -217,17 +239,21 @@ class _ProfilePageState extends State<ProfilePage> {
     final projectCode = derivedProjectCode;
 
     final officeName =
+        activePosition?['office_name'] ??
         _profileData?['office']?['name'] ??
         _userData?['external_profile']?['office']?['name'] ??
         '';
     final officeLevel =
+        activePosition?['office_level']?.toString() ??
         _profileData?['office']?['level']?.toString() ??
         _userData?['external_profile']?['office']?['level']?.toString() ??
         _userData?['office_level']?.toString() ??
         '';
+    final activePosGeo = activePosition?['geo_location'];
     final district =
-        _profileData?['office']?['geo_location']?['district'] ??
-        _userData?['external_profile']?['office']?['geo_location']?['district'] ??
+        activePosGeo?['district']?.toString() ??
+        _profileData?['office']?['geo_location']?['district']?.toString() ??
+        _userData?['external_profile']?['office']?['geo_location']?['district']?.toString() ??
         '';
     final state =
         _profileData?['office']?['geo_location']?['state'] ??

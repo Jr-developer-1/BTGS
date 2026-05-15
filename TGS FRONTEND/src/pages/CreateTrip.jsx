@@ -837,9 +837,9 @@ const CreateTrip = () => {
                         <button className="btn-secondary" onClick={() => navigate('/trips')}>
                             Go to My Trips
                         </button>
-                        <button className="btn-primary" onClick={() => navigate(`/${payload.consider_as_local ? 'travel-story' : 'trip-story'}/${encodeId(tripId)}`)}>
+                        {/* <button className="btn-primary" onClick={() => navigate(`/${payload.consider_as_local ? 'travel-story' : 'trip-story'}/${encodeId(tripId)}`)}>
                             View {payload.consider_as_local ? 'Travel Story' : 'Trip Story'}
-                        </button>
+                        </button> */}
                     </div>
                 )
             });

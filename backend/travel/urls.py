@@ -14,7 +14,7 @@ from .views import (
     IncidentalTypeMasterViewSet, CustomMasterDefinitionViewSet, CustomMasterValueViewSet, MasterModuleViewSet,
     FinanceExportExcelView, FinanceBulkImportView
 )
-from .views_finance_config import FinanceWorkflowConfigViewSet
+from .views_finance_config import FinanceWorkflowConfigViewSet, HRPositionConfigViewSet
 from .views_export import ExpenseStatementPDFView, ExpenseStatementExcelView
 
 router = DefaultRouter()
@@ -27,6 +27,8 @@ router.register(r'policies', PolicyDocumentViewSet)
 router.register(r'bulk-activities', BulkActivityBatchViewSet)
 router.register(r'job-reports', JobReportViewSet)
 router.register(r'finance-workflow-config', FinanceWorkflowConfigViewSet, basename='finance-workflow-config')
+router.register(r'hr-position-config', HRPositionConfigViewSet, basename='hr-position-config')
+
 
 # Master route registers (Travel)
 router.register(r'travel-mode-masters', TravelModeMasterViewSet)

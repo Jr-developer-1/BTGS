@@ -154,7 +154,7 @@ const TravelCreation = () => {
                     const managerCode = managerInfo.employee_code || managerInfo.employee_id;
                     const managerName = managerInfo.name || managerInfo.employee_name || 'Assigned Manager';
 
-                    const userRes = await api.get('/api/users/?all_pages=true');
+                    const userRes = await api.get(`/api/users/?search=${managerCode}`);
                     const systemUsers = Array.isArray(userRes.data) ? userRes.data : (userRes.data.results || []);
                     const systemMgr = systemUsers.find(u =>
                         String(u.employee_id).toLowerCase() === String(managerCode).toLowerCase()
@@ -273,9 +273,9 @@ const TravelCreation = () => {
                         <button className="btn-secondary" onClick={() => navigate('/trips')}>
                             Back to Trips
                         </button>
-                        <button className="btn-primary" onClick={() => navigate(`/travel-story/${encodeId(tripId)}`)}>
+                        {/* <button className="btn-primary" onClick={() => navigate(`/travel-story/${encodeId(tripId)}`)}>
                             View Travel Story
-                        </button>
+                        </button> */}
                     </div>
                 )
             });

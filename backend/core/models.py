@@ -60,7 +60,7 @@ class User(models.Model):
     def __str__(self):
         return f"{self.name} ({self.employee_id})"
 
-    def _get_api_data(self):
+    def _get_api_data(self, force_fresh=False):
         # 0. Check if we should skip external API for performance (Pure DB Mode)
         from .middleware import should_skip_external_api
         if should_skip_external_api():
@@ -74,7 +74,7 @@ class User(models.Model):
              return None
              
         from api_management.services import get_dynamic_employee_data
-        return get_dynamic_employee_data(self.employee_id)
+        return get_dynamic_employee_data(self.employee_id, force_fresh=force_fresh)
 
     @classmethod
     def _get_or_create_shell_user(cls, employee_code):
@@ -333,9 +333,9 @@ class User(models.Model):
         fallback = data.get('position') or (pos_details[0] if pos_details else None)
         return fallback
 
-    def get_available_positions(self):
+    def get_available_positions(self, force_fresh=False):
         """Returns a list of all positions the user holds."""
-        data = self._get_api_data()
+        data = self._get_api_data(force_fresh=force_fresh)
         if not data: return []
         return data.get('positions_details', [])
 
