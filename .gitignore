@@ -14,6 +14,8 @@ backend/.env
 backend/db.sqlite3
 backend/staticfiles/
 backend/media/
+backend/django_cache/
+backend/scratch/
 
 # --- FRONTEND / NODE ---
 **/node_modules/
