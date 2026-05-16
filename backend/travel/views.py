@@ -996,6 +996,14 @@ def resolve_approver(user, members_data=None):
             
     reporting_manager = user.reporting_manager
     
+    # SPECIAL CASE: If direct reporting manager is COO, bypass them. 
+    # The caller will treat this as is_top_level and trigger HR/Finance dispatch.
+    if reporting_manager:
+        mgr_desig = str(reporting_manager.designation or '').lower()
+        if mgr_desig == 'coo' or 'chief operating officer' in mgr_desig:
+            # Bypass COO: return None as current_approver to trigger finalized/finance routing
+            return None, 0, reporting_manager, user.senior_manager, user.hod_director, None
+
     # Strictly follow reporting managers flow
     current_approver = reporting_manager
     h_level = 1
@@ -1156,7 +1164,10 @@ class TripListCreateView(generics.ListCreateAPIView):
             # Parallel HR Intimation trigger for top level
             if is_top_level:
                 trigger_parallel_dispatch(trip, user)
-                update_trip_lifecycle(trip, "Auto-Approved", "Trip request auto-approved since employee has no reporting manager. HR Intimated.")
+                if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+                    update_trip_lifecycle(trip, "Finalized", "Trip request finalized. Reporting COO bypassed and HR Intimated.")
+                else:
+                    update_trip_lifecycle(trip, "Auto-Approved", "Trip request auto-approved since employee has no reporting manager. HR Intimated.")
                 
         except Exception as e:
             # convert DB errors to validation error so frontend sees message
@@ -2883,7 +2894,10 @@ def handle_workflow_action(obj, action, user, data=None):
                 potential_manager = assigned_approver.reporting_manager
                 
                 if potential_manager and potential_manager != requester and potential_manager.employee_id != assigned_approver.employee_id:
-                    next_approver = potential_manager
+                    # SPECIAL CASE: Bypassing COO in legacy hierarchy resolution
+                    mgr_desig = str(potential_manager.designation or '').lower()
+                    if not (mgr_desig == 'coo' or 'chief operating officer' in mgr_desig):
+                        next_approver = potential_manager
                 
                 if next_approver:
                     # Resolve next position ID properly from requester hierarchy snapshots
@@ -3243,6 +3257,8 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         if is_top_level:
             # Instantly trigger parallel HR intimation + Finance Workflow routing for top-level employees
             trigger_parallel_dispatch(claim, user)
+            if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+                update_trip_lifecycle(trip, "Settlement", "Claim submitted. Reporting COO bypassed and routed to Finance/HR.")
         else:
             if current_approver:
                 Notification.objects.create(
@@ -3324,6 +3340,8 @@ class TravelAdvanceViewSet(viewsets.ModelViewSet):
         if is_top_level:
             # Instantly trigger parallel HR intimation + Finance Workflow routing for top-level employees
             trigger_parallel_dispatch(advance, user)
+            if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+                update_trip_lifecycle(trip, "Advance Requested", "Advance request submitted. Reporting COO bypassed and routed to Finance/HR.")
         else:
             if current_approver:
                 Notification.objects.create(

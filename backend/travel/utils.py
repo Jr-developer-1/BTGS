@@ -99,6 +99,12 @@ def build_approval_chain(user):
         if not mgr_user:
             break
             
+        # SPECIAL CASE: Stop building the management chain if the next approver is the COO.
+        # This ensures the flow ends at the level reporting to the COO.
+        mgr_desig = str(next_pos_name or mgr_user.designation or '').lower()
+        if mgr_desig == 'coo' or 'chief operating officer' in mgr_desig:
+            break
+
         # 3. Append position-centric hop to timeline
         chain.append({
             "employee_id": mgr_user.employee_id,
