@@ -22,6 +22,9 @@ backend/scratch/
 **/dist/
 .DS_Store
 
+# --- MOBILE / APP ---
+apk_versions/
+
 # --- IDEs ---
 .vscode/
 .idea/
