@@ -93,29 +93,53 @@ const TravelTimeline = () => {
             approvalChain.forEach((person, index) => {
                 const nameLower = (person.name || '').toLowerCase();
                 
-                // Check if this person has already approved in lifecycle_events
-                const approvalEvent = recordedEvents.find(e => 
-                    (e.title || '').toLowerCase().includes(`approved by ${nameLower}`) ||
-                    (e.description || '').toLowerCase().includes(`approved by ${nameLower}`)
-                );
-
-                const isCurrentApprover = (trip.current_approver_name || '').toLowerCase() === nameLower;
-
+                // ── DETERMINISTIC STATUS TRACKING ──
+                // Use direct index comparison for mathematically sound tracking, 
+                // supporting consecutive steps held by the same user.
                 let status = 'pending';
+                
+                if (isClosed) {
+                    if (isRejected) {
+                        // If rejected at level N, then level N is rejected, < N are completed, > N are pending
+                        if (index < (trip.hierarchy_level - 1)) {
+                            status = 'completed';
+                        } else if (index === (trip.hierarchy_level - 1)) {
+                            status = 'rejected';
+                        }
+                    } else {
+                        // Overall Approved/Settled/Completed: All managerial steps are finished
+                        status = 'completed';
+                    }
+                } else {
+                    // Ongoing approval chain
+                    const currentStepIdx = Math.max(0, (trip.hierarchy_level || 1) - 1);
+                    if (index < currentStepIdx) {
+                        status = 'completed';
+                    } else if (index === currentStepIdx) {
+                        status = 'current';
+                    }
+                }
+
                 let date = 'Pending';
                 let description = '';
                 let icon = <Clock size={20} />;
 
-                if (approvalEvent) {
-                    status = 'completed';
-                    date = approvalEvent.date ? new Date(approvalEvent.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Completed';
-                    description = '';
+                if (status === 'completed') {
+                    // Search history records to find completed timestamp
+                    const approvalEvent = recordedEvents.find(e => 
+                        (e.title || '').toLowerCase().includes(`approved by ${nameLower}`) ||
+                        (e.description || '').toLowerCase().includes(`approved by ${nameLower}`)
+                    );
+                    date = approvalEvent?.date 
+                        ? new Date(approvalEvent.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) 
+                        : 'Completed';
                     icon = <CheckCircle2 size={20} />;
-                } else if (isCurrentApprover && !isClosed) {
-                    status = 'current';
+                } else if (status === 'current') {
                     date = 'Action Required';
-                    description = '';
                     icon = <Clock size={20} />;
+                } else if (status === 'rejected') {
+                    date = 'Rejected';
+                    icon = <XCircle size={20} />;
                 }
 
                 steps.push({

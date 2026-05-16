@@ -971,9 +971,11 @@ def resolve_approver(user, members_data=None):
     if not cached_rm:
         if hasattr(user, 'get_available_positions'):
             try:
-                user.get_available_positions(force_fresh=True)
+                # Removed force_fresh=True from the synchronous safeguard
+                # We already have persistent cache now, so we can trust the cache layer.
+                user.get_available_positions(force_fresh=False)
             except Exception as e:
-                print(f"Warning: Force fresh fetch failed in resolve_approver: {e}")
+                print(f"Warning: Fetch failed in resolve_approver: {e}")
     else:
         # Normal Flow: Manager is present! Spawn silent background daemon to update cache without holding up user
         import threading
@@ -983,6 +985,7 @@ def resolve_approver(user, members_data=None):
                 connection.close()
                 from core.models import User
                 u = User.objects.get(pk=u_id)
+                # Background thread can still force refresh to keep the data updated
                 u.get_available_positions(force_fresh=True)
             except Exception:
                 pass
@@ -1034,17 +1037,37 @@ class TripListCreateView(generics.ListCreateAPIView):
         all_trips = self.request.query_params.get('all') == 'true'
         user_role = user.role.name.lower() if user.role else ''
         
+        from django.db.models import Case, When, Value, IntegerField
+        
         if all_trips:
             if user_role in ['admin', 'guesthousemanager', 'finance', 'cfo']:
-                return Trip.objects.all().order_by('-created_at')
-            
-            from django.db.models import Case, When, Value, IntegerField
-            q_requester = Q(user=user) & Q(requester_position=user.active_position_id)
-            q_approver = Q(current_approver=user) & Q(approver_position=user.active_position_id)
-            
-            return Trip.objects.filter(
-                q_requester | q_approver
-            ).distinct().annotate(
+                queryset = Trip.objects.all().order_by('-created_at')
+            else:
+                q_requester = Q(user=user) & Q(requester_position=user.active_position_id)
+                q_approver = Q(current_approver=user) & Q(approver_position=user.active_position_id)
+                
+                queryset = Trip.objects.filter(
+                    q_requester | q_approver
+                ).distinct().annotate(
+                    priority=Case(
+                        When(status__in=['Approved', 'Completed'], then=Value(1)),
+                        When(status__in=['Settled', 'Paid', 'Transferred'], then=Value(3)),
+                        default=Value(2),
+                        output_field=IntegerField(),
+                    )
+                ).order_by('priority', '-created_at')
+        else:
+            q = Q(user=user) & Q(requester_position=user.active_position_id)
+            queryset = Trip.objects.filter(q, consider_as_local=False)
+            search_query = self.request.query_params.get('search')
+            if search_query:
+                queryset = queryset.filter(
+                    Q(trip_id__icontains=search_query) |
+                    Q(purpose__icontains=search_query) |
+                    Q(source__icontains=search_query) |
+                    Q(destination__icontains=search_query)
+                )
+            queryset = queryset.annotate(
                 priority=Case(
                     When(status__in=['Approved', 'Completed'], then=Value(1)),
                     When(status__in=['Settled', 'Paid', 'Transferred'], then=Value(3)),
@@ -1053,25 +1076,14 @@ class TripListCreateView(generics.ListCreateAPIView):
                 )
             ).order_by('priority', '-created_at')
             
-        q = Q(user=user) & Q(requester_position=user.active_position_id)
-        queryset = Trip.objects.filter(q, consider_as_local=False)
-        search_query = self.request.query_params.get('search')
-        if search_query:
-            queryset = queryset.filter(
-                Q(trip_id__icontains=search_query) |
-                Q(purpose__icontains=search_query) |
-                Q(source__icontains=search_query) |
-                Q(destination__icontains=search_query)
-            )
-        from django.db.models import Case, When, Value, IntegerField
-        return queryset.annotate(
-            priority=Case(
-                When(status__in=['Approved', 'Completed'], then=Value(1)),
-                When(status__in=['Settled', 'Paid', 'Transferred'], then=Value(3)),
-                default=Value(2),
-                output_field=IntegerField(),
-            )
-        ).order_by('priority', '-created_at')
+        # Optimize query by resolving Cascading N+1 queries at database level
+        return queryset.select_related(
+            'user', 'user__role',
+            'current_approver', 'claim', 'route_path'
+        ).prefetch_related(
+            'advances', 'expenses', 'job_reports', 'activity_batches',
+            'room_bookings', 'vehicle_bookings', 'odometer_details'
+        )
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -1200,7 +1212,13 @@ class TravelListCreateView(TripListCreateView):
                 default=Value(2),
                 output_field=IntegerField(),
             )
-        ).order_by('priority', '-created_at')
+        ).order_by('priority', '-created_at').select_related(
+            'user', 'user__role',
+            'current_approver', 'claim', 'route_path'
+        ).prefetch_related(
+            'advances', 'expenses', 'job_reports', 'activity_batches',
+            'room_bookings', 'vehicle_bookings', 'odometer_details'
+        )
 
     def perform_create(self, serializer, is_local=True): # type: ignore
         super().perform_create(serializer, is_local=is_local)
@@ -2838,38 +2856,62 @@ def handle_workflow_action(obj, action, user, data=None):
                     update_trip_lifecycle(trip, "Management Approval", f"Approved by {user.name}.")
             
             next_approver = None
-            assigned_approver = obj.current_approver or user
-            potential_manager = assigned_approver.reporting_manager
+            next_pos_id = None
             
-            if potential_manager and potential_manager != requester and potential_manager.employee_id != assigned_approver.employee_id:
-                next_approver = potential_manager
-            
-            if next_approver:
-                # 3. Resolve next position ID properly from requester hierarchy
-                next_pos_id = None
-                if next_approver == requester.reporting_manager:
-                    next_pos_id = requester.reporting_manager_position
-                elif next_approver == requester.senior_manager:
-                    next_pos_id = requester.senior_manager_position
-                elif next_approver == requester.hod_director:
-                    next_pos_id = requester.hod_director_position
+            # 1. Smart Next Approver Lookup using Stored Snapshot Chain (Strict Position-to-Position)
+            chain = getattr(obj, 'approval_chain', []) or (obj.trip.approval_chain if hasattr(obj, 'trip') and obj.trip else [])
+            if isinstance(chain, list) and len(chain) > 0:
+                # Filter only Managerial steps (functional pipelines like HR/Finance are handled later)
+                mgr_steps = [step for step in chain if step.get('role') == 'Manager' or not step.get('role')]
                 
-                # Fallback: Extract from the current approver's reporting chain
-                if not next_pos_id:
-                    aa_pos = assigned_approver.get_current_position()
-                    if aa_pos:
-                        for mgr in aa_pos.get('reporting_to', []):
-                            if isinstance(mgr, dict) and mgr.get('employee_code') == next_approver.employee_id:
-                                next_pos_id = mgr.get('id') or mgr.get('position_id')
-                                break
-
-                # Final fallback to active_position_id if still not found
-                if not next_pos_id and next_approver:
-                    next_pos_id = getattr(next_approver, 'active_position_id', None)
+                # current index corresponds to hierarchy_level - 1 (i.e. Level 1 is index 0)
+                # Thus next index is exactly hierarchy_level (i.e. Level 2 is index 1)
+                next_idx = obj.hierarchy_level
+                
+                if next_idx < len(mgr_steps):
+                    next_step = mgr_steps[next_idx]
+                    next_emp_id = next_step.get('employee_id')
+                    next_pos_id = next_step.get('position_id')
+                    
+                    if next_emp_id:
+                        from core.models import User # type: ignore
+                        next_approver = User.objects.filter(employee_id=next_emp_id).first()
+            
+            # 2. Legacy Fallback: Compute Next Approver on-the-fly using dynamic User-to-User hierarchy
+            if not next_approver:
+                assigned_approver = obj.current_approver or user
+                potential_manager = assigned_approver.reporting_manager
+                
+                if potential_manager and potential_manager != requester and potential_manager.employee_id != assigned_approver.employee_id:
+                    next_approver = potential_manager
+                
+                if next_approver:
+                    # Resolve next position ID properly from requester hierarchy snapshots
+                    if next_approver == requester.reporting_manager:
+                        next_pos_id = requester.reporting_manager_position
+                    elif next_approver == requester.senior_manager:
+                        next_pos_id = requester.senior_manager_position
+                    elif next_approver == requester.hod_director:
+                        next_pos_id = requester.hod_director_position
+                    
+                    # Stepwise fallback from the current approver's reporting structure
                     if not next_pos_id:
-                        next_pos_obj = next_approver.get_current_position()
-                        next_pos_id = next_pos_obj.get('id') if next_pos_obj else None
+                        aa_pos = assigned_approver.get_current_position()
+                        if aa_pos:
+                            for mgr in aa_pos.get('reporting_to', []):
+                                if isinstance(mgr, dict) and mgr.get('employee_code') == next_approver.employee_id:
+                                    next_pos_id = mgr.get('id') or mgr.get('position_id')
+                                    break
 
+                    # Final safe lookup for managers with active_position_id profiles
+                    if not next_pos_id and next_approver:
+                        next_pos_id = getattr(next_approver, 'active_position_id', None)
+                        if not next_pos_id:
+                            next_pos_obj = next_approver.get_current_position()
+                            next_pos_id = next_pos_obj.get('id') if next_pos_obj else None
+
+            # 3. SMART WORKFLOW ADVANCEMENT (Un-nested Unified Block)
+            if next_approver:
                 obj.current_approver = next_approver
                 obj.approver_position = str(next_pos_id) if next_pos_id else None
                 obj.hierarchy_level += 1
@@ -2988,18 +3030,23 @@ def handle_workflow_action(obj, action, user, data=None):
                 # Payout Logic
                 payment_mode = data.get('payment_mode', 'BANK') if data else 'BANK'
                 transaction_id = data.get('transaction_id', 'N/A') if data else 'N/A'
-                amount = float(getattr(obj, 'executive_approved_amount', getattr(obj, 'approved_amount', getattr(obj, 'requested_amount', 0))))
+                from decimal import Decimal
+                raw_amt = getattr(obj, 'executive_approved_amount', getattr(obj, 'approved_amount', getattr(obj, 'requested_amount', 0)))
+                amount = Decimal(str(raw_amt or 0))
                 
                 net_payable = amount
                 if isinstance(obj, TravelClaim) and trip and trip.user:
-                    total_advances = trip.advances.filter(status='COMPLETED').aggregate(s=Sum('executive_approved_amount'))['s'] or 0
+                    adv_sum = trip.advances.filter(status='COMPLETED').aggregate(s=Sum('executive_approved_amount'))['s'] or 0
+                    total_advances = Decimal(str(adv_sum))
+                    
                     net_payable = amount - total_advances
                     user_profile = trip.user
-                    if net_payable < 0:
+                    if net_payable < Decimal('0'):
                         surplus = abs(net_payable)
-                        user_profile.carry_forward_balance += surplus
+                        current_cf = Decimal(str(user_profile.carry_forward_balance or 0))
+                        user_profile.carry_forward_balance = current_cf + surplus
                         user_profile.save(update_fields=['carry_forward_balance'])
-                        net_payable = 0
+                        net_payable = Decimal('0')
                         payment_mode = 'Internal Adjustment'
                         transaction_id = f"RECON-{timezone.now().strftime('%Y%m%d%H%M')}"
                 

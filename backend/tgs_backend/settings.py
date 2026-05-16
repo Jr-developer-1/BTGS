@@ -131,6 +131,18 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Persistent cache backend to sustain HCM API tokens and datasets across restarts
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": os.path.join(BASE_DIR, "django_cache"),
+        "TIMEOUT": 3600, # 1 hour default
+        "OPTIONS": {
+            "MAX_ENTRIES": 10000
+        }
+    }
+}
+
 # Media files (uploads)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"

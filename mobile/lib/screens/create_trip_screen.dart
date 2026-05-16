@@ -55,6 +55,7 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   List<Map<String, dynamic>> _employeeList = [];
   List<Map<String, dynamic>> _filteredEmployees = [];
   bool _showMemberDropdown = false;
+  bool _policyAccepted = false;
   int _myLevel = 99;
   String _travelerInfo = 'Self';
 
@@ -576,6 +577,16 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
   Future<void> _handleSubmit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (!_policyAccepted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must accept the travel policy to proceed.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     if (_fromController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Origin (From) is required')),
@@ -808,6 +819,8 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
                           'Logistics & Stay Checklist',
                         ),
                         _buildStaySection(),
+                        const SizedBox(height: 32),
+                        _buildPolicyAcceptance(),
                       ],
                     ),
                   ),
@@ -1563,13 +1576,6 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             textCapitalization: TextCapitalization.characters,
             validator: (v) => v!.isEmpty ? 'Purpose is required' : null,
           ),
-          const SizedBox(height: 20),
-          _buildInputField(
-            controller: _projectCodeController,
-            label: 'Project Code',
-            hint: 'e.g., ADANI-HYD-2025',
-            icon: Icons.work_outline_rounded,
-          ),
         ],
       ),
     );
@@ -1636,6 +1642,67 @@ class _CreateTripScreenState extends State<CreateTripScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildPolicyAcceptance() {
+    return _premiumCard(
+      child: InkWell(
+        onTap: () => setState(() => _policyAccepted = !_policyAccepted),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(4.0),
+          child: Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: _policyAccepted ? const Color(0xFF134E4A) : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _policyAccepted
+                        ? const Color(0xFF134E4A)
+                        : const Color(0xFFE2E8F0),
+                    width: 1.5,
+                  ),
+                ),
+                child: _policyAccepted
+                    ? const Icon(
+                        Icons.check_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      )
+                    : null,
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: RichText(
+                  text: TextSpan(
+                    text: 'I have read and I accept the ',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF0F172A),
+                    ),
+                    children: [
+                      TextSpan(
+                        text: 'Travel Governance Policy',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF0D9488),
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

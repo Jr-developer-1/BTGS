@@ -715,7 +715,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
     double adv = _cleanParse(details['total_advance_taken']);
     double wallet = _cleanParse(details['wallet_balance_used']);
     double net = gross - adv - wallet;
-    double finalAmt = net > 0 ? net : gross;
+    double finalAmt = net > 0 ? net : 0.0;
 
     showModalBottomSheet(
       context: context,
@@ -789,82 +789,116 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('MODE OF PAYMENT', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(12)),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: mode,
-                                isExpanded: true,
-                                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                                items: ['NEFT', 'Bank Transfer', 'UPI', 'Cash'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13)))).toList(),
-                                onChanged: (v) => setModal(() => mode = v!),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('TRANSFER DATE', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
-                          const SizedBox(height: 8),
-                          GestureDetector(
-                            onTap: () async {
-                              final picked = await showDatePicker(
-                                context: context,
-                                initialDate: transferDate,
-                                firstDate: DateTime(2000),
-                                lastDate: DateTime(2100),
-                                builder: (context, child) => Theme(
-                                  data: Theme.of(context).copyWith(colorScheme: const ColorScheme.light(primary: Color(0xFFBB0633))),
-                                  child: child!,
-                                ),
-                              );
-                              if (picked != null) setModal(() => transferDate = picked);
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                if (finalAmt > 0) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('MODE OF PAYMENT', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
                               decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(12)),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(DateFormat('dd-MM-yyyy').format(transferDate), style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13)),
-                                  const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
-                                ],
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: mode,
+                                  isExpanded: true,
+                                  icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
+                                  items: ['NEFT', 'Bank Transfer', 'UPI', 'Cash'].map((e) => DropdownMenuItem(value: e, child: Text(e, style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13)))).toList(),
+                                  onChanged: (v) => setModal(() => mode = v!),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('TRANSFER DATE', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
+                            const SizedBox(height: 8),
+                            GestureDetector(
+                              onTap: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: transferDate,
+                                  firstDate: DateTime(2000),
+                                  lastDate: DateTime(2100),
+                                  builder: (context, child) => Theme(
+                                    data: Theme.of(context).copyWith(colorScheme: const ColorScheme.light(primary: Color(0xFFBB0633))),
+                                    child: child!,
+                                  ),
+                                );
+                                if (picked != null) setModal(() => transferDate = picked);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(12)),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(DateFormat('dd-MM-yyyy').format(transferDate), style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13)),
+                                    const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (mode != 'Cash') ...[
+                    const SizedBox(height: 20),
+                    Text('TRANSACTION ID / REFERENCE', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
+                    const SizedBox(height: 8),
+                    TextField(
+                      onChanged: (v) => txId = v,
+                      style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w600),
+                      decoration: InputDecoration(
+                        hintText: 'Enter NEFT Ref or UPI ID',
+                        hintStyle: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
+                        filled: true,
+                        fillColor: const Color(0xFFF1F5F9),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                       ),
                     ),
                   ],
-                ),
-                if (mode != 'Cash') ...[
-                  const SizedBox(height: 20),
-                  Text('TRANSACTION ID / REFERENCE', style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF64748B))),
-                  const SizedBox(height: 8),
-                  TextField(
-                    onChanged: (v) => txId = v,
-                    style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w600),
-                    decoration: InputDecoration(
-                      hintText: 'Enter NEFT Ref or UPI ID',
-                      hintStyle: GoogleFonts.inter(color: Colors.grey[400], fontSize: 13),
-                      filled: true,
-                      fillColor: const Color(0xFFF1F5F9),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDFA),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFCCFBF1)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.check_circle_rounded, color: Color(0xFF0D9488), size: 20),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Fully Adjusted from Advance',
+                                style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w800, color: const Color(0xFF115E59)),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'This claim is completely covered by the employee\'s existing advance balance. No bank transfer is required.',
+                                style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF134E4A), height: 1.4),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -923,7 +957,7 @@ class _FinanceHubScreenState extends State<FinanceHubScreen> {
                             children: [
                               const Icon(Icons.send_rounded, color: Colors.white, size: 18),
                               const SizedBox(width: 8),
-                              Text('Confirm Transfer', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w800)),
+                              Text(finalAmt > 0 ? 'Confirm Transfer' : 'Confirm Reconciliation', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w800)),
                             ],
                           ),
                         ),

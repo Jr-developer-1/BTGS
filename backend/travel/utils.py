@@ -35,36 +35,94 @@ def get_hr_head(user):
     return all_hr[0] if all_hr else None
 
 def build_approval_chain(user):
-    """Recursively builds the full reporting hierarchy chain."""
+    """
+    Recursively builds the full hierarchical chain using Position-to-Position traversal 
+    by tracing position IDs through multi-position structures in real-time.
+    """
     chain = []
-    current = user
-    if not current:
+    if not user:
         return []
-    seen_ids = {user.employee_id}
-    
-    # Traverse management hierarchy (limit to 10 levels)
-    for _ in range(10):
-        mgr = current.reporting_manager
-        if not mgr or mgr.employee_id in seen_ids:
-            break
         
+    pos = user.get_current_position()
+    if not pos:
+        return []
+        
+    current_pos_id = pos.get('id')
+    current_user = user
+    
+    seen_positions = set()
+    
+    for _ in range(10):
+        # Guard against loops or missing IDs
+        if not current_pos_id or str(current_pos_id) in seen_positions:
+            break
+        seen_positions.add(str(current_pos_id))
+        
+        api_data = current_user._get_api_data()
+        if not api_data:
+            break
+            
+        pos_details = api_data.get('positions_details', [])
+        target_pos = None
+        
+        # 1. Locate specific position block matching current position ID
+        for p in pos_details:
+            if str(p.get('id')) == str(current_pos_id):
+                target_pos = p
+                break
+                
+        if not target_pos:
+            fallback = api_data.get('position') or (pos_details[0] if pos_details else None)
+            if fallback and str(fallback.get('id')) == str(current_pos_id):
+                target_pos = fallback
+                
+        if not target_pos:
+            break
+            
+        # 2. Extract direct manager position info
+        reporting_to = target_pos.get('reporting_to', [])
+        if not reporting_to or not isinstance(reporting_to, list):
+            break
+            
+        next_mgr = reporting_to[0]
+        if not next_mgr or not isinstance(next_mgr, dict):
+            break
+            
+        next_pos_id = next_mgr.get('id')
+        next_pos_name = next_mgr.get('name') or next_mgr.get('position_name')
+        next_emp_code = next_mgr.get('employee_code') or next_mgr.get('employee_id')
+        
+        if not next_emp_code:
+            break
+            
+        mgr_user = User._get_or_create_shell_user(str(next_emp_code))
+        if not mgr_user:
+            break
+            
+        # 3. Append position-centric hop to timeline
         chain.append({
-            "employee_id": mgr.employee_id,
-            "name": mgr.name,
-            "designation": mgr.designation,
-            "role": "Manager"
+            "employee_id": mgr_user.employee_id,
+            "name": mgr_user.name,
+            "designation": str(next_pos_name).upper() if next_pos_name else mgr_user.designation,
+            "role": "Manager",
+            "position_id": str(next_pos_id) if next_pos_id else None
         })
-        seen_ids.add(mgr.employee_id)
-        current = mgr
+        
+        # 4. Advance hop
+        current_pos_id = next_pos_id
+        current_user = mgr_user
     
     # Add HR as the terminal verification step
     hr_head = get_hr_head(user)
-    if hr_head and hr_head.employee_id not in seen_ids:
+    # Check if HR head is already in the manager chain to avoid double-stepping
+    manager_emp_ids = {item['employee_id'] for item in chain}
+    if hr_head and hr_head.employee_id != user.employee_id and hr_head.employee_id not in manager_emp_ids:
         chain.append({
             "employee_id": hr_head.employee_id,
             "name": hr_head.name,
             "designation": hr_head.designation,
-            "role": "HR"
+            "role": "HR",
+            "position_id": None
         })
         
     return chain

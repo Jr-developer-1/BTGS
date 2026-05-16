@@ -509,11 +509,6 @@ class TripSerializer(serializers.ModelSerializer):
     def get_approval_chain(self, obj):
         if obj.approval_chain:
             return obj.approval_chain
-        
-        # Fallback for old records: rebuild on the fly
-        from .utils import build_approval_chain
-        if obj.user:
-            return build_approval_chain(obj.user)
         return []
 
     def get_total_expenses(self, obj):

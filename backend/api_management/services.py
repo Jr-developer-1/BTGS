@@ -20,13 +20,67 @@ HR_ID_TO_INFO_CACHE = {}
 GLOBAL_EMPLOYEE_CACHE = {'timestamp': 0, 'data': []}
 GLOBAL_CACHE_TIMEOUT = 600 # 10 minutes
 
+def _find_best_matching_employee_code(s_res, target_position_name):
+    """
+    Performs a rigorous title-matching scan across search results to find the 
+    employee holding the exact position, preventing fuzzy-search hijack bugs.
+    """
+    if not s_res:
+        return None
+        
+    target_clean = str(target_position_name or "").strip().lower()
+    if not target_clean:
+        for item in s_res:
+            if isinstance(item, dict):
+                code = item.get('employee', {}).get('employee_code')
+                if code: return code
+        return None
+        
+    # Pass 1: Look for Exact Match in Primary Position
+    for item in s_res:
+        if not isinstance(item, dict): continue
+        emp_pos = item.get('position', {})
+        if not isinstance(emp_pos, dict): continue
+        pos_name = str(emp_pos.get('name') or "").strip().lower()
+        
+        if pos_name == target_clean:
+            code = item.get('employee', {}).get('employee_code')
+            if code:
+                return code
+
+    # Pass 2: Look for Exact Match in Any Secondary Position
+    for item in s_res:
+        if not isinstance(item, dict): continue
+        pos_list = item.get('positions_details') or []
+        if not isinstance(pos_list, list): continue
+        
+        for p_det in pos_list:
+            if not isinstance(p_det, dict): continue
+            det_name = str(p_det.get('name') or "").strip().lower()
+            if det_name == target_clean:
+                code = item.get('employee', {}).get('employee_code')
+                if code:
+                    return code
+
+    # Pass 3: Last Resort Fallback (reproduce legacy behavior rather than fail)
+    for item in s_res:
+        if isinstance(item, dict):
+            code = item.get('employee', {}).get('employee_code')
+            if code:
+                return code
+                
+    return None
+
+
 def resolve_hr_id_to_info(hr_id, api_url, headers):
     """Resolves an internal HR ID to (employee_code, name) by fetching details."""
     if not hr_id: return None, None
     hr_id_str = str(hr_id)
-    if hr_id_str in HR_ID_TO_INFO_CACHE:
-        info = HR_ID_TO_INFO_CACHE[hr_id_str]
-        return info.get('code'), info.get('name')
+    
+    cache_key = f"hr_id_info_{hr_id_str}"
+    cached_info = cache.get(cache_key)
+    if cached_info is not None:
+        return cached_info.get('code'), cached_info.get('name')
     
     try:
         url = f"{api_url.rstrip('/')}/{hr_id_str}/"
@@ -38,16 +92,16 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
             code = emp_obj.get('employee_code') or data.get('employee_code')
             name = emp_obj.get('name') or data.get('name')
             
-            if code:
-                HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': code, 'name': name}
-                return code, name
-            else:
-                HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
+            info = {'code': code, 'name': name} if code else {'code': None, 'name': None}
+            cache.set(cache_key, info, 3600) # Cache for 1 hour
+            return info.get('code'), info.get('name')
         else:
-            HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
+            info = {'code': None, 'name': None}
+            cache.set(cache_key, info, 300) # Cache failures for 5 min
+            return None, None
     except Exception as e:
         print(f"Error resolving HR ID {hr_id}: {e}")
-        HR_ID_TO_INFO_CACHE[hr_id_str] = {'code': None, 'name': None}
+        cache.set(cache_key, {'code': None, 'name': None}, 300)
     
     return None, None
 
@@ -59,36 +113,36 @@ def resolve_hr_id_to_code(hr_id, api_url, headers):
 def get_dynamic_employee_data(employee_code, force_fresh=False):
     """
     Fetches employee details in real-time. Checks local caches first unless force_fresh=True.
+    Optimized with Django Persistent Caching to eliminate cold starts completely.
     """
     import time
-    now = time.time()
+    if not employee_code:
+        return None
+        
+    cache_key = f"EMP_DATA_PERSISTENT_{str(employee_code).strip().upper()}"
     
-    # 1. Check per-employee cache (Fastest)
-    if not force_fresh and employee_code in CACHE_EMPLOYEE_DATA:
-        entry = CACHE_EMPLOYEE_DATA[employee_code]
-        if now - entry['timestamp'] < CACHE_TIMEOUT:
-            return entry['data']
+    # 1. Check Persistent Cache (Instantly fetches from Disk, survives restarts)
+    if not force_fresh:
+        persistent_data = cache.get(cache_key)
+        if persistent_data:
+            return persistent_data
 
-    # 2. Check global employee cache (Second Fastest - In Memory)
+    # 2. Check memory global employee cache (Alternative local fallback)
+    now = time.time()
     g_cached = GLOBAL_EMPLOYEE_CACHE
     if not force_fresh and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and g_cached['data']:
         for item in g_cached['data']:
             if item.get('employee', {}).get('employee_code') == employee_code:
-                # Cache it locally and return instantly
-                CACHE_EMPLOYEE_DATA[employee_code] = {
-                    'timestamp': now,
-                    'data': item
-                }
+                # Promote to persistent cache and return
+                cache.set(cache_key, item, timeout=3600)
                 return item
             
-    # 3. Fetch from API (Direct lookup with minimum page size to avoid parallel pagination overhead)
+    # 3. Fetch from API (Cold start fallback - executed max once per hour per employee)
     data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
     if data and not data.get('error') and data.get('results'):
         emp_data = data['results'][0]
-        CACHE_EMPLOYEE_DATA[employee_code] = {
-            'timestamp': now,
-            'data': emp_data
-        }
+        # Commit to persistent cache with 1-hour timeout (Organizational structures are stable)
+        cache.set(cache_key, emp_data, timeout=3600)
         return emp_data
         
     return None
@@ -383,23 +437,25 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                         # CRITICAL WORKFLOW FIX: If it's a Position ID, code will be None.
                                         # We MUST resolve the name to an employee_code so the Trip Approval can route to a User!
                                         if not code and name and not name.startswith("Manager"):
-                                            # Cache check for position name
-                                            cache_key = f"pos_name_{name}"
-                                            if cache_key in HR_ID_TO_INFO_CACHE:
-                                                code = HR_ID_TO_INFO_CACHE[cache_key].get('code')
+                                            # Cache check for position name using high-speed disk cache
+                                            cache_key = f"pos_name_res_{name.replace(' ', '_').lower()[:40]}"
+                                            cached_code = cache.get(cache_key)
+                                            if cached_code is not None:
+                                                code = cached_code
                                             else:
                                                 try:
-                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=2.0)
+                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=5.0)
                                                     if s_resp.status_code == 200:
                                                         s_data = s_resp.json() or {}
                                                         s_res = s_data.get('results', [])
                                                         if s_res:
-                                                            code = s_res[0].get('employee', {}).get('employee_code')
-                                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': code}
+                                                            # BUG FIX: Match position strictly, don't blindly take s_res[0]
+                                                            code = _find_best_matching_employee_code(s_res, name)
+                                                            cache.set(cache_key, code, 3600) # Cache for 1 hour
                                                         else:
-                                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                                            cache.set(cache_key, None, 300)
                                                 except:
-                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                                    cache.set(cache_key, None, 300)
                                         
                                         resolved_reporting_to.append({"id": mgr, "name": name, "employee_code": code})
                                     else:
@@ -416,21 +472,25 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                 name = resolved_name or (pos_reporting_names[0] if pos_reporting_names else f"Manager {raw_reporting_to}")
                                 
                                 if not code and name and not name.startswith("Manager"):
-                                    cache_key = f"pos_name_{name}"
-                                    if cache_key in HR_ID_TO_INFO_CACHE:
-                                        code = HR_ID_TO_INFO_CACHE[cache_key].get('code')
+                                    # Cache check for position name using high-speed disk cache
+                                    cache_key = f"pos_name_res_{name.replace(' ', '_').lower()[:40]}"
+                                    cached_code = cache.get(cache_key)
+                                    if cached_code is not None:
+                                        code = cached_code
                                     else:
                                         try:
-                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=2.0)
+                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=5.0)
                                             if s_resp.status_code == 200:
-                                                s_res = s_resp.json().get('results', [])
+                                                s_data = s_resp.json() or {}
+                                                s_res = s_data.get('results', [])
                                                 if s_res:
-                                                    code = s_res[0].get('employee', {}).get('employee_code')
-                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': code}
+                                                    # BUG FIX: Match position strictly, don't blindly take s_res[0]
+                                                    code = _find_best_matching_employee_code(s_res, name)
+                                                    cache.set(cache_key, code, 3600) # Cache for 1 hour
                                                 else:
-                                                    HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                                    cache.set(cache_key, None, 300)
                                         except:
-                                            HR_ID_TO_INFO_CACHE[cache_key] = {'code': None}
+                                            cache.set(cache_key, None, 300)
                                 
                                 resolved_reporting_to = [{"id": raw_reporting_to, "name": name, "employee_code": code}]
                             else:
