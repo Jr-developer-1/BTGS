@@ -34,6 +34,38 @@ def get_hr_head(user):
     
     return all_hr[0] if all_hr else None
 
+def _resolve_numeric_employee_id(emp_id_val):
+    """Delegates to centralized resolve_numeric_employee_id."""
+    from api_management.services import resolve_numeric_employee_id
+    return resolve_numeric_employee_id(emp_id_val)
+
+def _is_coo_position(pos_name, designation):
+    """
+    Checks if a position name or designation represents a COO position.
+    Specifically checks if it starts with 'coo' or 'chief operating officer' (case-insensitive).
+    """
+    name_str = str(pos_name or '').strip().lower()
+    desig_str = str(designation or '').strip().lower()
+    
+    name_match = (
+        name_str == 'coo' or
+        name_str.startswith('coo-') or
+        name_str.startswith('coo ') or
+        name_str.startswith('coo_') or
+        name_str.startswith('chief operating officer')
+    )
+    
+    desig_match = (
+        desig_str == 'coo' or
+        desig_str.startswith('coo-') or
+        desig_str.startswith('coo ') or
+        desig_str.startswith('coo_') or
+        desig_str.startswith('chief operating officer')
+    )
+    
+    return name_match or desig_match
+
+
 def build_approval_chain(user):
     """
     Recursively builds the full hierarchical chain using Position-to-Position traversal 
@@ -95,15 +127,23 @@ def build_approval_chain(user):
         if not next_emp_code:
             break
             
+        # Robustly resolve numeric manager DB record ID to actual employee string code
+        if str(next_emp_code).strip().isdigit():
+            resolved_code, resolved_name = _resolve_numeric_employee_id(str(next_emp_code).strip())
+            if resolved_code:
+                next_emp_code = resolved_code
+                if resolved_name:
+                    next_pos_name = resolved_name
+            
         mgr_user = User._get_or_create_shell_user(str(next_emp_code))
         if not mgr_user:
             break
             
         # SPECIAL CASE: Stop building the management chain if the next approver is the COO.
         # This ensures the flow ends at the level reporting to the COO.
-        mgr_desig = str(next_pos_name or mgr_user.designation or '').lower()
-        if mgr_desig == 'coo' or 'chief operating officer' in mgr_desig:
+        if _is_coo_position(next_pos_name, mgr_user.designation):
             break
+
 
         # 3. Append position-centric hop to timeline
         chain.append({
@@ -132,3 +172,4 @@ def build_approval_chain(user):
         })
         
     return chain
+

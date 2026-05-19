@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/module_model.dart';
 import '../services/api_service.dart';
@@ -32,14 +33,27 @@ class _AppHeaderWidgetState extends State<AppHeaderWidget> {
   bool _showProfile = false;
   bool _isLoadingNotifs = false;
 
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
     _fetchNotifications();
+    // Start heartbeat timer (30s) to keep notifications in sync with web
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (mounted && _showNotifications) {
+        _fetchNotifications();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchNotifications() async {
-    setState(() => _isLoadingNotifs = true);
     try {
       final response = await _apiService.get(ApiConstants.notifications);
       if (mounted) {
@@ -49,12 +63,10 @@ class _AppHeaderWidgetState extends State<AppHeaderWidget> {
                   .map((n) => NotificationItem.fromJson(n as Map<String, dynamic>))
                   .toList()
               : [];
-          _isLoadingNotifs = false;
         });
       }
     } catch (e) {
       debugPrint("Failed to fetch notifications: $e");
-      if (mounted) setState(() => _isLoadingNotifs = false);
     }
   }
 
@@ -63,6 +75,7 @@ class _AppHeaderWidgetState extends State<AppHeaderWidget> {
       await _apiService.post(
         '${ApiConstants.notifications}mark-all-read/',
         body: {},
+        includeAuth: true,
       );
       if (mounted) {
         setState(() {

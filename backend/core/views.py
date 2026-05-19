@@ -653,7 +653,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['user', 'action', 'model_name']
-    search_fields = ['user__employee_id', 'user__name', 'object_repr', 'details']
+    search_fields = ['user__employee_id', 'object_repr', 'details']
     ordering_fields = ['timestamp']
     ordering = ['-timestamp']
 
@@ -1176,9 +1176,10 @@ def heartbeat_view(request):
     user = request.custom_user
     now = timezone.now()
     
-    # 1. Notifications (Latest 10) - Filtered by active position
+    # 1. Notifications (Latest 10) - Filtered by active position identifiers
     from django.db.models import Q
-    notif_filter = Q(user=user) & (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position=user.active_position_id))
+    pos_ids = user.get_active_position_identifiers()
+    notif_filter = Q(user=user) & (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position__in=pos_ids))
     notifications_qs = Notification.objects.filter(notif_filter).order_by('-created_at')[:10]
     unread_count = Notification.objects.filter(notif_filter, unread=True).count()
     

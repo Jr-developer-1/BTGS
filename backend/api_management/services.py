@@ -6,6 +6,28 @@ from .models import SystemConfig
 from .utils import decrypt_key
 from core.models import User, Role
 
+# --- WINDOWS CACHE SAFETY WRAPPERS ---
+def safe_cache_get(key, default=None):
+    """Wraps cache.get to handle Windows file-lock PermissionErrors gracefully."""
+    try:
+        return cache.get(key, default)
+    except (PermissionError, OSError):
+        return default
+
+def safe_cache_set(key, value, timeout=None):
+    """Wraps cache.set to handle Windows file-lock PermissionErrors gracefully."""
+    try:
+        cache.set(key, value, timeout)
+    except (PermissionError, OSError):
+        pass
+
+def safe_cache_delete(key):
+    """Wraps cache.delete to handle Windows file-lock PermissionErrors gracefully."""
+    try:
+        cache.delete(key)
+    except (PermissionError, OSError):
+        pass
+
 # EXTERNAL_API_URL = "http://192.168.1.235:8000/api/employees/"  
 
 # Global in-memory cache for dynamic data to avoid N+1 API calls
@@ -78,7 +100,7 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
     hr_id_str = str(hr_id)
     
     cache_key = f"hr_id_info_{hr_id_str}"
-    cached_info = cache.get(cache_key)
+    cached_info = safe_cache_get(cache_key)
     if cached_info is not None:
         return cached_info.get('code'), cached_info.get('name')
     
@@ -93,15 +115,15 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
             name = emp_obj.get('name') or data.get('name')
             
             info = {'code': code, 'name': name} if code else {'code': None, 'name': None}
-            cache.set(cache_key, info, 3600) # Cache for 1 hour
+            safe_cache_set(cache_key, info, 3600) # Cache for 1 hour
             return info.get('code'), info.get('name')
         else:
             info = {'code': None, 'name': None}
-            cache.set(cache_key, info, 300) # Cache failures for 5 min
+            safe_cache_set(cache_key, info, 300) # Cache failures for 5 min
             return None, None
     except Exception as e:
         print(f"Error resolving HR ID {hr_id}: {e}")
-        cache.set(cache_key, {'code': None, 'name': None}, 300)
+        safe_cache_set(cache_key, {'code': None, 'name': None}, 300)
     
     return None, None
 
@@ -109,6 +131,45 @@ def resolve_hr_id_to_code(hr_id, api_url, headers):
     """Legacy wrapper for resolve_hr_id_to_info."""
     code, _ = resolve_hr_id_to_info(hr_id, api_url, headers)
     return code
+
+def resolve_numeric_employee_id(emp_id_val):
+    """
+    Tries to resolve a purely numeric manager database ID (like 7106)
+    into the actual string employee_code (like HR-EMP-06889) and name,
+    by scanning the global cache first, then falling back to API lookup.
+    """
+    if not emp_id_val:
+        return None, None
+    emp_id_str = str(emp_id_val).strip()
+    if not emp_id_str.isdigit():
+        return None, None
+        
+    # 1. Look in the global employee list cache
+    global_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+    if global_data:
+        for item in global_data:
+            emp = item.get('employee', {})
+            if str(emp.get('id')) == emp_id_str:
+                code = emp.get('employee_code')
+                name = emp.get('name')
+                if code:
+                    return code, name
+                    
+    # 2. Fallback to API resolver using existing services
+    try:
+        if SystemConfig.objects.filter(key='external_api_url').exists() and SystemConfig.objects.filter(key='external_api_key').exists():
+            api_url = SystemConfig.objects.get(key='external_api_url').value
+            encrypted_key = SystemConfig.objects.get(key='external_api_key').value
+            api_key = decrypt_key(encrypted_key)
+            headers = {"X-Api-Key": api_key, "Accept": "application/json"}
+            code, name = resolve_hr_id_to_info(emp_id_str, api_url, headers)
+            if code:
+                return code, name
+    except Exception:
+        pass
+        
+    return None, None
+
 
 def get_dynamic_employee_data(employee_code, force_fresh=False):
     """
@@ -123,26 +184,33 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
     
     # 1. Check Persistent Cache (Instantly fetches from Disk, survives restarts)
     if not force_fresh:
-        persistent_data = cache.get(cache_key)
+        persistent_data = safe_cache_get(cache_key)
         if persistent_data:
             return persistent_data
-
-    # 2. Check memory global employee cache (Alternative local fallback)
+    # 2. Check memory/persistent global employee cache (Alternative local fallback)
     now = time.time()
     g_cached = GLOBAL_EMPLOYEE_CACHE
-    if not force_fresh and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and g_cached['data']:
-        for item in g_cached['data']:
-            if item.get('employee', {}).get('employee_code') == employee_code:
-                # Promote to persistent cache and return
-                cache.set(cache_key, item, timeout=3600)
-                return item
+    if not force_fresh:
+        if not g_cached['data'] or now - g_cached['timestamp'] >= GLOBAL_CACHE_TIMEOUT:
+            persistent_global = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+            if persistent_global:
+                g_cached['data'] = persistent_global
+                g_cached['timestamp'] = safe_cache_get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
+                
+        if g_cached['data'] and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT:
+            for item in g_cached['data']:
+                if item.get('employee', {}).get('employee_code') == employee_code:
+                    # Promote to persistent cache and return
+                    safe_cache_set(cache_key, item, timeout=3600)
+                    return item
+
             
     # 3. Fetch from API (Cold start fallback - executed max once per hour per employee)
     data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
     if data and not data.get('error') and data.get('results'):
         emp_data = data['results'][0]
         # Commit to persistent cache with 1-hour timeout (Organizational structures are stable)
-        cache.set(cache_key, emp_data, timeout=3600)
+        safe_cache_set(cache_key, emp_data, timeout=3600)
         return emp_data
         
     return None
@@ -226,9 +294,9 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             }
             
         # 2. Fallback to persistent Django cache framework
-        persistent_data = cache.get('GLOBAL_EMPLOYEE_DATA')
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
         if persistent_data:
-            GLOBAL_EMPLOYEE_CACHE['timestamp'] = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = safe_cache_get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
             GLOBAL_EMPLOYEE_CACHE['data'] = persistent_data
             return {
                 "count": len(persistent_data),
@@ -439,7 +507,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                         if not code and name and not name.startswith("Manager"):
                                             # Cache check for position name using high-speed disk cache
                                             cache_key = f"pos_name_res_{name.replace(' ', '_').lower()[:40]}"
-                                            cached_code = cache.get(cache_key)
+                                            cached_code = safe_cache_get(cache_key)
                                             if cached_code is not None:
                                                 code = cached_code
                                             else:
@@ -451,11 +519,11 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                                         if s_res:
                                                             # BUG FIX: Match position strictly, don't blindly take s_res[0]
                                                             code = _find_best_matching_employee_code(s_res, name)
-                                                            cache.set(cache_key, code, 3600) # Cache for 1 hour
+                                                            safe_cache_set(cache_key, code, 3600) # Cache for 1 hour
                                                         else:
-                                                            cache.set(cache_key, None, 300)
+                                                            safe_cache_set(cache_key, None, 300)
                                                 except:
-                                                    cache.set(cache_key, None, 300)
+                                                    safe_cache_set(cache_key, None, 300)
                                         
                                         resolved_reporting_to.append({"id": mgr, "name": name, "employee_code": code})
                                     else:
@@ -474,7 +542,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                 if not code and name and not name.startswith("Manager"):
                                     # Cache check for position name using high-speed disk cache
                                     cache_key = f"pos_name_res_{name.replace(' ', '_').lower()[:40]}"
-                                    cached_code = cache.get(cache_key)
+                                    cached_code = safe_cache_get(cache_key)
                                     if cached_code is not None:
                                         code = cached_code
                                     else:
@@ -486,11 +554,11 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                                 if s_res:
                                                     # BUG FIX: Match position strictly, don't blindly take s_res[0]
                                                     code = _find_best_matching_employee_code(s_res, name)
-                                                    cache.set(cache_key, code, 3600) # Cache for 1 hour
+                                                    safe_cache_set(cache_key, code, 3600) # Cache for 1 hour
                                                 else:
-                                                    cache.set(cache_key, None, 300)
+                                                    safe_cache_set(cache_key, None, 300)
                                         except:
-                                            cache.set(cache_key, None, 300)
+                                            safe_cache_set(cache_key, None, 300)
                                 
                                 resolved_reporting_to = [{"id": raw_reporting_to, "name": name, "employee_code": code}]
                             else:
@@ -576,8 +644,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             GLOBAL_EMPLOYEE_CACHE['data'] = transformed_results
             
             # Also write to persistent cache for cross-worker re-use
-            cache.set('GLOBAL_EMPLOYEE_DATA', transformed_results, timeout=86400)
-            cache.set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now_time, timeout=86400)
+            safe_cache_set('GLOBAL_EMPLOYEE_DATA', transformed_results, timeout=86400)
+            safe_cache_set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now_time, timeout=86400)
 
 
         return {
@@ -603,14 +671,14 @@ def _bg_refresh_global_employee_cache():
         if resp and not resp.get('error') and "results" in resp:
             data = resp.get('results', [])
             now = time.time()
-            cache.set('GLOBAL_EMPLOYEE_DATA', data, timeout=86400)
-            cache.set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now, timeout=86400)
+            safe_cache_set('GLOBAL_EMPLOYEE_DATA', data, timeout=86400)
+            safe_cache_set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now, timeout=86400)
             GLOBAL_EMPLOYEE_CACHE['timestamp'] = now
             GLOBAL_EMPLOYEE_CACHE['data'] = data
     except Exception as e:
         print(f"Background global cache refresh failed: {e}")
     finally:
-        cache.delete(lock_key)
+        safe_cache_delete(lock_key)
 
 def get_manager_reports_locations(manager_code):
     """
@@ -626,25 +694,29 @@ def get_manager_reports_locations(manager_code):
     if now - cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and cached['data']:
         all_emps_results = cached['data']
     else:
-        persistent_data = cache.get('GLOBAL_EMPLOYEE_DATA')
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
         if persistent_data:
-            cached_ts = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
+            cached_ts = safe_cache_get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
             GLOBAL_EMPLOYEE_CACHE['timestamp'] = cached_ts
             GLOBAL_EMPLOYEE_CACHE['data'] = persistent_data
             all_emps_results = persistent_data
 
     # 2. Trigger background refresh if empty or stale (older than 2 hours)
-    cached_ts = cache.get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or 0
+    cached_ts = safe_cache_get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or 0
     is_expired = (now - cached_ts > 7200)
     is_empty = (all_emps_results is None)
     
     if is_empty or is_expired:
         lock_key = 'GLOBAL_EMPLOYEE_DATA_REFRESH_LOCK'
         # Set lock to prevent concurrent background downloads
-        if cache.add(lock_key, '1', timeout=600):
-            t = threading.Thread(target=_bg_refresh_global_employee_cache)
-            t.daemon = True
-            t.start()
+        try:
+            if cache.add(lock_key, '1', timeout=600):
+                t = threading.Thread(target=_bg_refresh_global_employee_cache)
+                t.daemon = True
+                t.start()
+        except (PermissionError, OSError):
+            # If cache.add fails due to Windows file lock, we just skip background refresh this time
+            pass
 
     # 3. Fast Fallback for complete Cache Miss (so first run does NOT hang)
     if not all_emps_results:

@@ -10,7 +10,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsCustomAuthenticated] 
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['user', 'ip_address']
-    search_fields = ['user__name', 'user__email', 'ip_address']
+    search_fields = ['user__employee_id', 'user__email', 'ip_address']
     ordering_fields = ['login_time', 'logout_time']
     ordering = ['-login_time']
 
@@ -35,7 +35,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsCustomAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['user', 'action', 'model_name']
-    search_fields = ['user__name', 'user__email', 'object_repr', 'details']
+    search_fields = ['user__employee_id', 'user__email', 'object_repr', 'details']
     ordering_fields = ['timestamp']
     ordering = ['-timestamp']
 

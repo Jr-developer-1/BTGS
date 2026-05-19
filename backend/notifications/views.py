@@ -11,11 +11,13 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.custom_user
-        # Filter by user AND (target_position is null OR matches active_position_id)
         from django.db.models import Q
+        pos_ids = user.get_active_position_identifiers()
+        
+        # Filter by user AND (target_position is null OR matches any of current active position IDs/Codes)
         queryset = Notification.objects.filter(
             Q(user=user) & 
-            (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position=user.active_position_id))
+            (Q(target_position__isnull=True) | Q(target_position='') | Q(target_position__in=pos_ids))
         )
         unread = self.request.query_params.get('unread')
         if unread is not None:

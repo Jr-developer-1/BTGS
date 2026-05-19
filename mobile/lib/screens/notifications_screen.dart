@@ -48,7 +48,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (_isMarkingAllRead) return;
     setState(() => _isMarkingAllRead = true);
     try {
-      await _apiService.post(ApiConstants.notificationsMarkRead, body: {});
+      await _apiService.post(ApiConstants.notificationsMarkRead, body: {}, includeAuth: true);
       await _fetchNotifications();
     } catch (e) {
       debugPrint("Failed to mark notifications as read: $e");

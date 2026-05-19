@@ -363,8 +363,7 @@ def get_users_by_position(position_id):
     """Returns list of User objects that currently hold the specified position_id."""
     if not position_id: return []
     from core.models import User
-    from api_management.services import fetch_employee_data
-    from django.core.cache import cache
+    from api_management.services import fetch_employee_data, safe_cache_get, safe_cache_set
     
     position_id_str = str(position_id).strip()
     users = []
@@ -375,10 +374,11 @@ def get_users_by_position(position_id):
     # 2. Optimized Lookup via Cache Map (replaces redundant synchronous O(N) iteration)
     # We build and cache a map of { position_id -> [employee_codes] }
     CACHE_KEY = 'position_to_employee_codes_map'
-    pos_map = cache.get(CACHE_KEY)
+    pos_map = safe_cache_get(CACHE_KEY)
     
     if pos_map is None:
         pos_map = {}
+        user_pos_map = {} # employee_code -> { pos_id -> [ids/codes] }
         response_data = fetch_employee_data(fetch_all_pages=True)
         if response_data and not response_data.get('error'):
             all_emps = response_data.get('results', [])
@@ -387,21 +387,36 @@ def get_users_by_position(position_id):
                 if not emp_code: continue
                 
                 pos_ids = set()
+                user_pos_data = {}
+                
+                def _add_pos(p):
+                    p_id = str(p.get('id') or '')
+                    p_code = str(p.get('code') or '').strip()
+                    if p_id:
+                        pos_ids.add(p_id)
+                        if p_id not in user_pos_data: user_pos_data[p_id] = []
+                        if p_id not in user_pos_data[p_id]: user_pos_data[p_id].append(p_id)
+                        if p_code and p_code not in user_pos_data[p_id]: 
+                            user_pos_data[p_id].append(p_code)
+                    if p_code:
+                        pos_ids.add(p_code)
+
                 if emp_item.get('position'):
-                    pos_ids.add(str(emp_item['position'].get('id') or ''))
-                    pos_ids.add(str(emp_item['position'].get('code') or '').strip())
+                    _add_pos(emp_item['position'])
                 for pd in (emp_item.get('positions_details') or []):
-                    pos_ids.add(str(pd.get('id') or ''))
-                    pos_ids.add(str(pd.get('code') or '').strip())
+                    _add_pos(pd)
                 
                 for pid in pos_ids:
                     if pid:
                         if pid not in pos_map:
                             pos_map[pid] = []
                         pos_map[pid].append(emp_code)
+                
+                user_pos_map[emp_code] = user_pos_data
             
             # Cache mapping for 30 minutes to ensure lightning-fast subsequent lookups
-            cache.set(CACHE_KEY, pos_map, timeout=1800)
+            safe_cache_set(CACHE_KEY, pos_map, timeout=1800)
+            safe_cache_set('user_position_identifiers', user_pos_map, timeout=1800)
             
     # Retrieve matching codes instantly (O(1))
     emp_codes = pos_map.get(position_id_str, []) if pos_map else []
@@ -449,6 +464,11 @@ def trigger_parallel_dispatch(obj, user=None):
             _generate_expenses_from_batches(obj.trip)
             
         response_msg = "Management approval completed. Request finalized and HR intimated."
+        Notification.objects.create(
+            user=requester, title=f"{request_type} Finalized",
+            message=f"Your {request_type} has been approved by management and finalized. HR has been notified.",
+            type='success'
+        )
     
     else:
         # Claims & Advances move to first step of Finance Workflow
@@ -466,6 +486,11 @@ def trigger_parallel_dispatch(obj, user=None):
             
         obj.save()
         response_msg = "Management approval completed. Sent to Finance Workflow."
+        Notification.objects.create(
+            user=requester, title=f"{request_type} Approved",
+            message=f"Your {request_type} has cleared management approval and is now with Finance for verification.",
+            type='success'
+        )
 
     # --- B. THREADED ASYNCHRONOUS EXTERNAL DISPATCH ---
     def _async_dispatch_worker(obj_id, obj_class, requester_name):
@@ -506,12 +531,14 @@ def trigger_parallel_dispatch(obj, user=None):
                         active_obj.current_approver = pos_users[0]
                         active_obj.save(update_fields=['current_approver'])
                         
-                        Notification.objects.create(
-                            user=pos_users[0], target_position=ff_step.position_id,
-                            title=f"Finance Verification Pending: {request_type}",
-                            message=f"New {request_type} for {requester_name} is pending finance review.",
-                            type='info'
-                        )
+                        # Notify ALL users in the target finance position
+                        for p_user in pos_users:
+                            Notification.objects.create(
+                                user=p_user, target_position=ff_step.position_id,
+                                title=f"Finance Verification Pending: {request_type}",
+                                message=f"New {request_type} for {requester_name} is pending finance review.",
+                                type='info'
+                            )
                 elif ff_step and not ff_step.position_id and ff_step.user:
                      # Legacy fallback: notify direct user assigned in step
                      Notification.objects.create(
@@ -703,7 +730,7 @@ def notify_hr(title, message):
         )
 
 
-from .utils import _is_hr, _get_hr_users, get_hr_head, build_approval_chain
+from .utils import _is_hr, _get_hr_users, get_hr_head, build_approval_chain, _is_coo_position
 
 def update_trip_lifecycle(trip, title, description):
     """Helper to append events to the Trip's JSON lifecycle field."""
@@ -999,8 +1026,9 @@ def resolve_approver(user, members_data=None):
     # SPECIAL CASE: If direct reporting manager is COO, bypass them. 
     # The caller will treat this as is_top_level and trigger HR/Finance dispatch.
     if reporting_manager:
-        mgr_desig = str(reporting_manager.designation or '').lower()
-        if mgr_desig == 'coo' or 'chief operating officer' in mgr_desig:
+        mgr_pos = reporting_manager.get_current_position()
+        mgr_pos_name = mgr_pos.get('name') if mgr_pos else None
+        if _is_coo_position(mgr_pos_name, reporting_manager.designation):
             # Bypass COO: return None as current_approver to trigger finalized/finance routing
             return None, 0, reporting_manager, user.senior_manager, user.hod_director, None
 
@@ -1164,7 +1192,9 @@ class TripListCreateView(generics.ListCreateAPIView):
             # Parallel HR Intimation trigger for top level
             if is_top_level:
                 trigger_parallel_dispatch(trip, user)
-                if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+                rm_pos = rm.get_current_position() if rm else None
+                rm_pos_name = rm_pos.get('name') if rm_pos else None
+                if rm and _is_coo_position(rm_pos_name, rm.designation):
                     update_trip_lifecycle(trip, "Finalized", "Trip request finalized. Reporting COO bypassed and HR Intimated.")
                 else:
                     update_trip_lifecycle(trip, "Auto-Approved", "Trip request auto-approved since employee has no reporting manager. HR Intimated.")
@@ -1181,12 +1211,20 @@ class TripListCreateView(generics.ListCreateAPIView):
 
         label = "Travel" if is_local else "Trip"
         if current_approver:
+            # Notify Approver
             Notification.objects.create(
                 user=current_approver,
                 target_position=trip.approver_position,
                 title=f"New {label} Request",
                 message=f"{user.name} has submitted a new {label.lower()} request to {trip.destination}.",
                 type='info'
+            )
+            # Notify Requester
+            Notification.objects.create(
+                user=user,
+                title=f"{label} Request Submitted",
+                message=f"Your {label.lower()} request to {trip.destination} (ID: {trip.trip_id}) has been sent to {current_approver.name} for approval.",
+                type='success'
             )
         
         if trip.accommodation_requests and any('Room' in r for r in trip.accommodation_requests):
@@ -1777,11 +1815,11 @@ class ApprovalsView(APIView):
             if search_query:
                 intimations = intimations.filter(
                     Q(trip__trip_id__icontains=search_query) | 
-                    Q(trip__user__name__icontains=search_query) |
+                    Q(trip__user_name__icontains=search_query) |
                     Q(claim__trip__trip_id__icontains=search_query) |
-                    Q(claim__trip__user__name__icontains=search_query) |
+                    Q(claim__user_name__icontains=search_query) |
                     Q(advance__trip__trip_id__icontains=search_query) |
-                    Q(advance__trip__user__name__icontains=search_query)
+                    Q(advance__user_name__icontains=search_query)
                 ).distinct()
             
             # Map into lists to match the following iteration logic
@@ -1966,19 +2004,19 @@ class ApprovalsView(APIView):
         if search_query:
             trips = trips.filter(
                 Q(trip_id__icontains=search_query) |
-                Q(user__name__icontains=search_query) |
+                Q(user_name__icontains=search_query) |
                 Q(purpose__icontains=search_query) |
                 Q(source__icontains=search_query) |
                 Q(destination__icontains=search_query)
             ).distinct()
             advances = advances.filter(
                 Q(trip__trip_id__icontains=search_query) |
-                Q(trip__user__name__icontains=search_query) |
+                Q(user_name__icontains=search_query) |
                 Q(purpose__icontains=search_query)
             ).distinct()
             claims = claims.filter(
                 Q(trip__trip_id__icontains=search_query) |
-                Q(trip__user__name__icontains=search_query)
+                Q(user_name__icontains=search_query)
             ).distinct()
 
         # Apply is_disputed filter if provided (for Finance Hub dashboard stats)
@@ -2096,6 +2134,7 @@ class ApprovalsView(APIView):
                     "type": "Trip" if is_local_form else ("Monthly Tour Plan" if t.consider_as_local else "Trip"),
                     "requester": t.user.name if t.user else "Unknown", "purpose": t.purpose,
                     "status": t.status, "date": t.created_at.strftime("%b %d, %Y"),
+                    "raw_date": t.created_at,
                     "hierarchy_level": t.hierarchy_level,
                     "trip_id": t.trip_id,
                     "is_local": False if is_local_form else t.consider_as_local,
@@ -2182,7 +2221,8 @@ class ApprovalsView(APIView):
 
                     "requester": a.trip.user.name if a.trip.user else "Unknown",
                     "purpose": f"Advance: {a.purpose}", "cost": cost_label,
-                    "status": a.status, "date": a.created_at.strftime("%b %d, %Y"),
+                    "status": a.status, "date": (a.submitted_at or a.created_at).strftime("%b %d, %Y"),
+                    "raw_date": a.submitted_at or a.created_at,
                     "hierarchy_level": a.hierarchy_level,
                     "trip_id": a.trip.trip_id,
                     "is_local": False if is_local_form else a.trip.consider_as_local,
@@ -2249,7 +2289,8 @@ class ApprovalsView(APIView):
                     "requester": c.trip.user.name if c.trip.user else "Unknown",
                     "purpose": f"Claim for {c.trip.destination}", 
                     "cost": cost_label,
-                    "status": c.status, "date": c.created_at.strftime("%b %d, %Y"),
+                    "status": c.status, "date": (c.submitted_at or c.created_at).strftime("%b %d, %Y"),
+                    "raw_date": c.submitted_at or c.created_at,
                     "hierarchy_level": c.hierarchy_level,
                     "trip_id": c.trip.trip_id,
                     "is_local": False if is_local_form else c.trip.consider_as_local,
@@ -2343,7 +2384,8 @@ class ApprovalsView(APIView):
                     "id": f"DISPUTE-{d.id}", "db_id": d.id, "type": "Dispute",
                     "requester": d.raised_by.name if d.raised_by else "Unknown",
                     "purpose": f"Dispute: {d.category}", "status": d.status,
-                    "date": d.created_at.strftime("%b %d, %Y")
+                    "date": d.created_at.strftime("%b %d, %Y"),
+                    "raw_date": d.created_at
                 })
 
         # ── NEW: Include BulkActivityBatch items pending approval ──────────────────
@@ -2458,6 +2500,7 @@ class ApprovalsView(APIView):
                     "row_count": pending_row_count,
                     "purpose": f"Bulk Activity: {b.file_name or b.batch_name or 'Upload'} ({pending_row_count} row(s) pending)",
                     "status": b.status, "date": b.created_at.strftime("%b %d, %Y"),
+                    "raw_date": b.created_at,
                     "trip_id": trip_obj.trip_id, "is_local": True, "hierarchy_level": 1, 
                     "cost": f"₹{batch_total:,.2f}",
                     "data_json": b.data_json,
@@ -2501,6 +2544,10 @@ class ApprovalsView(APIView):
 
         # ─────────────────────────────────────────────────────────────────────────────
         
+        # Cross-type Chronological Sorting: Interleave all request types by submission date (newest first)
+        tasks.sort(key=lambda x: x.get('raw_date') or timezone.now(), reverse=True)
+        for task in tasks: task.pop('raw_date', None)
+
         # Paginate results only if 'page' is requested
         if request.query_params.get('page'):
             from rest_framework.pagination import PageNumberPagination
@@ -2816,12 +2863,13 @@ def handle_workflow_action(obj, action, user, data=None):
             current_approver, h_level, rm, sm, hod, pos_id = resolve_approver(requester)
             is_top_level = (current_approver is None)
             
+            was_rejected = TravelClaim.objects.filter(trip=obj, status='Rejected').exists()
             claim, _ = TravelClaim.objects.update_or_create(
                 trip=obj,
                 defaults={
                     'total_amount': total_sum,
                     'approved_amount': total_sum,
-                    'status': 'Submitted',
+                    'status': 'Resubmitted' if was_rejected else 'Submitted',
                     'requester_position': requester.active_position_id,
                     'current_approver': current_approver,
                     'approver_position': pos_id,
@@ -2829,6 +2877,23 @@ def handle_workflow_action(obj, action, user, data=None):
                     'submitted_at': timezone.now(),
                     'user_name': requester.name
                 }
+            )
+            
+            # Notify Approver with context
+            msg = f"{requester.name} has resubmitted a previously rejected claim for Trip {obj.trip_id}." if was_rejected else f"{requester.name} has submitted an expense claim for Trip {obj.trip_id}."
+            if current_approver:
+                Notification.objects.create(
+                    user=current_approver, target_position=pos_id,
+                    title="Expense Claim Resubmitted" if was_rejected else "New Expense Claim",
+                    message=msg, type='info'
+                )
+            
+            # Notify Requester
+            Notification.objects.create(
+                user=requester,
+                title="Claim Resubmitted" if was_rejected else "Claim Submitted",
+                message=f"Your claim for Trip {obj.trip_id} has been {'resubmitted' if was_rejected else 'sent'} to {current_approver.name if current_approver else 'Finance'} for approval.",
+                type='success'
             )
             update_trip_lifecycle(obj, "Settlement", "Claim submitted for review.")
             
@@ -2895,8 +2960,9 @@ def handle_workflow_action(obj, action, user, data=None):
                 
                 if potential_manager and potential_manager != requester and potential_manager.employee_id != assigned_approver.employee_id:
                     # SPECIAL CASE: Bypassing COO in legacy hierarchy resolution
-                    mgr_desig = str(potential_manager.designation or '').lower()
-                    if not (mgr_desig == 'coo' or 'chief operating officer' in mgr_desig):
+                    pm_pos = potential_manager.get_current_position()
+                    pm_pos_name = pm_pos.get('name') if pm_pos else None
+                    if not _is_coo_position(pm_pos_name, potential_manager.designation):
                         next_approver = potential_manager
                 
                 if next_approver:
@@ -2944,8 +3010,16 @@ def handle_workflow_action(obj, action, user, data=None):
                 Notification.objects.create(
                     user=next_approver, target_position=next_pos_id,
                     title=f"Pending Approval: {request_type}",
-                    message=f"{requester.name}'s {request_type} requires your review.",
+                    message=f"{requester.name}'s {request_type} requires your review (Forwarded by {user.name}).",
                     type='info'
+                )
+                
+                # Notify Requester about who approved and who it was sent to
+                Notification.objects.create(
+                    user=requester,
+                    title=f"{request_type} Approved & Forwarded",
+                    message=f"Your {request_type} was approved by {user.name} and forwarded to {next_approver.name} for the next stage.",
+                    type='success'
                 )
                 return Response({"message": f"Approved and forwarded to {next_approver.name}"})
             else:
@@ -3005,14 +3079,30 @@ def handle_workflow_action(obj, action, user, data=None):
             # Sequence handover to Finance Workflow
             first_fin_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order').first()
             if first_fin_step:
-                next_fin_user = first_fin_step.user
-                next_fin_pos_id = getattr(next_fin_user, 'active_position_id', None)
-                if not next_fin_pos_id and next_fin_user:
-                    next_fin_pos_obj = next_fin_user.get_current_position()
-                    next_fin_pos_id = next_fin_pos_obj.get('id') if next_fin_pos_obj else None
+                next_fin_user = None
+                next_fin_pos_id = first_fin_step.position_id
+                fin_users = []
+                
+                if next_fin_pos_id:
+                    fin_users = get_users_by_position(next_fin_pos_id)
+                    if fin_users: next_fin_user = fin_users[0]
+                else:
+                    next_fin_user = first_fin_step.user
+                    if next_fin_user: fin_users = [next_fin_user]
+                    next_fin_pos_id = getattr(next_fin_user, 'active_position_id', None) if next_fin_user else None
+
                 obj.current_approver = next_fin_user
                 obj.approver_position = next_fin_pos_id
                 obj.status = 'PENDING_EXECUTIVE' if first_fin_step.visibility_type != 'FINANCE_HUB' else 'PENDING_FINAL_RELEASE'
+                
+                # Alert ALL finance team members in the target position
+                for f_user in fin_users:
+                    Notification.objects.create(
+                        user=f_user, target_position=next_fin_pos_id,
+                        title=f"Finance Verification Pending: {request_type}",
+                        message=f"New {request_type} for {requester.name} is pending finance review after HR audit.",
+                        type='info'
+                    )
             else:
                 obj.current_approver = None 
             
@@ -3101,12 +3191,14 @@ def handle_workflow_action(obj, action, user, data=None):
                 if next_step:
                     target_user = None
                     target_position = next_step.position_id
+                    pos_users = []
                     
                     if target_position:
                         pos_users = get_users_by_position(target_position)
                         if pos_users: target_user = pos_users[0]
                     else:
                         target_user = next_step.user
+                        if target_user: pos_users = [target_user]
                         target_position = getattr(target_user, 'active_position_id', None) if target_user else None
                         
                     obj.current_approver = target_user
@@ -3114,6 +3206,15 @@ def handle_workflow_action(obj, action, user, data=None):
                     obj.status = 'PENDING_FINAL_RELEASE' if next_step.visibility_type == 'FINANCE_HUB' else 'PENDING_EXECUTIVE'
                     obj.save()
                     
+                    # Alert next finance approvers (Multi-user alert fix)
+                    for p_user in pos_users:
+                        Notification.objects.create(
+                            user=p_user, target_position=target_position,
+                            title=f"Finance Approval Required: {request_type}",
+                            message=f"{requester.name}'s {request_type} has been forwarded to you for finance review.",
+                            type='info'
+                        )
+
                     next_name = next_step.position_name or (target_user.name if target_user else f"Position {target_position}")
                     return Response({"message": f"Forwarded to {next_name}"})
                 else:
@@ -3257,15 +3358,26 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         if is_top_level:
             # Instantly trigger parallel HR intimation + Finance Workflow routing for top-level employees
             trigger_parallel_dispatch(claim, user)
-            if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+            rm_pos = rm.get_current_position() if rm else None
+            rm_pos_name = rm_pos.get('name') if rm_pos else None
+            if rm and _is_coo_position(rm_pos_name, rm.designation):
                 update_trip_lifecycle(trip, "Settlement", "Claim submitted. Reporting COO bypassed and routed to Finance/HR.")
         else:
             if current_approver:
+                is_resubmitted = (claim.status == 'Resubmitted')
                 Notification.objects.create(
                     user=current_approver, target_position=pos_id,
-                    title="New Expense Claim",
-                    message=f"{user.name} has submitted an expense claim for Trip {claim.trip.trip_id}.",
+                    title="Expense Claim Resubmitted" if is_resubmitted else "New Expense Claim",
+                    message=f"{user.name} has {'resubmitted' if is_resubmitted else 'submitted'} an expense claim for Trip {claim.trip.trip_id}.",
                     type='info'
+                )
+                
+                # Notify Requester
+                Notification.objects.create(
+                    user=user,
+                    title="Claim Resubmitted" if is_resubmitted else "Claim Submitted",
+                    message=f"Your claim for Trip {claim.trip.trip_id} has been sent to {current_approver.name} for approval.",
+                    type='success'
                 )
             
         # Notify HR
@@ -3340,15 +3452,26 @@ class TravelAdvanceViewSet(viewsets.ModelViewSet):
         if is_top_level:
             # Instantly trigger parallel HR intimation + Finance Workflow routing for top-level employees
             trigger_parallel_dispatch(advance, user)
-            if rm and ('coo' in str(rm.designation or '').lower() or 'chief operating officer' in str(rm.designation or '').lower()):
+            rm_pos = rm.get_current_position() if rm else None
+            rm_pos_name = rm_pos.get('name') if rm_pos else None
+            if rm and _is_coo_position(rm_pos_name, rm.designation):
                 update_trip_lifecycle(trip, "Advance Requested", "Advance request submitted. Reporting COO bypassed and routed to Finance/HR.")
         else:
             if current_approver:
+                is_resubmitted = (advance.status == 'Resubmitted')
                 Notification.objects.create(
                     user=current_approver, target_position=pos_id,
-                    title="New Advance Request",
-                    message=f"{user.name} has requested an advance of ₹{advance.requested_amount} for Trip {advance.trip.trip_id}.",
+                    title="Advance Request Resubmitted" if is_resubmitted else "New Advance Request",
+                    message=f"{user.name} has {'resubmitted' if is_resubmitted else 'requested'} an advance of ₹{advance.requested_amount} for Trip {advance.trip.trip_id}.",
                     type='info'
+                )
+                
+                # Notify Requester
+                Notification.objects.create(
+                    user=user,
+                    title="Advance Resubmitted" if is_resubmitted else "Advance Requested",
+                    message=f"Your advance request for Trip {advance.trip.trip_id} has been sent to {current_approver.name} for approval.",
+                    type='success'
                 )
             
         # Notify HR

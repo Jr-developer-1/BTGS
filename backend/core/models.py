@@ -261,19 +261,11 @@ class User(models.Model):
             
         # If the emp_code is still purely numeric (a raw HR database ID), attempt an active resolution
         if emp_code and str(emp_code).isdigit():
-                    from api_management.services import resolve_hr_id_to_info
-                    from api_management.models import SystemConfig
-                    from api_management.utils import decrypt_key
-                    try:
-                        if SystemConfig.objects.filter(key='external_api_url').exists() and SystemConfig.objects.filter(key='external_api_key').exists():
-                            v_url = SystemConfig.objects.get(key='external_api_url').value
-                            v_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
-                            v_headers = {"X-Api-Key": v_key, "Accept": "application/json"}
-                            resolved_code, resolved_name = resolve_hr_id_to_info(emp_code, v_url, v_headers)
-                            if resolved_code:
-                                emp_code = resolved_code
-                    except Exception as e:
-                        print(f"HR fallback resolution failed for {emp_code}: {e}")
+            from api_management.services import resolve_numeric_employee_id
+            resolved_code, _ = resolve_numeric_employee_id(str(emp_code).strip())
+            if resolved_code:
+                emp_code = resolved_code
+
             
         return self._get_or_create_shell_user(str(emp_code)) if emp_code else None
 
@@ -332,6 +324,36 @@ class User(models.Model):
         # or just return the first one as default
         fallback = data.get('position') or (pos_details[0] if pos_details else None)
         return fallback
+
+    def get_active_position_identifiers(self):
+        """Returns a list of all identifiers (numeric ID and string code) for the active position."""
+        ids = []
+        if self.active_position_id:
+            active_id_str = str(self.active_position_id)
+            ids.append(active_id_str)
+            
+            # 1. Try to get identifiers from the current profile data
+            pos = self.get_current_position()
+            if pos:
+                code = str(pos.get('code') or '').strip()
+                if code and code not in ids:
+                    ids.append(code)
+            
+            # 2. Fallback to global employee cache if code is missing from profile data
+            # The profile detail API often lacks the 'code' field, but the global list has it.
+            from django.core.cache import cache
+            try:
+                user_pos_map = cache.get('user_position_identifiers')
+                if user_pos_map and self.employee_id in user_pos_map:
+                    extra_ids = user_pos_map[self.employee_id].get(active_id_str)
+                    if extra_ids:
+                        for eid in extra_ids:
+                            if eid and str(eid) not in ids:
+                                ids.append(str(eid))
+            except Exception:
+                pass # Fail silently, stick with what we have
+                    
+        return ids
 
     def get_available_positions(self, force_fresh=False):
         """Returns a list of all positions the user holds."""
