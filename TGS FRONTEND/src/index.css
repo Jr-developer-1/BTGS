@@ -648,6 +648,15 @@ input[type="radio"] {
   /* Never squash branding */
 }
 
+@keyframes rotateGlobe {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
 .logo-section .logo-box {
   display: flex;
   align-items: center;
@@ -655,6 +664,11 @@ input[type="radio"] {
   background: transparent;
   padding: 0;
   transition: var(--transition);
+  perspective: 1000px;
+}
+
+.logo-section .logo-box:hover {
+  transform: scale(1.05);
 }
 
 .logo-img {
@@ -666,11 +680,8 @@ input[type="radio"] {
   transition: var(--transition);
   margin-top: -5px;
   z-index: 10;
-}
-
-.logo-img:hover {
-  transform: scale(1.05);
-  /* Interactive pop */
+  transform-style: preserve-3d;
+  animation: rotateGlobe 15s linear infinite;
 }
 
 .top-nav {
