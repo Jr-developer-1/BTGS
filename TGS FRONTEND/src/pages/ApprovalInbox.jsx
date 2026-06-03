@@ -90,6 +90,9 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
     const isFinance = dept.includes('finance') || desig.includes('finance') || rawRole === 'finance' || isFinanceHead;
     const isFinanceExec = isFinance && !isFinanceHead;
+    const isHR = dept.includes('hr') || desig.includes('hr') || rawRole === 'hr' || 
+                 dept.includes('human resources') || desig.includes('human resources') || rawRole === 'human resources' ||
+                 dept.includes('human resource') || desig.includes('human resource') || rawRole === 'human resource';
 
     useEffect(() => {
         console.log("Current User Role:", rawRole, "Dept:", dept, "Desig:", desig);
@@ -415,7 +418,6 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
     };
 
-    const isHR = dept.includes('hr') || desig.includes('hr') || rawRole === 'hr';
     const getFullUrl = (path) => {
         if (!path) return '';
         let p = String(path).trim();

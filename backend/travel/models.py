@@ -782,6 +782,18 @@ class FinanceWorkflowStep(SoftDeleteModel):
         ('BOTH', 'Both Inbox and Finance Hub'),
     ]
 
+    TRIP_TYPE_CHOICES = [
+        ('BOTH', 'Both Trip & Travel'),
+        ('TRIP', 'Trip Only (Local)'),
+        ('TRAVEL', 'Travel Only (Outstation)'),
+        ('NONE', 'None'),
+    ]
+
+    TRIP_CONTROL_CHOICES = [
+        ('APPROVAL', 'Approval'),
+        ('MARK_READ', 'Mark as Read'),
+    ]
+
     user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='finance_workflow_steps', null=True, blank=True)
     position_id = models.CharField(max_length=50, null=True, blank=True)
     position_name = models.CharField(max_length=100, null=True, blank=True)
@@ -790,6 +802,9 @@ class FinanceWorkflowStep(SoftDeleteModel):
     can_edit_amount = models.BooleanField(default=False)
     visibility_type = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default='INBOX')
     is_active = models.BooleanField(default=True)
+    
+    trip_type = models.CharField(max_length=20, choices=TRIP_TYPE_CHOICES, default='BOTH')
+    trip_control = models.CharField(max_length=20, choices=TRIP_CONTROL_CHOICES, default='APPROVAL')
 
     class Meta:
         ordering = ['sequence_order']
@@ -800,10 +815,28 @@ class FinanceWorkflowStep(SoftDeleteModel):
         name = self.position_name or (self.user.name if self.user else 'Unknown')
         return f"Step {self.sequence_order}: {name} ({self.visibility_type})"
 
+
+class FinanceIntimation(models.Model):
+    trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='finance_intimations')
+    finance_user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='finance_intimations')
+    finance_position = models.CharField(max_length=50, blank=True)
+    is_approval = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Finance Intimation"
+        verbose_name_plural = "Finance Intimations"
+
+    def __str__(self):
+        return f"Finance Intimation: {self.finance_user.name} for Trip {self.trip.trip_id} (Approval: {self.is_approval})"
+
 class HRPositionConfig(SoftDeleteModel):
     position_id = models.CharField(max_length=50, unique=True)
     position_name = models.CharField(max_length=100)
     department_name = models.CharField(max_length=100, null=True, blank=True)
+    can_approve = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -820,6 +853,7 @@ class HRIntimation(models.Model):
     
     hr_user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='hr_intimations')
     hr_position = models.CharField(max_length=50, null=True, blank=True)
+    is_approval = models.BooleanField(default=False)
     is_read = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -832,5 +866,6 @@ class HRIntimation(models.Model):
     def __str__(self):
         target = self.trip or self.claim or self.advance
         return f"Intimation for {target} to {self.hr_user.name} ({'Read' if self.is_read else 'Unread'})"
+
 
 

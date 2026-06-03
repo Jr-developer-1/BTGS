@@ -28,6 +28,7 @@ const UserManagement = () => {
     const [apiKeyMissing, setApiKeyMissing] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterDepartment, setFilterDepartment] = useState('All');
+    const [filterProject, setFilterProject] = useState('All');
     const [processingId, setProcessingId] = useState(null);
     const [isSyncingAll, setIsSyncingAll] = useState(false);
     const [showSyncModal, setShowSyncModal] = useState(false);
@@ -231,18 +232,19 @@ const UserManagement = () => {
     };
 
     const exportToCSV = () => {
-        const headers = ['Employee ID', 'Name', 'Department', 'Status'];
+        const headers = ['Employee ID', 'Name', 'Department', 'Project', 'Status'];
         const csvRows = [
             headers.join(','),
             ...filteredEmployees.map(emp => {
                 const code = emp.employee_code || emp.employee?.employee_code || 'N/A';
                 const name = emp.name || emp.employee?.name || 'Unknown';
                 const dept = emp.department || emp.position?.department || 'N/A';
+                const proj = emp.project?.name || 'N/A';
                 const status = emp.isUser ? 'Registered' : 'Not Registered';
-                return `"${code}","${name}","${dept}","${status}"`;
+                return `"${code}","${name}","${dept}","${proj}","${status}"`;
             })
         ];
-        
+
         const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -255,15 +257,18 @@ const UserManagement = () => {
     };
 
     const uniqueDepartments = ['All', ...new Set(employees.map(emp => emp.department || emp.position?.department).filter(Boolean))];
+    const uniqueProjects = ['All', ...new Set(employees.map(emp => emp.project?.name).filter(Boolean))];
 
     const filteredEmployees = employees.filter(emp => {
         const searchLower = searchTerm.toLowerCase();
         const code = (emp.employee_code || emp.employee?.employee_code || '').toLowerCase();
         const name = (emp.name || emp.employee?.name || '').toLowerCase();
         const dept = (emp.department || emp.position?.department || '').toLowerCase();
-        const matchSearch = code.includes(searchLower) || name.includes(searchLower) || dept.includes(searchLower);
+        const proj = (emp.project?.name || '').toLowerCase();
+        const matchSearch = code.includes(searchLower) || name.includes(searchLower) || dept.includes(searchLower) || proj.includes(searchLower);
         const matchDept = filterDepartment === 'All' || dept === filterDepartment.toLowerCase();
-        return matchSearch && matchDept;
+        const matchProj = filterProject === 'All' || proj === filterProject.toLowerCase();
+        return matchSearch && matchDept && matchProj;
     });
 
     return (
@@ -344,13 +349,32 @@ const UserManagement = () => {
                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                         <div style={{ position: 'relative' }}>
                             <Filter size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
-                            <select 
-                                value={filterDepartment} 
-                                onChange={(e) => setFilterDepartment(e.target.value)}
+                            <select
+                                value={filterDepartment}
+                                onChange={(e) => {
+                                    setFilterDepartment(e.target.value);
+                                    setCurrentPage(1);
+                                }}
                                 style={{ appearance: 'none', padding: '12px 36px 12px 36px', borderRadius: '10px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '14px', outline: 'none', cursor: 'pointer', color: '#334155', fontWeight: '500' }}
                             >
                                 {uniqueDepartments.map((dept, i) => (
                                     <option key={i} value={dept}>{dept}</option>
+                                ))}
+                            </select>
+                            <ChevronDown size={16} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b', pointerEvents: 'none' }} />
+                        </div>
+                        <div style={{ position: 'relative' }}>
+                            <Briefcase size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                            <select
+                                value={filterProject}
+                                onChange={(e) => {
+                                    setFilterProject(e.target.value);
+                                    setCurrentPage(1);
+                                }}
+                                style={{ appearance: 'none', padding: '12px 36px 12px 36px', borderRadius: '10px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '14px', outline: 'none', cursor: 'pointer', color: '#334155', fontWeight: '500' }}
+                            >
+                                {uniqueProjects.map((proj, i) => (
+                                    <option key={i} value={proj}>{proj}</option>
                                 ))}
                             </select>
                             <ChevronDown size={16} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: '#64748b', pointerEvents: 'none' }} />
@@ -401,9 +425,14 @@ const UserManagement = () => {
                                                     </div>
                                                 </td>
                                                 <td style={{ padding: '16px 24px' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#334155', fontSize: '14px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#334155', fontSize: '14px', fontWeight: '500' }}>
                                                         <Building2 size={14} color="#64748b" /> {displayDept}
                                                     </div>
+                                                    {emp.project?.name && (
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontSize: '12px', marginTop: '4px' }}>
+                                                            <Briefcase size={12} color="#94a3b8" /> {emp.project.name}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td style={{ padding: '16px 24px' }}>
                                                     {emp.isUser ? (
@@ -498,7 +527,7 @@ const UserManagement = () => {
                         </table>
                     </div>
                 )}
-                
+
                 {/* Pagination Controls */}
                 {!loading && !error && totalPages > 1 && (
                     <div style={{ padding: '16px 24px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f8fafc' }}>

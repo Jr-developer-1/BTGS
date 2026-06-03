@@ -292,9 +292,15 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
       if (id.startsWith('BATCH-') && action.toLowerCase() != 'markread') {
         final batchId = id.replaceAll('BATCH-', '');
+        String backendAction = action.toLowerCase();
+        if (backendAction == 'approvevalid') {
+          backendAction = 'approve';
+        } else if (backendAction == 'rejectall') {
+          backendAction = 'reject';
+        }
         await _tripService.handleBulkBatchAction(
           batchId,
-          action.toLowerCase(),
+          backendAction,
           extraData: finalExtra,
         );
       } else {
@@ -1304,15 +1310,20 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     final bool isExpanded = _expandedBatchIds.contains(batchId);
 
     final bool canEdit =
-        (task['details']?['permissions']?['can_edit_amount'] ?? task['permissions']?['can_edit_amount']) ?? isFinanceExec;
+        (task['details']?['permissions']?['can_edit_amount'] ??
+            task['permissions']?['can_edit_amount']) ??
+        isFinanceExec;
 
     // Initialize amount and controller for Finance Executive if not already set
     // Initialize amount and controller based on Admin-defined permissions
     if (canEdit && !_batchControllers.containsKey(batchId)) {
       final dynamic details = task['details'] ?? {};
-      final execRaw = (task['executive_approved_amount'] ?? details['executive_approved_amount'])?.toString();
+      final execRaw =
+          (task['executive_approved_amount'] ??
+                  details['executive_approved_amount'])
+              ?.toString();
       final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
-      
+
       String initialValue;
       if (execRaw != null && execVal > 0) {
         initialValue = execRaw;
@@ -1436,7 +1447,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               ),
                             ),
                             if (isExpanded) ...[
-                              if ((task['purpose'] ?? '').toString().isNotEmpty) ...[
+                              if ((task['purpose'] ?? '')
+                                  .toString()
+                                  .isNotEmpty) ...[
                                 const SizedBox(height: 2),
                                 Text(
                                   task['purpose'].toString(),
@@ -1721,10 +1734,17 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             controller: _batchControllers[batchId],
                             onChanged: (v) {
                               double entered = double.tryParse(v) ?? 0.0;
-                              final rawRequested = task['details']?['requested_amount']?.toString() ?? 
-                                                 task['cost']?.toString() ?? '0';
-                              final requestedStr = rawRequested.replaceAll('₹', '').replaceAll(',', '').trim();
-                              double requested = double.tryParse(requestedStr) ?? 0.0;
+                              final rawRequested =
+                                  task['details']?['requested_amount']
+                                      ?.toString() ??
+                                  task['cost']?.toString() ??
+                                  '0';
+                              final requestedStr = rawRequested
+                                  .replaceAll('₹', '')
+                                  .replaceAll(',', '')
+                                  .trim();
+                              double requested =
+                                  double.tryParse(requestedStr) ?? 0.0;
 
                               if (entered > requested) {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -1756,56 +1776,66 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   ],
 
                   // Dynamic Recommendation Card (visible to any subsequent level)
-                  Builder(builder: (context) {
-                    final rawInherited = (task['executive_approved_amount'] ?? task['details']?['executive_approved_amount'])?.toString();
-                    final inheritedAmt = double.tryParse(rawInherited ?? '0') ?? 0.0;
-                    
-                    if (inheritedAmt <= 0) return const SizedBox.shrink();
+                  Builder(
+                    builder: (context) {
+                      final rawInherited =
+                          (task['executive_approved_amount'] ??
+                                  task['details']?['executive_approved_amount'])
+                              ?.toString();
+                      final inheritedAmt =
+                          double.tryParse(rawInherited ?? '0') ?? 0.0;
 
-                    return Column(
-                      children: [
-                        const SizedBox(height: 24),
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF0F9FF),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xFFBAE6FD)),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  task['workflow_label'] ?? 'Previous Level Recommendation',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                    color: const Color(0xFF0369A1),
+                      if (inheritedAmt <= 0) return const SizedBox.shrink();
+
+                      return Column(
+                        children: [
+                          const SizedBox(height: 24),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF0F9FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFBAE6FD),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    task['workflow_label'] ??
+                                        'Previous Level Recommendation',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF0369A1),
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '₹${inheritedAmt.toStringAsFixed(2)}',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w900,
-                                  color: const Color(0xFFBB0633),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '₹${inheritedAmt.toStringAsFixed(2)}',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                    color: const Color(0xFFBB0633),
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    );
-                  }),
+                        ],
+                      );
+                    },
+                  ),
 
                   const SizedBox(height: 20),
 
                   // Action Buttons
-                  if (_activeTab != 'history')
-                    if (task['can_mark_read'] == true || task['is_intimation'] == true)
+                  if (task['is_intimation'] == true)
+                    if (task['can_mark_read'] == true &&
+                        _activeTab != 'history')
                       Padding(
                         padding: const EdgeInsets.only(top: 10),
                         child: SizedBox(
@@ -1837,63 +1867,104 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                         ),
                       )
                     else
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () =>
-                                  _handleAction(task['id'], 'Approve'),
-                              icon: const Icon(
-                                Icons.check_circle_rounded,
-                                size: 20,
-                              ),
-                              label: Text(
-                                canEdit
-                                    ? 'Verify & Approve (₹$currentExecAmount)'
-                                    : (isFinanceExec || isFinanceHead)
-                                        ? 'Authorize Payment (₹$currentExecAmount)'
-                                        : 'Approve All',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13,
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFD1FAE5),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: Color(0xFF059669),
+                                  size: 16,
                                 ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF10B981),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Acknowledged (Outbox)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: const Color(0xFF059669),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
                                 ),
-                                elevation: 0,
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                  else if (_activeTab != 'history')
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () =>
+                                _handleAction(task['id'], 'Approve'),
+                            icon: const Icon(
+                              Icons.check_circle_rounded,
+                              size: 20,
+                            ),
+                            label: Text(
+                              canEdit
+                                  ? 'Verify & Approve (₹$currentExecAmount)'
+                                  : (isFinanceExec || isFinanceHead)
+                                  ? 'Authorize Payment (₹$currentExecAmount)'
+                                  : 'Approve All',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF10B981),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              elevation: 0,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () =>
+                                _handleAction(task['id'], 'Reject'),
+                            icon: const Icon(Icons.cancel_rounded, size: 20),
+                            label: Text(
+                              'Reject All',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF4444),
+                              side: const BorderSide(
+                                color: Color(0xFFFEE2E2),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 14,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () =>
-                                  _handleAction(task['id'], 'Reject'),
-                              icon: const Icon(Icons.cancel_rounded, size: 20),
-                              label: Text(
-                                'Reject All',
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFFEF4444),
-                                side: const BorderSide(color: Color(0xFFFEE2E2)),
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -2205,7 +2276,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       _miniImageThumbnail(row['odoEndImg'], "End"),
                     if (row['jobReportAttachments'] != null)
                       ...(row['jobReportAttachments'] as List)
-                          .map((s) => _miniImageThumbnail(s.toString(), "Job Pic"))
+                          .map(
+                            (s) => _miniImageThumbnail(s.toString(), "Job Pic"),
+                          )
                           .toList(),
                   ],
                 ),
@@ -2259,7 +2332,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
               !(task['type']?.toString() ?? '').toLowerCase().contains(
                 'claim',
               ) &&
-              !(task['can_mark_read'] == true || task['is_intimation'] == true)) ...[
+              !(task['is_intimation'] == true)) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -2711,12 +2784,16 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                        color:
+                            (exp['deviation_reason']?.toString() ?? '')
+                                .startsWith('[Skipped]')
                             ? const Color(0xFFFEF2F2)
                             : const Color(0xFFFFFBEB),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                          color:
+                              (exp['deviation_reason']?.toString() ?? '')
+                                  .startsWith('[Skipped]')
                               ? const Color(0xFFFCA5A5)
                               : const Color(0xFFF59E0B),
                           width: 1.2,
@@ -2728,23 +2805,30 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           Row(
                             children: [
                               Icon(
-                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? Icons.remove_circle_outline_rounded
                                     : Icons.warning_amber_rounded,
                                 size: 13,
-                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                color:
+                                    (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? const Color(0xFFEF4444)
                                     : const Color(0xFFF59E0B),
                               ),
                               const SizedBox(width: 5),
                               Text(
-                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? 'NOT VISITED'
                                     : 'ROUTE DEVIATION',
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 9,
                                   fontWeight: FontWeight.w900,
-                                  color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                  color:
+                                      (exp['deviation_reason']?.toString() ??
+                                              '')
+                                          .startsWith('[Skipped]')
                                       ? const Color(0xFF991B1B)
                                       : const Color(0xFF92400E),
                                   letterSpacing: 0.5,
@@ -2875,7 +2959,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                color:
+                                    (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? const Color(0xFF991B1B)
                                     : const Color(0xFF92400E),
                               ),
@@ -3160,7 +3246,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   top: 10,
                   right: 10,
                   child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ),
@@ -3252,7 +3342,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
     // Prefill amount exactly like web: Use previously edited amount if available, else requested amount
     final dynamic details = widget.task['details'] ?? {};
-    final execRaw = (widget.task['executive_approved_amount'] ?? details['executive_approved_amount'])?.toString();
+    final execRaw =
+        (widget.task['executive_approved_amount'] ??
+                details['executive_approved_amount'])
+            ?.toString();
     final execVal = double.tryParse(execRaw ?? '0') ?? 0.0;
 
     if (execRaw != null && execVal > 0) {
@@ -3601,7 +3694,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 _buildInfoGrid(task),
                 // Dynamic Finance Editing: Show edit field if permission is granted from Admin configuration
                 if (widget.task['permissions']?['can_edit_amount'] == true ||
-                    widget.task['details']?['permissions']?['can_edit_amount'] == true) ...[
+                    widget.task['details']?['permissions']?['can_edit_amount'] ==
+                        true) ...[
                   const SizedBox(height: 32),
                   Text(
                     'Audit Finalization (Edit Amount)',
@@ -3640,10 +3734,17 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           controller: _detailExecController,
                           onChanged: (v) {
                             double entered = double.tryParse(v) ?? 0.0;
-                            final rawRequested = widget.task['details']?['requested_amount']?.toString() ?? 
-                                               widget.task['cost']?.toString() ?? '0';
-                            final requestedStr = rawRequested.replaceAll('₹', '').replaceAll(',', '').trim();
-                            double requested = double.tryParse(requestedStr) ?? 0.0;
+                            final rawRequested =
+                                widget.task['details']?['requested_amount']
+                                    ?.toString() ??
+                                widget.task['cost']?.toString() ??
+                                '0';
+                            final requestedStr = rawRequested
+                                .replaceAll('₹', '')
+                                .replaceAll(',', '')
+                                .trim();
+                            double requested =
+                                double.tryParse(requestedStr) ?? 0.0;
 
                             if (entered > requested) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -3968,7 +4069,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
             ),
           ),
         ),
-        if (!widget.isHistory) _buildBottomActions(),
+        _buildBottomActions(),
       ],
     );
   }
@@ -3986,16 +4087,22 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _infoBlock('Request Type', task['type'] ?? 'N/A')),
+              Expanded(
+                child: _infoBlock('Request Type', task['type'] ?? 'N/A'),
+              ),
               const SizedBox(width: 16),
-              Expanded(child: _infoBlock('Estimated Cost', task['cost'] ?? '0')),
+              Expanded(
+                child: _infoBlock('Estimated Cost', task['cost'] ?? '0'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: _infoBlock('Submitted Date', task['date'] ?? 'N/A')),
+              Expanded(
+                child: _infoBlock('Submitted Date', task['date'] ?? 'N/A'),
+              ),
               const SizedBox(width: 16),
               Expanded(child: _infoBlock('Risk Score', task['risk'] ?? 'Low')),
             ],
@@ -4060,7 +4167,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     }
 
     widget.onAction(
-      actionToPerform ?? action,
+      actionToPerform,
       extra: extra.isEmpty ? null : extra,
     );
   }
@@ -4071,45 +4178,90 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       return _buildPayoutController();
     }
 
-    if (widget.task['can_mark_read'] == true || widget.task['is_intimation'] == true) {
-      return Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 20,
-              offset: const Offset(0, -4),
-            ),
-          ],
-          border: const Border(top: BorderSide(color: Color(0xFFF1F5F9))),
-        ),
-        child: SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () => _triggerAction('MarkRead'),
-            icon: const Icon(Icons.mark_email_read_rounded, size: 20),
-            label: Text(
-              'Mark as Read',
-              style: GoogleFonts.plusJakartaSans(
-                fontWeight: FontWeight.w900,
-                color: Colors.white,
-                letterSpacing: 0.5,
+    if (widget.task['is_intimation'] == true) {
+      if (widget.task['can_mark_read'] == true && !widget.isHistory) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 20,
+                offset: const Offset(0, -4),
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFA9052E),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(18),
+            ],
+            border: const Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _triggerAction('MarkRead'),
+              icon: const Icon(Icons.mark_email_read_rounded, size: 20),
+              label: Text(
+                'Mark as Read',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
               ),
-              elevation: 8,
-              shadowColor: const Color(0xFFA9052E).withOpacity(0.4),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFA9052E),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                elevation: 8,
+                shadowColor: const Color(0xFFA9052E).withOpacity(0.4),
+              ),
             ),
           ),
-        ),
-      );
+        );
+      } else {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 20,
+                offset: const Offset(0, -4),
+              ),
+            ],
+            border: const Border(top: BorderSide(color: Color(0xFFF1F5F9))),
+          ),
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFD1FAE5),
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Acknowledged (Outbox)',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: const Color(0xFF059669),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    if (widget.isHistory) {
+      return const SizedBox.shrink();
     }
 
     String rejectLabel = isFinanceExec ? 'Return to HR' : 'Reject';
@@ -4635,7 +4787,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               !(widget.task['type']?.toString() ?? '').toLowerCase().contains(
                 'claim',
               ) &&
-              !(widget.task['can_mark_read'] == true || widget.task['is_intimation'] == true)) ...[
+              !(widget.task['is_intimation'] == true)) ...[
             const SizedBox(height: 10),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
@@ -5205,12 +5357,16 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                        color:
+                            (exp['deviation_reason']?.toString() ?? '')
+                                .startsWith('[Skipped]')
                             ? const Color(0xFFFEF2F2)
                             : const Color(0xFFFFFBEB),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                          color:
+                              (exp['deviation_reason']?.toString() ?? '')
+                                  .startsWith('[Skipped]')
                               ? const Color(0xFFFCA5A5)
                               : const Color(0xFFF59E0B),
                           width: 1.2,
@@ -5222,23 +5378,30 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           Row(
                             children: [
                               Icon(
-                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? Icons.remove_circle_outline_rounded
                                     : Icons.warning_amber_rounded,
                                 size: 13,
-                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                color:
+                                    (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? const Color(0xFFEF4444)
                                     : const Color(0xFFF59E0B),
                               ),
                               const SizedBox(width: 5),
                               Text(
-                                (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? 'NOT VISITED'
                                     : 'ROUTE DEVIATION',
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 9,
                                   fontWeight: FontWeight.w900,
-                                  color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                  color:
+                                      (exp['deviation_reason']?.toString() ??
+                                              '')
+                                          .startsWith('[Skipped]')
                                       ? const Color(0xFF991B1B)
                                       : const Color(0xFF92400E),
                                   letterSpacing: 0.5,
@@ -5369,7 +5532,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: (exp['deviation_reason']?.toString() ?? '').startsWith('[Skipped]')
+                                color:
+                                    (exp['deviation_reason']?.toString() ?? '')
+                                        .startsWith('[Skipped]')
                                     ? const Color(0xFF991B1B)
                                     : const Color(0xFF92400E),
                               ),
@@ -5896,7 +6061,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   top: 10,
                   right: 10,
                   child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 30,
+                    ),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ),

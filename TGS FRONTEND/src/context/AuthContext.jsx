@@ -70,10 +70,11 @@ export const AuthProvider = ({ children }) => {
         position_id: positionId
       });
       
-      const { user: userDetails } = response.data;
+      const { token, user: userDetails } = response.data;
       const updatedUser = {
         ...user,
         ...userDetails,
+        token: token || user.token,
         role: userDetails?.role?.toLowerCase() || 'employee'
       };
       

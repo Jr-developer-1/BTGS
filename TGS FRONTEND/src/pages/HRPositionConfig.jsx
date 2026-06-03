@@ -98,6 +98,16 @@ const HRPositionConfig = () => {
         }
     };
 
+    const toggleCanApprove = async (id, currentStatus) => {
+        try {
+            const response = await api.patch(`/api/hr-position-config/${id}/`, { can_approve: !currentStatus });
+            setConfigs(configs.map(c => c.id === id ? response.data : c));
+            showToast('Position approval authority updated', 'success');
+        } catch (err) {
+            showToast('Failed to update approval authority', 'error');
+        }
+    };
+
     if (loading && configs.length === 0) {
         return (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh' }}>
@@ -120,7 +130,7 @@ const HRPositionConfig = () => {
                         <Shield size={16} /> Manage target HR Positions for Intimation (Mark as Read) dispatch routing.
                     </p>
                 </div>
-                <button 
+                <button
                     onClick={() => { setShowAddModal(true); setSearchQuery(''); setSearchResults([]); }}
                     style={{ backgroundColor: '#8b5cf6', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600', boxShadow: '0 4px 6px -1px rgba(139, 92, 246, 0.2)', cursor: 'pointer' }}
                 >
@@ -130,8 +140,8 @@ const HRPositionConfig = () => {
 
             {/* Dashboard Summary / Intro */}
             <div style={{ backgroundColor: '#ede9fe', padding: '20px', borderRadius: '16px', border: '1px solid #ddd6fe', color: '#5b21b6', marginBottom: '24px', lineHeight: '1.5' }}>
-                <h3 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: '#4c1d95' }}>Position-Based HR Information Matrix</h3>
-                Employees occupying positions configured below will receive all auto-approved top-level Trip Requests and final Claims/Advances into their Inboxes. HR receives these strictly as information entries requiring <strong>Mark as Read</strong> acknowledgement. No formal budget approval authority is delegated.
+                <h3 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: '#4c1d95' }}>Position-Based HR Information & Approval Matrix</h3>
+                Employees occupying positions configured below will receive all auto-approved top-level Trip Requests and final Claims/Advances into their Inboxes. By default, HR receives these as information entries requiring <strong>Mark as Read</strong> acknowledgement. If <strong>Formal Approval</strong> is enabled, requests from employees reporting to the COO will require active approval/rejection from HR before completion.
             </div>
 
             {/* Config Table */}
@@ -142,12 +152,13 @@ const HRPositionConfig = () => {
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>POSITION IDENTIFIER</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>POSITION NAME</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>ROUTING STATUS</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>APPROVAL AUTHORITY</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px', textAlign: 'right' }}>ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody>
                         {configs.length === 0 ? (
-                            <tr><td colSpan="4" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No HR positions configured. Configure one to start parallel dispatch.</td></tr>
+                            <tr><td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No HR positions configured. Configure one to start parallel dispatch.</td></tr>
                         ) : (
                             configs.map((cfg) => (
                                 <tr key={cfg.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
@@ -163,16 +174,16 @@ const HRPositionConfig = () => {
                                         <div style={{ fontWeight: '600', color: '#1e293b' }}>{cfg.position_name}</div>
                                     </td>
                                     <td style={{ padding: '16px 24px' }}>
-                                        <button 
+                                        <button
                                             onClick={() => toggleActive(cfg.id, cfg.is_active)}
-                                            style={{ 
-                                                display: 'inline-flex', 
-                                                alignItems: 'center', 
-                                                gap: '6px', 
-                                                padding: '6px 12px', 
-                                                borderRadius: '20px', 
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                padding: '6px 12px',
+                                                borderRadius: '20px',
                                                 border: 'none',
-                                                fontSize: '13px', 
+                                                fontSize: '13px',
                                                 fontWeight: '600',
                                                 cursor: 'pointer',
                                                 backgroundColor: cfg.is_active ? '#dcfce7' : '#fee2e2',
@@ -183,8 +194,29 @@ const HRPositionConfig = () => {
                                             {cfg.is_active ? 'Active Routing' : 'Inactive'}
                                         </button>
                                     </td>
+                                    <td style={{ padding: '16px 24px' }}>
+                                        <button
+                                            onClick={() => toggleCanApprove(cfg.id, cfg.can_approve)}
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                padding: '6px 12px',
+                                                borderRadius: '20px',
+                                                border: 'none',
+                                                fontSize: '13px',
+                                                fontWeight: '600',
+                                                cursor: 'pointer',
+                                                backgroundColor: cfg.can_approve ? '#dbeafe' : '#f3f4f6',
+                                                color: cfg.can_approve ? '#2563eb' : '#4b5563'
+                                            }}
+                                        >
+                                            {cfg.can_approve ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                                            {cfg.can_approve ? 'Formal Approval' : 'Mark as Read'}
+                                        </button>
+                                    </td>
                                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                                        <button 
+                                        <button
                                             onClick={() => removePosition(cfg.id)}
                                             style={{ color: '#ef4444', border: 'none', background: 'none', cursor: 'pointer', padding: '8px' }}
                                         >
@@ -210,9 +242,9 @@ const HRPositionConfig = () => {
                         <div style={{ padding: '24px' }}>
                             <div style={{ position: 'relative', marginBottom: '16px' }}>
                                 <Search size={18} style={{ position: 'absolute', left: '12px', top: '14px', color: '#94a3b8' }} />
-                                <input 
-                                    type="text" 
-                                    placeholder="Search position name (e.g., CHRO, HR Executive)..." 
+                                <input
+                                    type="text"
+                                    placeholder="Search position name (e.g., CHRO, HR Executive)..."
                                     value={searchQuery}
                                     onChange={(e) => handleSearch(e.target.value)}
                                     style={{ width: '100%', padding: '12px 12px 12px 40px', borderRadius: '10px', border: '1px solid #cbd5e1', outline: 'none', boxSizing: 'border-box' }}
@@ -225,8 +257,8 @@ const HRPositionConfig = () => {
                                     <div style={{ padding: '30px', textAlign: 'center' }}><RefreshCw style={{ animation: 'spin 1s linear infinite', color: '#8b5cf6' }} /></div>
                                 ) : searchResults.length > 0 ? (
                                     searchResults.map(item => (
-                                        <div 
-                                            key={item.id} 
+                                        <div
+                                            key={item.id}
                                             onClick={() => addPosition(item)}
                                             style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}
                                             onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'}

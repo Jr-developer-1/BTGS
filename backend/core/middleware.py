@@ -51,6 +51,15 @@ class CustomAuthMiddleware:
                         session.save(update_fields=['last_activity'])
                         
                         user = session.user
+                        
+                        # Dynamically resolve and set active_position_id on user instance
+                        active_pos_id = request.headers.get('X-Active-Position-Id') or payload.get('active_position_id')
+                        if not active_pos_id:
+                            available = user.get_available_positions()
+                            if available:
+                                active_pos_id = str(available[0].get('id'))
+                        user.active_position_id = active_pos_id
+                        
                         request.custom_user = user
                         request.user = user
                         request.active_session = session

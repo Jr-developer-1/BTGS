@@ -263,26 +263,26 @@ const MyTrips = () => {
     const getDisplayStatus = (backendStatus) => {
         if (!backendStatus) return 'Pending';
         const s = backendStatus.toLowerCase();
-        
+
         // 1. Settled / Paid / Completed
         if (['settled', 'completed', 'paid', 'transferred'].includes(s)) {
             return 'Settled';
         }
-        
+
         // 2. Approved / Mid-lifecycle
         if (['approved', 'claim submitted', 'manager approved', 'hr approved', 'under process', 'partially completed', 'forwarded'].includes(s)) {
             return 'Approved';
         }
-        
+
         // 3. Pending Approval / Submitted
         if (['pending', 'submitted', 'resubmitted', 'draft', 'pending_hr', 'pending_executive', 'pending_head', 'pending_final_release'].includes(s)) {
             return 'Pending';
         }
-        
+
         // Fallbacks
         if (s.includes('pending')) return 'Pending';
         if (s.includes('reject')) return 'Rejected';
-        
+
         return 'Approved'; // Default fallback to Approved
     };
 

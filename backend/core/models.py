@@ -33,7 +33,33 @@ class User(models.Model):
     ])
 
     created_at = models.DateTimeField(auto_now_add=True)
-    active_position_id = models.CharField(max_length=50, null=True, blank=True)
+
+    @property
+    def active_position_id(self):
+        if hasattr(self, '_active_position_id') and self._active_position_id:
+            return self._active_position_id
+        
+        from .middleware import get_current_request
+        request = get_current_request()
+        if request:
+            val = request.headers.get('X-Active-Position-Id')
+            if val:
+                self._active_position_id = str(val).strip()
+                return self._active_position_id
+                
+        data = self._get_api_data()
+        if data:
+            pos = data.get('position') or (data.get('positions_details', [])[0] if data.get('positions_details', []) else None)
+            if pos:
+                val = str(pos.get('id'))
+                self._active_position_id = val
+                return val
+            
+        return None
+
+    @active_position_id.setter
+    def active_position_id(self, value):
+        self._active_position_id = str(value) if value else None
 
     # Finance Reconcilition Wallet
     carry_forward_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)

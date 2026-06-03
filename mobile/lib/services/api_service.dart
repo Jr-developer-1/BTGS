@@ -152,8 +152,9 @@ class ApiService {
 
       if (response is Map<String, dynamic> && response.containsKey('user')) {
         final updatedUser = response['user'] as Map<String, dynamic>;
-        // Sync token from memory to updated user map
-        updatedUser['token'] = _authToken ?? '';
+        final newToken = response['token']?.toString() ?? _authToken ?? '';
+        _authToken = newToken;
+        updatedUser['token'] = newToken;
         await setUser(updatedUser);
         LoggerService.log(
             'SESSION: Switched position to ${updatedUser['designation']}');
@@ -172,6 +173,9 @@ class ApiService {
     final headers = Map<String, String>.from(ApiConstants.headers);
     if (includeAuth && _authToken != null) {
       headers['Authorization'] = 'Bearer $_authToken';
+    }
+    if (_currentUser != null && _currentUser!.containsKey('active_position_id')) {
+      headers['X-Active-Position-Id'] = _currentUser!['active_position_id'].toString();
     }
     // Automatically include the System API Key if present
     if (ApiConstants.apiKey.isNotEmpty) {

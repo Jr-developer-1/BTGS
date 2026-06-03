@@ -25,6 +25,9 @@ api.interceptors.request.use((config) => {
             if (user && user.token) {
                 config.headers.Authorization = `Bearer ${user.token}`;
             }
+            if (user && user.active_position_id) {
+                config.headers['X-Active-Position-Id'] = user.active_position_id;
+            }
         }
     } catch (error) {
         console.error("Error parsing user from sessionStorage:", error);

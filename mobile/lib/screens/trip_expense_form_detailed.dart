@@ -2995,8 +2995,10 @@ class _TripExpenseFormDetailedScreenState
                   onImg: (img) => setState(() => _odoStartImg = img),
                   isStart: true,
                   // Lock start fields if already saved/present in an existing record
-                  isEnabled: widget.expenseData == null ||
-                      (_odoStartController.text.isEmpty && _odoStartImg == null),
+                  isEnabled:
+                      widget.expenseData == null ||
+                      (_odoStartController.text.isEmpty &&
+                          _odoStartImg == null),
                   isLocationEnabled: !_fromBulkUpload,
                 ),
                 const SizedBox(height: 32),
@@ -3594,7 +3596,11 @@ class _TripExpenseFormDetailedScreenState
             billStr,
             fit: BoxFit.contain,
             errorBuilder: (_, __, ___) => const Center(
-              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+              child: Icon(
+                Icons.broken_image_rounded,
+                size: 64,
+                color: Colors.grey,
+              ),
             ),
           );
         } else if (billStr.length > 200) {
@@ -3604,17 +3610,28 @@ class _TripExpenseFormDetailedScreenState
             if (base64Str.contains('base64,')) {
               base64Str = base64Str.split('base64,').last;
             }
-            base64Str = base64Str.replaceAll('\n', '').replaceAll('\r', '').replaceAll(' ', '');
+            base64Str = base64Str
+                .replaceAll('\n', '')
+                .replaceAll('\r', '')
+                .replaceAll(' ', '');
             imageWidget = Image.memory(
               base64Decode(base64Str),
               fit: BoxFit.contain,
               errorBuilder: (_, __, ___) => const Center(
-                child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+                child: Icon(
+                  Icons.broken_image_rounded,
+                  size: 64,
+                  color: Colors.grey,
+                ),
               ),
             );
           } catch (e) {
             imageWidget = const Center(
-              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+              child: Icon(
+                Icons.broken_image_rounded,
+                size: 64,
+                color: Colors.grey,
+              ),
             );
           }
         } else {
@@ -3623,13 +3640,19 @@ class _TripExpenseFormDetailedScreenState
             File(billStr),
             fit: BoxFit.contain,
             errorBuilder: (_, __, ___) => const Center(
-              child: Icon(Icons.broken_image_rounded, size: 64, color: Colors.grey),
+              child: Icon(
+                Icons.broken_image_rounded,
+                size: 64,
+                color: Colors.grey,
+              ),
             ),
           );
         }
 
         return Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
           backgroundColor: Colors.white,
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -3659,7 +3682,10 @@ class _TripExpenseFormDetailedScreenState
                   maxHeight: MediaQuery.of(context).size.height * 0.5,
                   maxWidth: MediaQuery.of(context).size.width * 0.8,
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: imageWidget,
@@ -3667,7 +3693,10 @@ class _TripExpenseFormDetailedScreenState
               ),
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(16),
@@ -3691,7 +3720,9 @@ class _TripExpenseFormDetailedScreenState
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            (_incidentals[index]['category'] ?? 'Not Selected').toString().toUpperCase(),
+                            (_incidentals[index]['category'] ?? 'Not Selected')
+                                .toString()
+                                .toUpperCase(),
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
@@ -3730,7 +3761,10 @@ class _TripExpenseFormDetailedScreenState
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -3739,11 +3773,19 @@ class _TripExpenseFormDetailedScreenState
                           Navigator.pop(context);
                           final result = await Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (_) => const ForensicCamera()),
+                            MaterialPageRoute(
+                              builder: (_) => const ForensicCamera(),
+                            ),
                           );
                           if (result != null && result is Map) {
-                            final bytes = await File(result['path']).readAsBytes();
-                            setState(() => _incidentals[index]['bill'] = base64Encode(bytes));
+                            final bytes = await File(
+                              result['path'],
+                            ).readAsBytes();
+                            setState(
+                              () => _incidentals[index]['bill'] = base64Encode(
+                                bytes,
+                              ),
+                            );
                           }
                         },
                         icon: const Icon(Icons.camera_alt_rounded, size: 16),
@@ -3819,7 +3861,9 @@ class _TripExpenseFormDetailedScreenState
               );
               if (result != null && result is Map) {
                 final bytes = await File(result['path']).readAsBytes();
-                setState(() => _incidentals[index]['bill'] = base64Encode(bytes));
+                setState(
+                  () => _incidentals[index]['bill'] = base64Encode(bytes),
+                );
               }
             }
           },

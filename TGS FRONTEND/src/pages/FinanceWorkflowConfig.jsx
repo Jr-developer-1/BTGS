@@ -212,12 +212,14 @@ const FinanceWorkflowConfig = () => {
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>APPROVER TARGET</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CAN EDIT AMOUNT</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>VISIBILITY</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>TRIP/TRAVEL TYPE</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CONTROL MODE</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px', textAlign: 'right' }}>ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody>
                         {steps.length === 0 ? (
-                            <tr><td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No approvers configured. Add one to start.</td></tr>
+                            <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No approvers configured. Add one to start.</td></tr>
                         ) : (
                             steps.map((step, idx) => (
                                 <tr key={step.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
@@ -268,6 +270,28 @@ const FinanceWorkflowConfig = () => {
                                             <option value="INBOX">Inbox Only</option>
                                             <option value="FINANCE_HUB">Finance Hub Only</option>
                                             <option value="BOTH">Both</option>
+                                        </select>
+                                    </td>
+                                    <td style={{ padding: '16px 24px' }}>
+                                        <select 
+                                            value={step.trip_type}
+                                            onChange={(e) => updateStep(step.id, { trip_type: e.target.value })}
+                                            style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                                        >
+                                            <option value="BOTH">Both Trip & Travel</option>
+                                            <option value="TRIP">Trip Only (Local)</option>
+                                            <option value="TRAVEL">Travel Only (Outstation)</option>
+                                            <option value="NONE">None</option>
+                                        </select>
+                                    </td>
+                                    <td style={{ padding: '16px 24px' }}>
+                                        <select 
+                                            value={step.trip_control}
+                                            onChange={(e) => updateStep(step.id, { trip_control: e.target.value })}
+                                            style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                                        >
+                                            <option value="APPROVAL">Approval</option>
+                                            <option value="MARK_READ">Mark as Read</option>
                                         </select>
                                     </td>
                                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>

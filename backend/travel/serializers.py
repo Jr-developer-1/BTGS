@@ -7,7 +7,7 @@ from .models import (
     StayTypeMaster, RoomTypeMaster, StayBookingTypeMaster, StayBookingSourceMaster,
     MealCategoryMaster, MealTypeMaster, MealSourceMaster, MealProviderMaster,
     IncidentalTypeMaster, CustomMasterDefinition, CustomMasterValue, MasterModule, TripTracking,
-    HistoricalTripStop, FinanceWorkflowStep, HRPositionConfig, HRIntimation
+    HistoricalTripStop, FinanceWorkflowStep, HRPositionConfig, HRIntimation, FinanceIntimation
 )
 
 class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
@@ -16,12 +16,27 @@ class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FinanceWorkflowStep
-        fields = ['id', 'user', 'user_name', 'user_emp_id', 'position_id', 'position_name', 'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active']
+        fields = [
+            'id', 'user', 'user_name', 'user_emp_id', 'position_id', 'position_name', 
+            'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active', 
+            'trip_type', 'trip_control'
+        ]
+
+class FinanceIntimationSerializer(serializers.ModelSerializer):
+    finance_user_name = serializers.ReadOnlyField(source='finance_user.name')
+    trip_id = serializers.ReadOnlyField(source='trip.trip_id')
+
+    class Meta:
+        model = FinanceIntimation
+        fields = [
+            'id', 'trip', 'trip_id', 'finance_user', 'finance_user_name', 
+            'finance_position', 'is_approval', 'is_read', 'read_at', 'created_at'
+        ]
 
 class HRPositionConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = HRPositionConfig
-        fields = ['id', 'position_id', 'position_name', 'department_name', 'is_active']
+        fields = ['id', 'position_id', 'position_name', 'department_name', 'can_approve', 'is_active']
 
 class HRIntimationSerializer(serializers.ModelSerializer):
     hr_user_name = serializers.ReadOnlyField(source='hr_user.name')
@@ -31,7 +46,7 @@ class HRIntimationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = HRIntimation
-        fields = ['id', 'trip', 'trip_id', 'claim', 'claim_id', 'advance', 'advance_id', 'hr_user', 'hr_user_name', 'hr_position', 'is_read', 'read_at', 'created_at']
+        fields = ['id', 'trip', 'trip_id', 'claim', 'claim_id', 'advance', 'advance_id', 'hr_user', 'hr_user_name', 'hr_position', 'is_approval', 'is_read', 'read_at', 'created_at']
 
 from api_management.utils import encrypt_key, decrypt_key
 
@@ -423,8 +438,9 @@ class BulkActivityBatchSerializer(serializers.ModelSerializer):
             return obj.current_approver.name if obj.current_approver else 'Pending'
         
         # Try to find user by position ID
-        from core.models import User
-        target_user = User.objects.filter(active_position_id=obj.approver_position, is_active=True).first()
+        from travel.views import get_users_by_position
+        users = get_users_by_position(obj.approver_position)
+        target_user = users[0] if users else None
         if target_user:
             return target_user.name
         
@@ -489,8 +505,9 @@ class TripSerializer(serializers.ModelSerializer):
             return obj.current_approver.name if obj.current_approver else 'Pending'
         
         # Try to find user by position ID
-        from core.models import User
-        target_user = User.objects.filter(active_position_id=obj.approver_position, is_active=True).first()
+        from travel.views import get_users_by_position
+        users = get_users_by_position(obj.approver_position)
+        target_user = users[0] if users else None
         if target_user:
             return target_user.name
         

@@ -86,10 +86,17 @@ def login_view(request):
         else:
             expiration = timezone.now() + datetime.timedelta(hours=1)
             
+        available_positions = user.get_available_positions(force_fresh=True)
+        active_pos_id = None
+        if available_positions:
+            active_pos_id = str(available_positions[0].get('id'))
+        user.active_position_id = active_pos_id
+
         payload = {
             'user_id': user.id,
             'role': user.role.name if user.role else 'Employee',
             'is_mobile': is_mobile,
+            'active_position_id': active_pos_id,
             'exp': expiration
         }
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
@@ -126,13 +133,6 @@ def login_view(request):
             ip_address=ip,
             details={'agent': user_agent, 'method': 'API'}
         )
-        
-        # Ensure an active_position_id is set
-        if not user.active_position_id:
-            available = user.get_available_positions()
-            if available:
-                user.active_position_id = str(available[0].get('id'))
-                user.save()
 
         return Response({
             'token': token,
@@ -149,7 +149,7 @@ def login_view(request):
                 'email': getattr(user, 'email', ''),
                 'theme': getattr(user, 'theme', 'classic'),
                 'active_position_id': user.active_position_id,
-                'available_positions': user.get_available_positions(force_fresh=True)
+                'available_positions': available_positions
             }
         })
         
@@ -443,7 +443,27 @@ def switch_position_view(request):
         
     try:
         user.active_position_id = str(position_id)
-        user.save()
+        
+        # Generate new JWT token containing updated active_position_id
+        session = getattr(request, 'active_session', None)
+        expiration = session.expires_at if session else (timezone.now() + datetime.timedelta(hours=1))
+        
+        # Detect mobile client
+        user_agent = request.headers.get('User-Agent', '').lower()
+        is_mobile = 'dart' in user_agent or 'android' in user_agent
+        
+        payload = {
+            'user_id': user.id,
+            'role': user.role.name if user.role else 'Employee',
+            'is_mobile': is_mobile,
+            'active_position_id': str(position_id),
+            'exp': expiration
+        }
+        new_token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+        
+        if session:
+            session.token = new_token
+            session.save()
         
         # Force refresh properties by clearing cache
         from api_management.services import CACHE_EMPLOYEE_DATA
@@ -468,6 +488,7 @@ def switch_position_view(request):
         # Return updated user data (sync with login/me response structure)
         return Response({
             'message': 'Position switched successfully',
+            'token': new_token,
             'user': {
                 'id': user.id,
                 'employee_id': user.employee_id,
@@ -620,6 +641,118 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         
         serializer = AuditLogSerializer(activities, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        from django.utils.dateparse import parse_date
+        from django.utils import timezone
+        import datetime
+        from travel.models import Trip, BulkActivityBatch
+        from django.db.models import Count, Max
+
+        user = request.custom_user
+        role_name = user.role.name.lower() if user and user.role else ''
+        privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr', 'finance']
+        is_privileged = any(kw in role_name for kw in privileged_keywords)
+
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        search_query = request.query_params.get('search', '')
+
+        # Base querysets
+        history_qs = LoginHistory.objects.all().select_related('user')
+        trip_qs = Trip.objects.all().select_related('user')
+        batch_qs = BulkActivityBatch.objects.all().select_related('user')
+
+        if not is_privileged:
+            history_qs = history_qs.filter(user=user)
+            trip_qs = trip_qs.filter(user=user)
+            batch_qs = batch_qs.filter(user=user)
+
+        # Date filtering
+        if start_date_str:
+            parsed_start = parse_date(start_date_str)
+            if parsed_start:
+                start_dt = datetime.datetime.combine(parsed_start, datetime.time.min)
+                if timezone.is_aware(timezone.now()):
+                    start_dt = timezone.make_aware(start_dt)
+                history_qs = history_qs.filter(login_time__gte=start_dt)
+                trip_qs = trip_qs.filter(created_at__gte=start_dt)
+                batch_qs = batch_qs.filter(created_at__gte=start_dt)
+
+        if end_date_str:
+            parsed_end = parse_date(end_date_str)
+            if parsed_end:
+                end_dt = datetime.datetime.combine(parsed_end, datetime.time.max)
+                if timezone.is_aware(timezone.now()):
+                    end_dt = timezone.make_aware(end_dt)
+                history_qs = history_qs.filter(login_time__lte=end_dt)
+                trip_qs = trip_qs.filter(created_at__lte=end_dt)
+                batch_qs = batch_qs.filter(created_at__lte=end_dt)
+
+        # Search query filtering (if any search filters the list)
+        if search_query:
+            history_qs = history_qs.filter(
+                Q(user__employee_id__icontains=search_query) |
+                Q(ip_address__icontains=search_query)
+            )
+
+        # Calculate counts
+        # Unique Users from LoginHistory
+        unique_users_data = (
+            history_qs
+            .filter(user__isnull=False)
+            .values('user_id')
+            .annotate(login_count=Count('id'), last_login=Max('login_time'))
+            .order_by('-last_login')
+        )
+        user_ids = [item['user_id'] for item in unique_users_data]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+
+        unique_users_list = []
+        for item in unique_users_data:
+            u_obj = users_map.get(item['user_id'])
+            if u_obj:
+                unique_users_list.append({
+                    'employee_id': u_obj.employee_id,
+                    'name': u_obj.name,
+                    'email': u_obj.email,
+                    'login_count': item['login_count'],
+                    'last_login': item['last_login'].isoformat() if item['last_login'] else None
+                })
+
+        trips_list = []
+        for trip in trip_qs.order_by('-created_at'):
+            trips_list.append({
+                'trip_id': trip.trip_id,
+                'user_id': trip.user.employee_id if trip.user else 'N/A',
+                'user_name': trip.user_name or (trip.user.name if trip.user else 'Unknown'),
+                'destination': trip.destination,
+                'start_date': trip.start_date.isoformat() if trip.start_date else None,
+                'end_date': trip.end_date.isoformat() if trip.end_date else None,
+                'status': trip.status,
+                'created_at': trip.created_at.isoformat() if trip.created_at else None
+            })
+
+        batches_list = []
+        for batch in batch_qs.order_by('-created_at'):
+            batches_list.append({
+                'id': batch.id,
+                'user_id': batch.user.employee_id if batch.user else 'N/A',
+                'user_name': batch.user.name if batch.user else 'Unknown',
+                'file_name': batch.file_name,
+                'status': batch.status,
+                'created_at': batch.created_at.isoformat() if batch.created_at else None
+            })
+
+        return Response({
+            'trips_count': len(trips_list),
+            'batches_count': len(batches_list),
+            'users_count': len(unique_users_list),
+            'trips': trips_list,
+            'batches': batches_list,
+            'users': unique_users_list
+        })
 
     @action(detail=False, methods=['get'], url_path='export-csv')
     def export_csv(self, request):
