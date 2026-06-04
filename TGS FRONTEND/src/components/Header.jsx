@@ -284,14 +284,14 @@ const Header = () => {
                                         <Settings size={18} />
                                         <span>System Settings</span>
                                     </NavLink>
-                                    
+
                                     {user?.available_positions?.length > 1 && (
                                         <>
                                             <div className="dropdown-divider"></div>
                                             <div className="dropdown-section-title">Switch Position</div>
                                             {user.available_positions.map(pos => (
-                                                <button 
-                                                    key={pos.id} 
+                                                <button
+                                                    key={pos.id}
                                                     className={`dropdown-item position-item ${String(pos.id) === String(user.active_position_id || user.available_positions[0]?.id) ? 'active-pos' : ''}`}
                                                     onClick={() => {
                                                         if (String(pos.id) !== String(user.active_position_id || user.available_positions[0]?.id)) {

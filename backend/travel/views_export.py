@@ -715,7 +715,7 @@ class ExpenseStatementPDFView(APIView):
             return Response({'error': 'Trip not found'}, status=status.HTTP_404_NOT_FOUND)
 
         user = request.custom_user
-        role_name = (user.role.name if user.role else '').lower()
+        role_name = user.active_role.lower()
         if trip.user != user and role_name not in ['admin', 'finance', 'hr', 'cfo']:
             return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -741,7 +741,7 @@ class ExpenseStatementExcelView(APIView):
             return Response({'error': 'Trip not found'}, status=status.HTTP_404_NOT_FOUND)
 
         user = request.custom_user
-        role_name = (user.role.name if user.role else '').lower()
+        role_name = user.active_role.lower()
         if trip.user != user and role_name not in ['admin', 'finance', 'hr', 'cfo']:
             return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
 

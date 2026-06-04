@@ -82,8 +82,8 @@ export const AuthProvider = ({ children }) => {
       sessionStorage.setItem('tgs_user', JSON.stringify(updatedUser));
       showToast(`Switched to ${userDetails.designation}`, 'success');
       
-      // Force a full application state refresh by navigating to home
-      window.location.href = '/';
+      // Reload current page to preserve current URL path and components while refreshing context/data
+      window.location.reload();
       return updatedUser;
     } catch (error) {
       console.error('Switch position failed:', error);
@@ -101,11 +101,13 @@ export const AuthProvider = ({ children }) => {
           try {
             // Verify session with backend
             const response = await api.get('/api/auth/me');
-            setUser({
+            const verifiedUser = {
               ...response.data,
               token: parsedUser.token,
               role: response.data.role?.toLowerCase()
-            });
+            };
+            setUser(verifiedUser);
+            sessionStorage.setItem('tgs_user', JSON.stringify(verifiedUser));
           } catch (error) {
             console.error('Session verification failed:', error);
             if (!error.response) {

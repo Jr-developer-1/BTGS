@@ -268,7 +268,7 @@ const Dashboard = () => {
             }
         };
         fetchAllData();
-    }, [user]);
+    }, [user, user?.active_position_id]);
 
     if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-white"><div className="spinner"></div></div>;
 

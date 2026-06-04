@@ -22,8 +22,8 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                  return LoginHistory.objects.none()
 
         role_name = ''
-        if hasattr(user, 'role') and user.role:
-            role_name = user.role.name.lower()
+        if hasattr(user, 'active_role'):
+            role_name = user.active_role.lower()
             
         if role_name in ['admin', 'cfo', 'hr', 'finance']:
              return LoginHistory.objects.all().select_related('user')
@@ -47,8 +47,8 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
                  return AuditLog.objects.none()
 
         role_name = ''
-        if hasattr(user, 'role') and user.role:
-            role_name = user.role.name.lower()
+        if hasattr(user, 'active_role'):
+            role_name = user.active_role.lower()
 
         if role_name in ['admin', 'cfo', 'finance']:
              return AuditLog.objects.all().select_related('user')

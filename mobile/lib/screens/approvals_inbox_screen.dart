@@ -1926,9 +1926,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF10B981),
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 14,
-                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
@@ -1951,12 +1949,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             ),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: const Color(0xFFEF4444),
-                              side: const BorderSide(
-                                color: Color(0xFFFEE2E2),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 14,
-                              ),
+                              side: const BorderSide(color: Color(0xFFFEE2E2)),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
@@ -4166,10 +4160,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       }
     }
 
-    widget.onAction(
-      actionToPerform,
-      extra: extra.isEmpty ? null : extra,
-    );
+    widget.onAction(actionToPerform, extra: extra.isEmpty ? null : extra);
   }
 
   Widget _buildBottomActions() {
@@ -4242,7 +4233,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.check_circle_rounded, color: Color(0xFF059669), size: 18),
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: Color(0xFF059669),
+                    size: 18,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     'Acknowledged (Outbox)',

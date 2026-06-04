@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/api';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
 import {
     Users,
@@ -26,6 +27,7 @@ import '../finance_styles.css';
 
 const FinanceDashboard = () => {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -138,7 +140,7 @@ const FinanceDashboard = () => {
     useEffect(() => {
         fetchFinanceData();
         fetchStats();
-    }, [activeTab]);
+    }, [activeTab, user?.active_position_id]);
 
     const handleExport = async (tabOverride = null) => {
         const targetTab = tabOverride || activeTab;

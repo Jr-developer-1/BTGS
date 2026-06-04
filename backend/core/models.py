@@ -122,6 +122,36 @@ class User(models.Model):
         return user
 
     @property
+    def active_role(self):
+        # 1. Base role check (Admin is always Admin)
+        base_role = self.role.name if self.role else 'Employee'
+        if base_role.lower() == 'admin':
+            return 'Admin'
+
+        # 2. Extract context from active position designation/role
+        desig = (self.designation or '').lower()
+        role_api = (self.role_from_api or '').lower()
+        dept = (self.department or '').lower()
+
+        # CFO
+        if 'cfo' in desig or 'cfo' in role_api or base_role.lower() == 'cfo':
+            return 'CFO'
+
+        # Finance
+        if 'finance' in desig or 'finance' in role_api or 'finance' in dept or base_role.lower() == 'finance':
+            return 'Finance'
+
+        # HR
+        if 'hr' in desig or 'hr' in role_api or 'hr' in dept or 'human resource' in desig or 'human resource' in dept or base_role.lower() == 'hr':
+            return 'HR'
+
+        # Guest House Manager
+        if 'guesthouse' in desig or 'guesthouse' in role_api or 'facility' in desig or base_role.lower() == 'guesthousemanager':
+            return 'GuestHouseManager'
+
+        return base_role
+
+    @property
     def name(self):
         # 1. Hardcoded ID check (fastest)
         lower_id = self.employee_id.lower()

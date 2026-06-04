@@ -15,11 +15,13 @@ import {
 import api from '../api/api';
 import { useToast } from '../context/ToastContext.jsx';
 import { encodeId } from '../utils/idEncoder';
+import { useAuth } from '../context/AuthContext';
 
 
 const MyRequests = ({ enforceView = null }) => {
     const navigate = useNavigate();
     const { showToast } = useToast();
+    const { user } = useAuth();
 
     const [trips, setTrips] = useState([]);
     const [advances, setAdvances] = useState([]);
@@ -43,7 +45,7 @@ const MyRequests = ({ enforceView = null }) => {
     useEffect(() => {
         fetchTrips(1);
         fetchAdvances(1);
-    }, []);
+    }, [user?.active_position_id]);
 
     const fetchTrips = async (page = 1) => {
         setIsLoading(true);

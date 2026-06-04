@@ -6,6 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import '../services/trip_service.dart';
 import 'policy_center_screen.dart';
 import 'location_codes_screen.dart';
+import '../constants/api_constants.dart';
 
 class HelpSupportScreen extends StatefulWidget {
   const HelpSupportScreen({super.key});
@@ -21,6 +22,7 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
   final TripService _tripService = TripService();
   
   bool _isChatOpen = false;
+  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
   final List<Map<String, String>> _messages = [
     {'sender': 'bot', 'text': 'Hi there! I am your TGS Virtual Support Assistant. How can I help you today?'}
   ];
@@ -428,6 +430,10 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
       child: Column(
         children: [
           Text('© 2026 TGS Governance. All rights reserved.', style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF94A3B8))),
+          if (_appVersion.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(_appVersion, style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF94A3B8))),
+          ],
           const SizedBox(height: 8),
           Row(
             mainAxisSize: MainAxisSize.min,

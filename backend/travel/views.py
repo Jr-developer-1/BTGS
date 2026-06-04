@@ -718,17 +718,17 @@ def trigger_finance_dispatch(trip, user):
 
 
 def _get_user_all_position_ids(user):
-    """Returns a set of all position identifiers (numeric IDs and string codes) for a user from their API data."""
+    """Returns a set of active position identifiers (numeric ID and string code) for the user's currently active position."""
     pos_ids = set()
     if not user: return pos_ids
     if user.active_position_id:
         pos_ids.add(str(user.active_position_id))
-    try:
-        for pos in (user.get_available_positions(force_fresh=False) or []):
-            if pos.get('id'): pos_ids.add(str(pos['id']))
-            if pos.get('code'): pos_ids.add(str(pos['code']).strip())
-    except Exception:
-        pass
+        try:
+            pos = user.get_current_position()
+            if pos and pos.get('code'):
+                pos_ids.add(str(pos['code']).strip())
+        except Exception:
+            pass
     return pos_ids
 
 def _is_finance_head(user):
@@ -736,7 +736,7 @@ def _is_finance_head(user):
     if not user: return False
     from .models import FinanceWorkflowStep
 
-    # Check all position IDs/codes from the API against FinanceWorkflowStep
+    # Check active position IDs/codes against FinanceWorkflowStep
     all_pos_ids = _get_user_all_position_ids(user)
     for pos_id in all_pos_ids:
         step = FinanceWorkflowStep.objects.filter(position_id=pos_id, is_active=True).first()
@@ -760,7 +760,7 @@ def _is_finance_executive(user):
     if not user: return False
     from .models import FinanceWorkflowStep
 
-    # Check all position IDs/codes from the API against FinanceWorkflowStep
+    # Check active position IDs/codes against FinanceWorkflowStep
     all_pos_ids = _get_user_all_position_ids(user)
     for pos_id in all_pos_ids:
         if FinanceWorkflowStep.objects.filter(position_id=pos_id, is_active=True).exists():
@@ -782,9 +782,9 @@ def _is_hr(user):
     """Checks if user belongs to any active configured HR Position."""
     if not user: return False
     from .models import HRPositionConfig
-    active_pos = user.active_position_id
-    if not active_pos: return False
-    return HRPositionConfig.objects.filter(position_id=active_pos, is_active=True).exists()
+    pos_ids = _get_user_all_position_ids(user)
+    if not pos_ids: return False
+    return HRPositionConfig.objects.filter(position_id__in=pos_ids, is_active=True).exists()
 
 def _get_finance_users():
     """Returns list of users matching active Finance Workflow step positions."""
@@ -815,8 +815,10 @@ def _get_finance_step_for_user(user):
     # Slow path: iterate each step and check via API (handles code vs numeric ID mismatch)
     for step in FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order'):
         if step.position_id:
-            if user in get_users_by_position(step.position_id):
-                return step
+            # Only consider step if its position matches the user's active position identifiers
+            if str(step.position_id) in all_pos_ids:
+                if user in get_users_by_position(step.position_id):
+                    return step
         elif step.user == user:
             return step
     return None
@@ -1236,7 +1238,7 @@ class TripListCreateView(generics.ListCreateAPIView):
             return Trip.objects.none()
             
         all_trips = self.request.query_params.get('all') == 'true'
-        user_role = user.role.name.lower() if user.role else ''
+        user_role = user.active_role.lower()
         
         from django.db.models import Case, When, Value, IntegerField
         
@@ -1507,7 +1509,7 @@ class TripDetailView(generics.RetrieveUpdateDestroyAPIView):
         if not user:
             raise PermissionDenied("Not authenticated")
             
-        user_role = (user.role.name.lower() if user.role else '')
+        user_role = user.active_role.lower()
         is_admin = user_role in ['admin', 'it-admin', 'superuser']
         is_finance = user_role in ['finance', 'cfo']
         is_gh_manager = user_role == 'guesthousemanager'
@@ -1545,7 +1547,7 @@ class TripTrackingView(APIView):
         if user:
             is_manager = user in [trip.user.reporting_manager, trip.user.senior_manager, trip.user.hod_director, trip.current_approver]
         
-        user_role = user.role.name.lower() if user and user.role else ''
+        user_role = user.active_role.lower() if user else ''
         is_privileged = user_role in ['admin', 'finance', 'cfo', 'guesthousemanager']
 
         if not (is_owner or is_manager or is_privileged):
@@ -1624,7 +1626,7 @@ class HistoricalTripStopsView(generics.ListAPIView):
             if found_user:
                 # Permission check
                 is_manager = user in [found_user.reporting_manager, found_user.senior_manager, found_user.hod_director]
-                user_role = user.role.name.lower() if user.role else ''
+                user_role = user.active_role.lower()
                 is_privileged = user_role in ['admin', 'finance', 'cfo']
                 
                 if is_manager or is_privileged or found_user == user:
@@ -1853,10 +1855,7 @@ def _get_actual_pending_tasks_count(user, view_type='all'):
                 pos_q = Q(approver_position__in=fin_pos_ids)
                 inbox_statuses = ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'REJECTED_BY_HEAD', 'HR Approved']
             else:
-                fallback_pos_ids = {str(user.active_position_id)} if user.active_position_id else set()
-                for pos in user.get_available_positions(force_fresh=False):
-                    if pos.get('id'): fallback_pos_ids.add(str(pos['id']))
-                    if pos.get('code'): fallback_pos_ids.add(str(pos['code']))
+                fallback_pos_ids = user.get_active_position_identifiers()
                 pos_q = Q(approver_position__in=fallback_pos_ids)
                 inbox_statuses = ['PENDING_HEAD'] if is_finance_head else ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'HR Approved']
 
@@ -1890,10 +1889,7 @@ def _get_actual_pending_tasks_count(user, view_type='all'):
         batch_qs = BulkActivityBatch.objects.none()
     else:
         # Position-centric manager query
-        manager_pos_ids = {str(user.active_position_id)} if user.active_position_id else set()
-        for pos in user.get_available_positions(force_fresh=False):
-            if pos.get('id'): manager_pos_ids.add(str(pos['id']))
-            if pos.get('code'): manager_pos_ids.add(str(pos['code']))
+        manager_pos_ids = user.get_active_position_identifiers()
 
         q = Q(approver_position__in=manager_pos_ids) | Q(current_approver=user, approver_position__isnull=True)
         status_list = ['Pending', 'Submitted', 'Forwarded', 'Resubmitted']
@@ -2153,10 +2149,7 @@ class ApprovalsView(APIView):
                     else:
                         # Fallback for user not explicitly registry-linked
                         # Fallback: gather all position identifiers from the API for this user
-                        fallback_pos_ids = {str(user.active_position_id)} if user.active_position_id else set()
-                        for pos in user.get_available_positions(force_fresh=False):
-                            if pos.get('id'): fallback_pos_ids.add(str(pos['id']))
-                            if pos.get('code'): fallback_pos_ids.add(str(pos['code']))
+                        fallback_pos_ids = user.get_active_position_identifiers()
 
                         if is_finance_head:
                             pos_q = Q(approver_position__in=fallback_pos_ids)
@@ -2176,10 +2169,7 @@ class ApprovalsView(APIView):
 
                 else:
                     # Position-centric manager query
-                    manager_pos_ids = {str(user.active_position_id)} if user.active_position_id else set()
-                    for pos in user.get_available_positions(force_fresh=False):
-                        if pos.get('id'): manager_pos_ids.add(str(pos['id']))
-                        if pos.get('code'): manager_pos_ids.add(str(pos['code']))
+                    manager_pos_ids = user.get_active_position_identifiers()
 
                     q = Q(approver_position__in=manager_pos_ids) | Q(current_approver=user, approver_position__isnull=True)
                     status_list = ['Pending', 'Submitted', 'Forwarded', 'Resubmitted']
@@ -3549,7 +3539,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         if not user:
             return Expense.objects.none()
             
-        role_name = user.role.name.lower() if hasattr(user, 'role') else ''
+        role_name = user.active_role.lower() if hasattr(user, 'active_role') else ''
         is_admin = role_name in ['admin', 'superuser']
         is_finance = 'finance' in role_name or role_name == 'cfo'
         is_manager = role_name == 'reporting_authority'
@@ -3873,12 +3863,12 @@ class DashboardStatsView(APIView):
         if not user:
             return Response({"error": "User not found"}, status=401)
         
-        is_admin = (user.role.name.lower() if user.role else '') == 'admin'
-        is_gh_manager = (user.role.name.lower() if user.role else '') == 'guesthousemanager'
+        is_admin = user.active_role.lower() == 'admin'
+        is_gh_manager = user.active_role.lower() == 'guesthousemanager'
         is_fin_head = _is_finance_head(user)
         is_fin_exec = _is_finance_executive(user)
         is_finance = is_fin_head or is_fin_exec
-        is_cfo = 'cfo' in (user.role.name.lower() if user.role else '')
+        is_cfo = user.active_role.lower() == 'cfo'
         is_hr = _is_hr(user)
 
         if is_admin or is_gh_manager or is_finance or is_cfo or is_hr:
@@ -3887,10 +3877,10 @@ class DashboardStatsView(APIView):
             claims = TravelClaim.objects.all()
             base_expenses = Expense.objects.all()
         else:
-            trips = Trip.objects.filter(user=user)
-            advances = TravelAdvance.objects.filter(trip__user=user)
-            claims = TravelClaim.objects.filter(trip__user=user)
-            base_expenses = Expense.objects.filter(trip__user=user)
+            trips = Trip.objects.filter(user=user, requester_position=user.active_position_id)
+            advances = TravelAdvance.objects.filter(trip__user=user, requester_position=user.active_position_id)
+            claims = TravelClaim.objects.filter(trip__user=user, requester_position=user.active_position_id)
+            base_expenses = Expense.objects.filter(trip__user=user, trip__requester_position=user.active_position_id)
 
         total_trips = trips.filter(status__in=['Approved', 'Settled']).count()
         # Only count records that are actually waiting for approval

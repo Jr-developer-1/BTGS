@@ -27,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
+  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
 
   @override
   void initState() {
@@ -479,6 +480,17 @@ class _LoginScreenState extends State<LoginScreen> {
                       fit: BoxFit.contain,
                     ),
                   ),
+                  if (_appVersion.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _appVersion,
+                      style: GoogleFonts.inter(
+                        color: const Color(0xFF94A3B8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 40),
                 ],
               ),

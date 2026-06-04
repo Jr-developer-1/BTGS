@@ -9,6 +9,7 @@ import 'help_support_screen.dart';
 import 'debug_logs_screen.dart';
 import '../constants/module_constants.dart';
 import '../components/responsive_image.dart';
+import '../constants/api_constants.dart';
 
 class ProfilePage extends StatefulWidget {
   final String username;
@@ -24,6 +25,7 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? _profileData;
   Map<String, dynamic>? _userData;
   final FrsService _frsService = FrsService();
+  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
 
   @override
   void initState() {
@@ -378,6 +380,20 @@ class _ProfilePageState extends State<ProfilePage> {
                               ],
                               const SizedBox(height: 12),
                               _buildLogoutButton(),
+                              if (_appVersion.isNotEmpty) ...[
+                                const SizedBox(height: 32),
+                                Center(
+                                  child: Text(
+                                    _appVersion,
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: const Color(0xFF94A3B8),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 60),
                             ],
                           ),

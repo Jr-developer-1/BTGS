@@ -374,7 +374,7 @@ def me_view(request):
             'id': user.id,
             'employee_id': user.employee_id,
             'name': getattr(user, 'name', user.employee_id),
-            'role': user.role.name if user.role else 'Employee',
+            'role': user.active_role,
             'role_permissions': (lambda u: (Role.objects.filter(Q(name__iexact=u.role_from_api) | Q(name__iexact=u.designation)).first() or u.role).permissions if u.role else {})(user),
             'department': getattr(user, 'department', 'N/A'),
             'designation': getattr(user, 'designation', 'N/A'),
@@ -454,7 +454,7 @@ def switch_position_view(request):
         
         payload = {
             'user_id': user.id,
-            'role': user.role.name if user.role else 'Employee',
+            'role': user.active_role,
             'is_mobile': is_mobile,
             'active_position_id': str(position_id),
             'exp': expiration
@@ -466,13 +466,20 @@ def switch_position_view(request):
             session.save()
         
         # Force refresh properties by clearing cache
-        from api_management.services import CACHE_EMPLOYEE_DATA
+        from django.core.cache import cache
+        from api_management.services import CACHE_EMPLOYEE_DATA, safe_cache_delete
         if user.employee_id in CACHE_EMPLOYEE_DATA:
             del CACHE_EMPLOYEE_DATA[user.employee_id]
+        
+        # Clear persistent employee cache and position maps
+        cache_key = f"EMP_DATA_PERSISTENT_{str(user.employee_id).strip().upper()}"
+        safe_cache_delete(cache_key)
+        safe_cache_delete('position_to_employee_codes_map')
+        safe_cache_delete('user_position_identifiers')
             
         # Safely resolve role and permissions
         user_role_obj = user.role
-        role_name = user_role_obj.name if user_role_obj else 'Employee'
+        role_name = user.active_role
         
         permissions = {}
         if user_role_obj:
@@ -590,7 +597,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         if not user or not user.role:
             return LoginHistory.objects.none()
             
-        role_name = user.role.name.lower()
+        role_name = user.active_role.lower()
         # Fix: catch all admin variants and privileged roles
         privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr', 'finance']
         is_privileged = any(kw in role_name for kw in privileged_keywords)
@@ -651,7 +658,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         from django.db.models import Count, Max
 
         user = request.custom_user
-        role_name = user.role.name.lower() if user and user.role else ''
+        role_name = user.active_role.lower() if user else ''
         privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr', 'finance']
         is_privileged = any(kw in role_name for kw in privileged_keywords)
 
@@ -795,7 +802,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         if not user or not user.role:
             return AuditLog.objects.none()
             
-        role_name = user.role.name.lower()
+        role_name = user.active_role.lower()
         # Fix: catch all admin variants and privileged roles
         privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr', 'finance']
         is_privileged = any(kw in role_name for kw in privileged_keywords)
@@ -1318,7 +1325,7 @@ def heartbeat_view(request):
     
     # 2. Approval Counts
     from travel.models import Trip, TravelAdvance, TravelClaim
-    user_role = (user.role.name.lower() if user.role else '')
+    user_role = user.active_role.lower() if user else ''
     privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr']
     is_privileged = any(kw in user_role for kw in privileged_keywords)
     is_finance = 'finance' in user_role
