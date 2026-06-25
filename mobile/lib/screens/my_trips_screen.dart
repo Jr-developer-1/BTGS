@@ -138,26 +138,43 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
     }
   }
 
+  String _getDisplayStatus(String backendStatus) {
+    if (backendStatus.isEmpty) return 'Pending';
+    final s = backendStatus.trim().toLowerCase();
+
+    if (['settled', 'completed', 'paid', 'transferred'].contains(s)) {
+      return 'Settled';
+    }
+
+    if (['approved', 'claim submitted', 'manager approved', 'hr approved', 'under process', 'partially completed', 'forwarded'].contains(s)) {
+      return 'Approved';
+    }
+
+    if (s == 'resubmitted') {
+      return 'Resubmitted';
+    }
+
+    if (['pending', 'submitted', 'draft', 'pending_hr', 'pending_executive', 'pending_head', 'pending_final_release'].contains(s)) {
+      return 'Pending';
+    }
+
+    if (s.contains('pending')) return 'Pending';
+    if (s.contains('reject')) return 'Rejected';
+
+    return 'Approved';
+  }
+
   void _applyFilters() {
     final term = _searchTerm.toLowerCase().trim();
     setState(() {
       _visibleTrips = _allTrips.where((t) {
-        // Normalize status strings for comparison
-        final rawStatus = t.status.trim().toLowerCase();
-        final status = rawStatus.replaceAll(' ', '').replaceAll('-', '');
-
-        // Only hide if the status is exactly 'pending' as requested by the user
-        if (status == 'pending') return false;
-
-        final filterLabel = _filter.trim().toLowerCase();
-        final filterClean = filterLabel.replaceAll(' ', '').replaceAll('-', '');
+        final displayStatus = _getDisplayStatus(t.status);
+        if (displayStatus == 'Pending') return false;
 
         bool matchesFilter = _filter == 'All Status' || _filter == 'All';
-
         if (!matchesFilter) {
-          // Robust matching: exact cleaned match OR the raw status contains the filter string
-          matchesFilter =
-              (status == filterClean) || rawStatus.contains(filterClean);
+          matchesFilter = (displayStatus.toLowerCase() == _filter.toLowerCase()) || 
+                          (t.status.toLowerCase() == _filter.toLowerCase());
         }
 
         bool matchesType = _typeFilter == 'All Types' || _typeFilter == 'All';
@@ -179,8 +196,8 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       _visibleTrips.sort((a, b) {
         int getPriority(String status) {
           final s = status.toLowerCase();
-          // Priority 1: Actionable / Pending Approval
-          if (s.contains('pending') || s == 'approved' || s == 'manager approved' || s == 'hr approved') return 1;
+          // Priority 1: Actionable / Pending Approval / Resubmitted / Claim Submitted
+          if (s.contains('pending') || s == 'approved' || s == 'manager approved' || s == 'hr approved' || s == 'resubmitted' || s == 'claim submitted') return 1;
           // Priority 3: Finalized / Settled
           if (['settled', 'paid', 'completed', 'transferred', 'completed & settled'].any((term) => s.contains(term))) return 3;
           // Priority 2: Intermediate states (Under Process, etc.)
@@ -452,7 +469,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                   icon: Icons.tune_rounded,
                   onTap: () => _showFilterBottomSheet(
                     'Status',
-                    ['All Status', 'Approved', 'Settled', 'Rejected'],
+                    ['All Status', 'Approved', 'Settled', 'Rejected', 'Resubmitted'],
                     _filter,
                     (v) {
                       setState(() {
@@ -565,7 +582,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            t.status.toUpperCase(),
+                            _getDisplayStatus(t.status).toUpperCase(),
                             style: GoogleFonts.inter(
                               color: statusColor,
                               fontSize: 10,
@@ -656,7 +673,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
               ),
                 ],
               ),
-              if (['settled', 'paid', 'completed', 'transferred'].contains(t.status.toLowerCase()))
+              if (_getDisplayStatus(t.status).toLowerCase() == 'settled')
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
@@ -1060,17 +1077,18 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
   }
 
   Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'approved':
-      case 'completed':
+    final s = _getDisplayStatus(status).toLowerCase();
+    switch (s) {
       case 'settled':
         return const Color(0xFF10B981);
-      case 'on-going':
-      case 'ongoing':
+      case 'approved':
+        return const Color(0xFF10B981);
+      case 'resubmitted':
         return Colors.orange;
       case 'rejected':
-      case 'cancelled':
         return const Color(0xFFEF4444);
+      case 'ongoing':
+        return Colors.orange;
       default:
         return const Color(0xFF0D9488);
     }

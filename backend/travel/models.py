@@ -26,11 +26,15 @@ class SoftDeleteModel(models.Model):
     def delete(self, using=None, keep_parents=False):
         self.is_deleted = True
         self.deleted_at = timezone.now()
+        if hasattr(self, 'status'):
+            self.status = False
         self.save()
 
     def restore(self):
         self.is_deleted = False
         self.deleted_at = None
+        if hasattr(self, 'status'):
+            self.status = True
         self.save()
 
 class Trip(SoftDeleteModel):
@@ -123,13 +127,8 @@ class Trip(SoftDeleteModel):
                     base_loc = self.user.base_location
                     if base_loc:
                         try:
-                            from travel_masters.models import Location
-                            loc = Location.objects.filter(name__icontains=base_loc).first()
-                            if loc and loc.code:
-                                branch = loc.code.upper()
-                            else:
-                                clean_loc = re.sub(r'[^a-zA-Z0-9]', '', base_loc)
-                                branch = clean_loc[:3].upper() if len(clean_loc) >= 3 else clean_loc.upper()
+                            clean_loc = re.sub(r'[^a-zA-Z0-9-]', '', base_loc)
+                            branch = clean_loc.upper()
                         except:
                             pass
                 
@@ -143,7 +142,7 @@ class Trip(SoftDeleteModel):
                 generated_id = base_id
                 
                 seq = 1
-                while Trip.objects.filter(trip_id=generated_id).exists():
+                while Trip.all_objects.filter(trip_id=generated_id).exists():
                     generated_id = f"{base_id}-{seq:02d}"
                     seq += 1
                 
@@ -154,7 +153,7 @@ class Trip(SoftDeleteModel):
                 random_number = random.randint(1000, 9999)
                 self.trip_id = f"TRP-{current_year}-{random_number}"
                 
-                while Trip.objects.filter(trip_id=self.trip_id).exists():
+                while Trip.all_objects.filter(trip_id=self.trip_id).exists():
                     random_number = random.randint(1000, 9999)
                     self.trip_id = f"TRP-{current_year}-{random_number}"
         
@@ -297,6 +296,54 @@ class Expense(SoftDeleteModel):
     cancellation_date = models.DateField(null=True, blank=True)
     refund_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     cancellation_reason = models.TextField(blank=True, null=True)
+
+    # --- Entitlement / HR Approval fields ---
+    # City type resolved from trip destination's cluster_category:
+    #   Metropolitan  → 'State HQ'
+    #   Town / City   → 'Districts'
+    #   Anything else → 'Others'
+    city_type_resolved = models.CharField(
+        max_length=20, null=True, blank=True,
+        help_text="State HQ / Districts / Others — auto-resolved from destination cluster_category"
+    )
+    # Policy maximum for this expense line (filled when claim is submitted / HR opens it)
+    allowed_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Max reimbursable amount per cadre entitlement rule"
+    )
+    # Amount HR decided to approve for this line
+    hr_selected_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Final amount HR approved for this expense line"
+    )
+    hr_amount_source = models.CharField(
+        max_length=10, null=True, blank=True,
+        choices=[
+            ('claimed', 'Claimed Amount'),
+            ('allowed', 'Allowed Amount'),
+            ('manual',  'Manually Edited'),
+        ],
+        help_text="Which amount HR chose or whether they manually edited"
+    )
+    # Amount Finance decided to approve for this line
+    finance_selected_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Final amount Finance approved for this expense line"
+    )
+    finance_amount_source = models.CharField(
+        max_length=10, null=True, blank=True,
+        choices=[
+            ('claimed', 'Claimed Amount'),
+            ('allowed', 'Allowed Amount'),
+            ('manual',  'Manually Edited'),
+        ],
+        help_text="Which amount Finance chose or whether they manually edited"
+    )
+    # Short note explaining any policy deviation (e.g. 'Exceeds class entitlement')
+    policy_note = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="Auto-generated note about entitlement status for HR reference"
+    )
 
     def __str__(self):
         return f"{self.category} - {self.amount} for {self.trip.trip_id}"
@@ -716,9 +763,12 @@ class IncidentalTypeMaster(SoftDeleteModel):
         ('travel_incidental', 'Travel Incidental'),
         ('general_incidental', 'General Incidental'),
     ]
-    expense_type = models.CharField(max_length=100, unique=True)
+    expense_type = models.CharField(max_length=100)
     category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default='travel_incidental')
     status = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ('expense_type', 'category')
 
 # --- DYNAMIC MASTER SYSTEM ---
 
@@ -805,6 +855,7 @@ class FinanceWorkflowStep(SoftDeleteModel):
     
     trip_type = models.CharField(max_length=20, choices=TRIP_TYPE_CHOICES, default='BOTH')
     trip_control = models.CharField(max_length=20, choices=TRIP_CONTROL_CHOICES, default='APPROVAL')
+    can_view_reports = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['sequence_order']
@@ -833,18 +884,43 @@ class FinanceIntimation(models.Model):
         return f"Finance Intimation: {self.finance_user.name} for Trip {self.trip.trip_id} (Approval: {self.is_approval})"
 
 class HRPositionConfig(SoftDeleteModel):
-    position_id = models.CharField(max_length=50, unique=True)
+    TRIPS_APPROVAL_CHOICES = [
+        ('MARK_READ', 'Mark as Read'),
+        ('APPROVAL', 'Formal Approval'),
+    ]
+    BULK_APPROVAL_CHOICES = [
+        ('MARK_READ', 'Mark as Read'),
+        ('APPROVAL', 'Formal Approval'),
+    ]
+    CLAIMS_APPROVAL_CHOICES = [
+        ('MARK_READ', 'Mark as Read'),
+        ('APPROVAL', 'Formal Approval'),
+    ]
+    EDIT_CLAIMS_CHOICES = [
+        ('READ_ONLY', 'Read Only'),
+        ('CAN_EDIT', 'Can Edit'),
+    ]
+
+    position_id = models.CharField(max_length=50)
     position_name = models.CharField(max_length=100)
     department_name = models.CharField(max_length=100, null=True, blank=True)
     can_approve = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    sequence_order = models.PositiveIntegerField(default=1)
+    project_code = models.CharField(max_length=100, default='General', blank=True)
+    trips_approval = models.CharField(max_length=20, choices=TRIPS_APPROVAL_CHOICES, default='MARK_READ')
+    bulk_approval = models.CharField(max_length=20, choices=BULK_APPROVAL_CHOICES, default='MARK_READ')
+    claims_approval = models.CharField(max_length=20, choices=CLAIMS_APPROVAL_CHOICES, default='MARK_READ')
+    edit_claims = models.CharField(max_length=20, choices=EDIT_CLAIMS_CHOICES, default='READ_ONLY')
+    can_view_reports = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "HR Position Configuration"
         verbose_name_plural = "HR Position Configurations"
+        ordering = ['sequence_order']
 
     def __str__(self):
-        return f"HR Position: {self.position_name} ({self.position_id})"
+        return f"HR Position: {self.position_name} ({self.position_id}) for Project {self.project_code}"
 
 class HRIntimation(models.Model):
     trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='hr_intimations', null=True, blank=True)

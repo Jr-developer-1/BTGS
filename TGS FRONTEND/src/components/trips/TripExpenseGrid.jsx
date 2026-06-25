@@ -32,6 +32,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { useToast } from '../../context/ToastContext';
+import { useEligibility } from '../../utils/useEligibility';
 
 
 const NATURE_OPTIONS = [
@@ -261,7 +262,8 @@ const TripExpenseGrid = ({
     // whether to show the bulk upload button (default true)
     showBulkUpload = true,
     onJobReportClick,
-    hasAdditionalLuggage = false
+    hasAdditionalLuggage = false,
+    isBulkUpload = false
 }) => {
     // Master data states
     const [travelModes, setTravelModes] = useState([]);
@@ -271,6 +273,7 @@ const TripExpenseGrid = ({
     const [flightClasses, setFlightClasses] = useState([]);
     const [trainClasses, setTrainClasses] = useState([]);
     const [busSeatTypes, setBusSeatTypes] = useState([]);
+    const [allTravelClasses, setAllTravelClasses] = useState([]);
     const [intercityCabVehicleTypes, setIntercityCabVehicleTypes] = useState(CAB_VEHICLE_TYPES);
     const [airlines, setAirlines] = useState([]);
     const [busOperators, setBusOperators] = useState([]);
@@ -314,9 +317,11 @@ const TripExpenseGrid = ({
 
     const [rows, setRows] = useState([]);
     const [locationsPool, setLocationsPool] = useState([]);
-    // when trip id doesn't start with TRP, entries are treated as bike/self-booked and locked
-    const isFixedLocal = tripId && !tripId.toLowerCase().startsWith('trp');
+    const [citiesPool, setCitiesPool] = useState([]);
+    // when isBulkUpload is true (monthly tour plans), entries are treated as bike/self-booked and locked
+    const isFixedLocal = isBulkUpload;
     const [errors, setErrors] = useState({}); // { rowId: { fieldKey: message } }
+    const [focusedLocationRowId, setFocusedLocationRowId] = useState(null);
     const enabledNatures = allowedNatures || NATURE_OPTIONS.map(o => o.value);
     const [activeCategory, setActiveCategory] = useState(enabledNatures[0] || 'Travel'); // default to first allowed
     const isLocalOnly = enabledNatures.length === 1 && enabledNatures[0] === 'Local Travel';
@@ -328,6 +333,487 @@ const TripExpenseGrid = ({
     const [isLocating, setIsLocating] = useState(false);
     const { showToast, confirm } = useToast();
     const navigate = useNavigate();
+    const { eligibility, checkTravel, checkAccommodation, checkDA, checkMileage } = useEligibility();
+    const [tripDestination, setTripDestination] = useState('');
+
+    const getGuestHouseStayNights = () => {
+        let totalNights = 0;
+        rows.forEach(r => {
+            if (r.nature === 'Accommodation') {
+                const accomType = (r.details?.accomType || '').toLowerCase();
+                if (accomType.includes('guest house') || accomType.includes('guesthouse') || accomType.includes('bavya')) {
+                    const checkInDate = r.details?.actualCheckInDate || r.details?.checkIn;
+                    const checkOutDate = r.details?.actualCheckOutDate || r.details?.checkOut;
+                    if (checkInDate && checkOutDate) {
+                        try {
+                            const diffDays = Math.ceil((new Date(checkOutDate) - new Date(checkInDate)) / (1000 * 60 * 60 * 24));
+                            if (diffDays > 0) {
+                                totalNights += diffDays;
+                            }
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    }
+                }
+            }
+        });
+        return totalNights;
+    };
+
+    const getLaundryThreshold = () => {
+        if (!eligibility || eligibility.error) return 4;
+        if (eligibility.policy_enforced === false) return 0;
+        return parseInt(eligibility.laundry_days_threshold !== undefined ? eligibility.laundry_days_threshold : 4);
+    };
+
+    const isLaundryAllowed = () => {
+        const threshold = getLaundryThreshold();
+        return getGuestHouseStayNights() >= threshold;
+    };
+
+    useEffect(() => {
+        if (tripId) {
+            api.get(`/api/trips/${tripId}/`)
+                .then(res => {
+                    if (res.data && res.data.destination) {
+                        setTripDestination(res.data.destination);
+                    }
+                })
+                .catch(err => {
+                    console.error("Failed to load trip details in grid:", err);
+                });
+        }
+    }, [tripId]);
+    const getCityType = (specificLocation) => {
+        let target = specificLocation || tripDestination;
+        if (!target || !locationsPool.length) return 'Others';
+        target = target.trim();
+        if (target.includes(' - ')) {
+            target = target.split(' - ')[0].trim();
+        }
+        const loc = locationsPool.find(l => l.name?.toLowerCase().trim() === target.toLowerCase());
+        if (loc) {
+            const ct = (loc.cluster_type || '').toLowerCase();
+            if (ct.includes('metro') || ct.includes('state hq')) {
+                return 'State HQ';
+            } else if (ct.includes('city') || ct.includes('town') || ct.includes('district')) {
+                return 'Districts';
+            }
+        }
+        return 'Others';
+    };
+    const getRowWarning = (row) => {
+        if (!eligibility || eligibility.error || eligibility.policy_enforced === false) return null;
+
+        const isClassAllowed = (categoryClasses, allowedLimitClass, selectedClass, modeCategory) => {
+            if (!allowedLimitClass || allowedLimitClass === 'NA') return true;
+            if (!selectedClass) return true;
+            const clean = (s) => {
+                let str = String(s).toLowerCase().trim();
+                // ORDER MATTERS: check most-specific (III A/c = 3A) BEFORE less-specific (I A/c = 1A)
+                // to prevent 'iii a/c' from being caught by the 'i a/c' / '1a' check first.
+                if (str.includes('iii a/c') || str.includes('iiia/c') || str.includes('3 tier') || str.includes('(3a)') || str.includes('third')) {
+                    return '3a';
+                }
+                if (str.includes('ii a/c') || str.includes('iia/c') || str.includes('2 tier') || str.includes('(2a)') || str.includes('second')) {
+                    return '2a';
+                }
+                if (str.includes('first class') || str.includes('(1a)') || str.includes('1st') || str.includes('i a/c') || str.includes('ia/c')) {
+                    return '1a';
+                }
+                if (str.includes('chair') || str.includes('(cc)') || str.includes('(ec)')) {
+                    return 'cc';
+                }
+                if (str.includes('sleeper') || str.includes('(sl)')) {
+                    return 'sl';
+                }
+                if (str.includes('sitting') || str.includes('(2s)')) {
+                    return '2s';
+                }
+                // Flight
+                if (str.includes('premium') && str.includes('economy')) {
+                    return 'premium_economy';
+                }
+                if (str.includes('economy')) {
+                    return 'economy';
+                }
+                if (str.includes('business')) {
+                    return 'business';
+                }
+                return str.replace(/\s+/g, '').replace(/[\/-]/g, '');
+            };
+
+            const selClean = clean(selectedClass);
+            const limitClean = clean(allowedLimitClass);
+
+            const isTrain = modeCategory === 'train';
+            const isFlight = modeCategory === 'flight';
+            const isBus = modeCategory === 'bus';
+
+            // If master list is loaded, determine allowed/not-allowed via master list IDs
+            if (allTravelClasses && allTravelClasses.length > 0) {
+                let categoryClassesList = allTravelClasses.filter(c => {
+                    if (isTrain) return !!c.is_train;
+                    if (isFlight) return !!c.is_flight;
+                    return !!c.is_bus;
+                });
+
+                // Sort by ID to ensure correct comfort/level hierarchy
+                categoryClassesList.sort((a, b) => a.id - b.id);
+
+                const findBestMatch = (str) => {
+                    if (!str) return null;
+                    const cleanStr = clean(str);
+                    // 1. Exact match
+                    let match = categoryClassesList.find(c => c.class_name.toLowerCase().trim() === str.toLowerCase().trim());
+                    if (match) return match;
+                    // 2. Clean match
+                    match = categoryClassesList.find(c => clean(c.class_name) === cleanStr);
+                    if (match) return match;
+                    // 3. Substring match
+                    match = categoryClassesList.find(c => clean(c.class_name).includes(cleanStr) || cleanStr.includes(clean(c.class_name)));
+                    return match || null;
+                };
+
+                const selObj = findBestMatch(selectedClass);
+
+                // Handle comma-separated limit string
+                let limitId = -1;
+                if (allowedLimitClass.includes(',')) {
+                    const parts = allowedLimitClass.split(',');
+                    parts.forEach(part => {
+                        const match = findBestMatch(part.trim());
+                        if (match && match.id > limitId) {
+                            limitId = match.id;
+                        }
+                    });
+                } else {
+                    const match = findBestMatch(allowedLimitClass);
+                    if (match) limitId = match.id;
+                }
+
+                if (selObj && limitId !== -1) {
+                    return selObj.id <= limitId;
+                }
+            }
+
+            // Fallback to static order list if master list isn't loaded or match failed
+            const TRAIN_ORDER = ['2s', 'sl', 'cc', '3a', '2a', '1a'];
+            const FLIGHT_ORDER = ['economy', 'premium_economy', 'business', 'first_class'];
+            const BUS_ORDER = ['non_ac', 'ac', 'sleeper', 'volvo'];
+
+            let orderList = categoryClasses.map(c => clean(c));
+            if (isTrain) {
+                orderList = TRAIN_ORDER;
+            } else if (isFlight) {
+                orderList = FLIGHT_ORDER;
+            } else if (isBus) {
+                orderList = BUS_ORDER;
+            }
+
+            const idxLimit = orderList.indexOf(limitClean);
+            const idxSelected = orderList.indexOf(selClean);
+
+            if (idxLimit !== -1 && idxSelected !== -1) {
+                return idxSelected <= idxLimit;
+            }
+            return true;
+        };
+
+        const isLocalSubtypeAllowed = (allowedTypeStr, selectedSubtype, selectedMode) => {
+            if (!allowedTypeStr || allowedTypeStr === 'NA') return true;
+            if (!selectedSubtype && !selectedMode) return true;
+
+            const allowedClean = allowedTypeStr.toLowerCase();
+            const subClean = (selectedSubtype || '').toLowerCase();
+            const modeClean = (selectedMode || '').toLowerCase();
+
+            // If mode alone is selected but not subtype yet, check if mode is completely disallowed by policy
+            if (modeClean && !subClean) {
+                // If policy is Company Car only (company car / pooling):
+                if (allowedClean.includes('company car') && !allowedClean.includes('4/3') && !allowedClean.includes('cab')) {
+                    if (modeClean === 'bike' || modeClean === 'auto') return false;
+                }
+                // If policy is 2 or 3 Wheeler only:
+                if (allowedClean.includes('2 or 3 wheeler') || allowedClean.includes('2 or 3-wheeler')) {
+                    if (modeClean === 'car') return false;
+                }
+                // If policy is Online Cab / 4/3-Wheeler only:
+                if (allowedClean.includes('cab') || allowedClean.includes('4/3-wheeler') || allowedClean.includes('4 or 3-wheeler')) {
+                    if (modeClean === 'bike') return false;
+                }
+                return true;
+            }
+
+            // Map actual UI subtype/mode values → policy categories
+            const isOwnCar = subClean === 'own car';
+            const isOwnBike = subClean === 'own bike';
+            const isCompanyCar = subClean === 'company car';
+            const isCompanyBike = subClean === 'company bike';
+            const isPoolingCar = subClean === 'pooling' || subClean === 'pooling car';
+            const isOnlineCab = ['uber', 'ola', 'app based cab', 'rental', 'self drive rental', 'cab'].some(k => subClean.includes(k));
+            const isAuto = modeClean === 'auto' || subClean.includes('auto');
+            const isPublicTransport = modeClean === 'public transport';
+
+            // Policy: Company Car only (company car / pooling)
+            if (allowedClean.includes('company car') && !allowedClean.includes('4/3') && !allowedClean.includes('cab')) {
+                if (isOwnCar || isOwnBike || isOnlineCab || isAuto) return false;
+                return isCompanyCar || isPoolingCar || isCompanyBike || isPublicTransport;
+            }
+
+            // Policy: 2 or 3 Wheeler only
+            if (allowedClean.includes('2 or 3 wheeler') || allowedClean.includes('2 or 3-wheeler')) {
+                if (isOwnCar || isCompanyCar || isPoolingCar || isOnlineCab) return false;
+                return true; // own bike, auto, public transport etc. OK
+            }
+
+            // Policy: Online Cab / 4/3-Wheeler for Hire
+            if (allowedClean.includes('cab') || allowedClean.includes('4/3-wheeler') || allowedClean.includes('4 or 3-wheeler')) {
+                if (isOwnBike || isCompanyBike) return false;
+                // Own Car is also not allowed — must be a hired/online cab
+                if (isOwnCar) return false;
+                return true; // online cab, pooling, auto, public transport OK
+            }
+
+            return true;
+        };
+
+        // A. Travel Mode/Class/Subtype Validation
+        if (row.nature === 'Travel') {
+            const travel = eligibility.travel;
+            const mode = row.details?.mode || '';
+            const classType = row.details?.classType || '';
+            const modeClean = mode.trim().toLowerCase();
+
+            const FLIGHT_CLASSES = ['Economy', 'Premium Economy', 'Business Class', 'First Class'];
+            const TRAIN_CLASSES = ['Sleeper', 'Chair Car', 'III A/c', 'II A/c', 'I A/c'];
+            const BUS_CLASSES = ['Non-AC Bus', 'AC Bus', 'Sleeper Bus', 'Volvo'];
+
+            let allowedByPolicy = true;
+            let warningMsg = "";
+
+            if (modeClean.includes('air') || modeClean.includes('flight') || modeClean.includes('fly')) {
+                if (travel?.air) {
+                    if (!travel.air.allowed) {
+                        warningMsg = `Travel mode Flight is not applicable for your role.`;
+                        allowedByPolicy = false;
+                    } else if (!isClassAllowed(FLIGHT_CLASSES, travel.air.class, classType, 'flight')) {
+                        warningMsg = `Flight class ${classType || 'selected'} is not applicable for your role. Allowed class: ${travel.air.class}.`;
+                        allowedByPolicy = false;
+                    }
+                }
+            } else if (modeClean.includes('train') || modeClean.includes('rail')) {
+                if (travel?.train) {
+                    if (!travel.train.allowed) {
+                        warningMsg = `Travel mode Train is not applicable for your role.`;
+                        allowedByPolicy = false;
+                    } else if (!isClassAllowed(TRAIN_CLASSES, travel.train.class, classType, 'train')) {
+                        warningMsg = `Train class ${classType || 'selected'} is not applicable for your role. Allowed class: ${travel.train.class}.`;
+                        allowedByPolicy = false;
+                    }
+                }
+            } else if (modeClean.includes('bus') || modeClean.includes('sleeper')) {
+                if (travel?.bus) {
+                    if (!travel.bus.allowed) {
+                        warningMsg = `Travel mode Bus is not applicable for your role.`;
+                        allowedByPolicy = false;
+                    } else if (!isClassAllowed(BUS_CLASSES, travel.bus.class, classType, 'bus')) {
+                        warningMsg = `Bus class ${classType || 'selected'} is not applicable for your role. Allowed class: ${travel.bus.class}.`;
+                        allowedByPolicy = false;
+                    }
+                }
+            } else if (modeClean.includes('car') || modeClean.includes('cab') || modeClean.includes('jeep') || modeClean.includes('van')) {
+                if (travel?.car && !travel.car.allowed) {
+                    warningMsg = `Travel mode ${mode || 'Car'} is not applicable for your role.`;
+                    allowedByPolicy = false;
+                }
+            }
+
+            if (!allowedByPolicy) {
+                return warningMsg;
+            }
+        }
+
+        if (row.nature === 'Local Travel') {
+            const travel = eligibility.travel;
+            const subType = row.details?.subType || '';
+            const mode = row.details?.mode || '';
+            if (travel?.local_conveyance) {
+                if (!travel.local_conveyance.allowed) {
+                    return `Local Conveyance is not applicable for your role.`;
+                } else if ((mode || subType) && !isLocalSubtypeAllowed(travel.local_conveyance.type, subType, mode)) {
+                    // Build a user-friendly allowed description from the policy string
+                    const policyStr = travel.local_conveyance.type || '';
+                    const firstPolicy = policyStr.split(',')[0].trim();
+                    if (!subType && mode) {
+                        return `"${mode}" mode is not permitted for local conveyance for your role. Allowed: ${firstPolicy}.`;
+                    }
+                    return `"${subType}" is not permitted for local conveyance for your role. Allowed: ${firstPolicy}.`;
+                }
+            }
+        }
+
+        // B. Accommodation Validation
+        if (row.nature === 'Accommodation') {
+            const accomType = row.details?.accomType || '';
+            const accomTypeLower = accomType.toLowerCase();
+            const claimed = parseFloat(row.amount) || 0;
+
+            if (accomTypeLower.includes('guest house') || accomTypeLower.includes('guesthouse')) {
+                if (claimed > 0) {
+                    return "Stay in company guest house is free. Stay amount is not applicable.";
+                }
+            } else if (accomTypeLower.includes('own stay') || accomTypeLower.includes('self stay')) {
+                const cityType = getCityType(row.details?.location);
+                const acc = eligibility.accommodation;
+                let pct = 50;
+                let hotelLimit = null;
+                if (acc) {
+                    if (cityType === 'State HQ') { pct = acc.own_stay_state_hq_pct || 50; hotelLimit = acc.state_hq; }
+                    else if (cityType === 'Districts') { pct = acc.own_stay_districts_pct || 50; hotelLimit = acc.districts; }
+                    else { pct = acc.own_stay_others_pct || 50; hotelLimit = acc.others; }
+                }
+                // Calculate nights from details
+                let nights = parseInt(row.details?.nights) || 1;
+                const checkIn = row.details?.actualCheckInDate || row.details?.checkInDate || row.details?.checkIn;
+                const checkOut = row.details?.actualCheckOutDate || row.details?.checkOutDate || row.details?.checkOut;
+                if (checkIn && checkOut) {
+                    const inDate = new Date(checkIn);
+                    const outDate = new Date(checkOut);
+                    if (!isNaN(inDate) && !isNaN(outDate) && outDate > inDate) {
+                        nights = Math.max(0, Math.round((outDate - inDate) / (1000 * 60 * 60 * 24)));
+                    }
+                }
+                const allowedLimit = hotelLimit != null
+                    ? Math.round(parseFloat(hotelLimit) * nights * (pct / 100) * 100) / 100
+                    : Math.round(claimed * (pct / 100) * 100) / 100;
+                if (claimed > allowedLimit) {
+                    return `For own stay, you will only be reimbursed up to ${parseInt(pct)}% of the lodging limit (Allowed: ₹${allowedLimit.toLocaleString()} for ${nights} night(s) in ${cityType} cities).`;
+                }
+            } else {
+                const cityType = getCityType(row.details?.location);
+                // Calculate actual nights stayed from the accommodation row's dates
+                let nights = parseInt(row.details?.nights) || 0;
+                const checkIn = row.details?.actualCheckInDate || row.details?.checkInDate || row.details?.checkIn;
+                const checkOut = row.details?.actualCheckOutDate || row.details?.checkOutDate || row.details?.checkOut;
+                if (checkIn && checkOut) {
+                    const inDate = new Date(checkIn);
+                    const outDate = new Date(checkOut);
+                    if (!isNaN(inDate) && !isNaN(outDate) && outDate > inDate) {
+                        nights = Math.max(0, Math.round((outDate - inDate) / (1000 * 60 * 60 * 24)));
+                    } else if (!isNaN(inDate) && !isNaN(outDate)) {
+                        nights = 0; // same-day: no overnight stay
+                    }
+                }
+                const res = checkAccommodation(claimed, cityType);
+                if (res.limit !== null && res.limit !== undefined) {
+                    const totalLimit = res.limit * nights;
+                    if (claimed > totalLimit) {
+                        return `Accommodation amount ₹${claimed} exceeds your policy limit of ₹${totalLimit.toLocaleString()} for ${nights} night(s) in ${cityType} cities (₹${res.limit}/night).`;
+                    }
+                }
+            }
+        }
+
+        // C. Food / Daily Allowance Validation
+        if (row.nature === 'Food') {
+            const hasGuestHouseStay = rows.some(r => {
+                if (r.nature === 'Accommodation') {
+                    const accomType = (r.details?.accomType || '').toLowerCase();
+                    return accomType.includes('guest house') || accomType.includes('guesthouse');
+                }
+                return false;
+            });
+
+            const res = checkDA(0); // fetch the per-day limit without triggering the amount check
+            if (res.limit !== null && res.limit !== undefined) {
+                const perDayLimit = res.limit;
+
+                // Sum all Food rows on the same date as this row
+                const rowDate = row.date || row.details?.date || '';
+                const dailyFoodTotal = rows
+                    .filter(r => r.nature === 'Food' && (r.date || r.details?.date || '') === rowDate)
+                    .reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0);
+
+                if (dailyFoodTotal > perDayLimit) {
+                    const msg = hasGuestHouseStay
+                        ? `Daily food allowance for this date (₹${dailyFoodTotal.toLocaleString()}) exceeds the limit of ₹${perDayLimit.toLocaleString()}/day.`
+                        : `Daily allowance for this date (₹${dailyFoodTotal.toLocaleString()}) exceeds the limit of ₹${perDayLimit.toLocaleString()}/day.`;
+                    return msg;
+                }
+            }
+        }
+
+        return null;
+    };
+
+    const getAllowedAmountForRow = (row) => {
+        if (!eligibility || eligibility.error || eligibility.policy_enforced === false) return null;
+        const claimed = parseFloat(row.amount) || 0;
+
+        if (row.nature === 'Accommodation') {
+            const accomType = row.details?.accomType || '';
+            const accomTypeLower = accomType.toLowerCase();
+
+            if (accomTypeLower.includes('guest house') || accomTypeLower.includes('guesthouse')) {
+                return 0;
+            } else if (accomTypeLower.includes('own stay') || accomTypeLower.includes('self stay')) {
+                const cityType = getCityType(row.details?.location);
+                const acc = eligibility.accommodation;
+                let pct = 50;
+                let hotelLimit = null;
+                if (acc) {
+                    if (cityType === 'State HQ') { pct = acc.own_stay_state_hq_pct || 50; hotelLimit = acc.state_hq; }
+                    else if (cityType === 'Districts') { pct = acc.own_stay_districts_pct || 50; hotelLimit = acc.districts; }
+                    else { pct = acc.own_stay_others_pct || 50; hotelLimit = acc.others; }
+                }
+                // Calculate nights from details
+                let nights = parseInt(row.details?.nights) || 0;
+                const checkIn = row.details?.actualCheckInDate || row.details?.checkInDate || row.details?.checkIn;
+                const checkOut = row.details?.actualCheckOutDate || row.details?.checkOutDate || row.details?.checkOut;
+                if (checkIn && checkOut) {
+                    const inDate = new Date(checkIn);
+                    const outDate = new Date(checkOut);
+                    if (!isNaN(inDate) && !isNaN(outDate) && outDate > inDate) {
+                        nights = Math.max(0, Math.round((outDate - inDate) / (1000 * 60 * 60 * 24)));
+                    } else if (!isNaN(inDate) && !isNaN(outDate)) {
+                        nights = 0;
+                    }
+                }
+                const allowedLimit = hotelLimit != null
+                    ? Math.round(parseFloat(hotelLimit) * nights * (pct / 100) * 100) / 100
+                    : Math.round(claimed * (pct / 100) * 100) / 100;
+                return allowedLimit;
+            } else {
+                const cityType = getCityType(row.details?.location);
+                const res = checkAccommodation(claimed, cityType);
+                if (res.limit !== null && res.limit !== undefined) {
+                    let nights = 0;
+                    const checkIn = row.details?.actualCheckInDate || row.details?.checkInDate || row.details?.checkIn;
+                    const checkOut = row.details?.actualCheckOutDate || row.details?.checkOutDate || row.details?.checkOut;
+                    if (checkIn && checkOut) {
+                        const inDate = new Date(checkIn);
+                        const outDate = new Date(checkOut);
+                        if (!isNaN(inDate) && !isNaN(outDate) && outDate > inDate) {
+                            nights = Math.max(0, Math.round((outDate - inDate) / (1000 * 60 * 60 * 24)));
+                        }
+                    }
+                    return res.limit * nights;
+                }
+            }
+        }
+
+        if (row.nature === 'Food') {
+            const res = checkDA(0);
+            if (res.limit !== null && res.limit !== undefined) {
+                // The per-day DA limit is the cap per date, not per trip
+                return res.limit;
+            }
+        }
+
+        return null;
+    };
+
     const fileInputRef = useRef(null);
     const activeRowRef = useRef(null);
     const activeFieldRef = useRef(null);
@@ -377,6 +863,7 @@ const TripExpenseGrid = ({
                 setBookedByOptions(bookedByData.filter(m => !!m.status).map(m => toTitleCase(m.booking_type)));
 
                 const classesData = classesRes.data || [];
+                setAllTravelClasses(classesData);
                 setFlightClasses(classesData.filter(m => !!m.status && !!m.is_flight).map(m => toTitleCase(m.class_name)));
                 setTrainClasses(classesData.filter(m => !!m.status && !!m.is_train).map(m => toTitleCase(m.class_name)));
                 setBusSeatTypes(classesData.filter(m => !!m.status && !!m.is_bus).map(m => toTitleCase(m.class_name)));
@@ -435,38 +922,44 @@ const TripExpenseGrid = ({
                     const hierarchy = Array.isArray(data) ? data : [];
 
                     const result = [];
+                    const citiesResult = [];
                     const CITY_TYPES = ['city', 'metropolitan city', 'metro city', 'metro_city', 'metropolyten city'];
                     const isCityType = (t) => CITY_TYPES.includes((t || '').toLowerCase().trim());
 
                     const walk = (node) => {
                         if (!node || typeof node !== 'object') return;
 
-                        ['cities', 'metro_polyten_cities'].forEach(key => {
+                        // Collection and traversal for clusters
+                        ['clusters', 'cluster'].forEach(key => {
                             const arr = node[key];
                             if (Array.isArray(arr)) {
                                 arr.forEach(c => {
                                     if (c && c.name) {
-                                        result.push({ id: c.id, name: c.name, code: c.code || '', cluster_type: key === 'metro_polyten_cities' ? 'Metro City' : 'City' });
+                                        const clusterItem = {
+                                            id: c.id,
+                                            name: c.name,
+                                            code: c.code || '',
+                                            cluster_type: c.cluster_type || c.cluster_type_display || c.type || 'Cluster'
+                                        };
+                                        result.push(clusterItem);
+
+                                        // Collect in citiesPool if cluster type is City/Metropolitan/etc.
+                                        const cType = (c.cluster_type || c.cluster_type_display || '').toLowerCase().trim();
+                                        if (isCityType(cType)) {
+                                            citiesResult.push(clusterItem);
+                                        }
                                     }
                                     walk(c);
                                 });
                             }
                         });
 
-                        ['clusters', 'cluster', 'children'].forEach(key => {
+                        // Traversal only for children and other structural nodes
+                        ['children', 'continents', 'countries', 'states', 'districts', 'mandals', 'towns', 'villages', 'locations'].forEach(key => {
                             const arr = node[key];
                             if (Array.isArray(arr)) {
-                                arr.forEach(c => {
-                                    if (c && c.name && isCityType(c.type || c.cluster_type)) {
-                                        result.push({ id: c.id, name: c.name, code: c.code || '', cluster_type: (c.type || c.cluster_type || '').toLowerCase().includes('metro') ? 'Metro City' : 'City' });
-                                    }
-                                    walk(c);
-                                });
+                                arr.forEach(walk);
                             }
-                        });
-
-                        ['continents', 'countries', 'states', 'districts', 'mandals', 'towns', 'villages', 'locations'].forEach(key => {
-                            if (Array.isArray(node[key])) node[key].forEach(walk);
                         });
                     };
 
@@ -475,6 +968,10 @@ const TripExpenseGrid = ({
                     const seen = new Set();
                     const finalCities = result.filter(loc => { if (seen.has(loc.name)) return false; seen.add(loc.name); return true; }).sort((a, b) => a.name.localeCompare(b.name));
                     setLocationsPool(finalCities);
+
+                    const seenCities = new Set();
+                    const finalCitiesOnly = citiesResult.filter(loc => { if (seenCities.has(loc.name)) return false; seenCities.add(loc.name); return true; }).sort((a, b) => a.name.localeCompare(b.name));
+                    setCitiesPool(finalCitiesOnly);
                 } catch (err) {
                     console.error("Geo hierarchy fetch failed:", err);
                 }
@@ -751,25 +1248,50 @@ const TripExpenseGrid = ({
                 }
             }
 
-            // AMOUNT
-            if (row.amount === '' || row.amount === null || row.amount === undefined || isNaN(parseFloat(row.amount))) {
-                showToast(`Item #${rowNum}: Please enter a valid numeric amount.`, "error");
-                return false;
-            }
-            // require bill if any charge present
-            if (parseFloat(row.amount) > 0 && row.nature !== 'Incidental' && (!row.bills || row.bills.length === 0)) {
-                showToast(`Item #${rowNum}: Please upload a bill as amount is entered.`, "error");
-                return false;
-            }
-            const amt = parseFloat(row.amount);
-            if (amt < 0) {
-                showToast(`Item #${rowNum}: Amount cannot be negative.`, "error");
-                return false;
-            }
-            // two decimal places
-            if (!/^\d+(\.\d{1,2})?$/.test(String(row.amount))) {
-                showToast(`Item #${rowNum}: Amount can have at most two decimal places.`, "error");
-                return false;
+            // AMOUNT & BILLS VALIDATION WITH GUEST HOUSE EXEMPTION
+            const accomTypeLower = (row.details?.accomType || '').toLowerCase();
+            const isGH = row.nature === 'Accommodation' && (accomTypeLower.includes('guest house') || accomTypeLower.includes('guesthouse'));
+
+            if (!isGH) {
+                if (row.amount === '' || row.amount === null || row.amount === undefined || isNaN(parseFloat(row.amount))) {
+                    showToast(`Item #${rowNum}: Please enter a valid numeric amount.`, "error");
+                    return false;
+                }
+                const amt = parseFloat(row.amount);
+                if (amt < 0) {
+                    showToast(`Item #${rowNum}: Amount cannot be negative.`, "error");
+                    return false;
+                }
+                if (!/^\d+(\.\d{1,2})?$/.test(String(row.amount))) {
+                    showToast(`Item #${rowNum}: Amount can have at most two decimal places.`, "error");
+                    return false;
+                }
+                // require bill if amount is > 0 and not incidental
+                // EXEMPTION: Local Travel with odometer-based subtypes (Own Car, Own Bike, Self Drive Rental)
+                // are calculated from distance × fuel rate and don't have an invoice/receipt to upload.
+                const isOdometerBased = row.nature === 'Local Travel' && (
+                    ['own car', 'own bike', 'self drive rental'].includes(
+                        (row.details?.subType || '').toLowerCase()
+                    )
+                );
+                if (amt > 0 && row.nature !== 'Incidental' && !isOdometerBased && (!row.bills || row.bills.length === 0)) {
+                    showToast(`Item #${rowNum}: Please upload a bill as amount is entered.`, "error");
+                    return false;
+                }
+            } else {
+                // For Guest House / Bavya Guest House, amount and bills are NOT mandatory.
+                // But if they did enter an amount, validate it
+                if (row.amount !== '' && row.amount !== null && row.amount !== undefined && !isNaN(parseFloat(row.amount))) {
+                    const amt = parseFloat(row.amount);
+                    if (amt < 0) {
+                        showToast(`Item #${rowNum}: Amount cannot be negative.`, "error");
+                        return false;
+                    }
+                    if (!/^\d+(\.\d{1,2})?$/.test(String(row.amount))) {
+                        showToast(`Item #${rowNum}: Amount can have at most two decimal places.`, "error");
+                        return false;
+                    }
+                }
             }
 
             // REMARKS MIN LENGTH
@@ -782,6 +1304,21 @@ const TripExpenseGrid = ({
 
 
             if (row.nature === 'Travel') {
+                // Itemized Travel Incidentals "Others" validation
+                const travelIncidentals = row.details.travelIncidentals || [];
+                for (let j = 0; j < travelIncidentals.length; j++) {
+                    const item = travelIncidentals[j];
+                    if (isIncidentalOthersType(item.type) && (!item.otherDescription || !item.otherDescription.trim())) {
+                        showToast(`Item #${rowNum}: Please specify the incidental type for 'Others'.`, "error");
+                        return false;
+                    }
+                    if ((item.type || '').toLowerCase().includes('laundry') && !isLaundryAllowed()) {
+                        const threshold = getLaundryThreshold();
+                        showToast(`Item #${rowNum}: Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least ${threshold} nights.`, "error");
+                        return false;
+                    }
+                }
+
                 const { mode, origin, destination, travelStatus, bookedBy, provider, ticketNo, pnr, travelNo, depDate, arrDate } = row.details;
                 const isSelfBooked = bookedBy !== 'Company Booked';
 
@@ -822,10 +1359,12 @@ const TripExpenseGrid = ({
                 const depDateObj = new Date(depDate || row.date);
                 const arrDateObj = new Date(arrDate || row.date);
                 if (depDateObj < bookDateObj) {
+                    showToast(`Item #${rowNum}: Departure Date cannot be before Booking Date.`, "error");
                     setRowError(row.id, 'depDate', 'Departure Date cannot be before Booking Date.');
                     return false;
                 }
                 if (arrDateObj < depDateObj) {
+                    showToast(`Item #${rowNum}: Arrival Date cannot be before Departure Date.`, "error");
                     setRowError(row.id, 'arrDate', 'Arrival Date cannot be before Departure Date.');
                     return false;
                 }
@@ -839,33 +1378,33 @@ const TripExpenseGrid = ({
                 }
 
                 if (mode === 'Flight') {
-                    if (!provider) { setRowError(row.id, 'provider', 'Airline Name is mandatory.'); return false; }
-                    if (!ticketNo) { setRowError(row.id, 'ticketNo', 'Ticket Number is mandatory.'); return false; }
-                    if (!pnr) { setRowError(row.id, 'pnr', 'PNR is mandatory.'); return false; }
-                    if (!row.details.classType) { setRowError(row.id, 'classType', 'Class is mandatory for Flight.'); return false; }
-                    if (!travelNo) { setRowError(row.id, 'travelNo', 'Flight Number is mandatory.'); return false; }
-                    if (!row.timeDetails.boardingTime || !row.timeDetails.actualTime) { setRowError(row.id, 'time', 'Departure and Arrival times are mandatory.'); return false; }
+                    if (!provider) { showToast(`Item #${rowNum}: Airline Name is mandatory.`, "error"); setRowError(row.id, 'provider', 'Airline Name is mandatory.'); return false; }
+                    if (!ticketNo) { showToast(`Item #${rowNum}: Ticket Number is mandatory.`, "error"); setRowError(row.id, 'ticketNo', 'Ticket Number is mandatory.'); return false; }
+                    if (!pnr) { showToast(`Item #${rowNum}: PNR is mandatory.`, "error"); setRowError(row.id, 'pnr', 'PNR is mandatory.'); return false; }
+                    if (!row.details.classType) { showToast(`Item #${rowNum}: Class is mandatory for Flight.`, "error"); setRowError(row.id, 'classType', 'Class is mandatory for Flight.'); return false; }
+                    if (!travelNo) { showToast(`Item #${rowNum}: Flight Number is mandatory.`, "error"); setRowError(row.id, 'travelNo', 'Flight Number is mandatory.'); return false; }
+                    if (!row.timeDetails.boardingTime || !row.timeDetails.actualTime) { showToast(`Item #${rowNum}: Departure and Arrival times are mandatory.`, "error"); setRowError(row.id, 'time', 'Departure and Arrival times are mandatory.'); return false; }
                     // format/length validations
                     const alnum = /^[A-Za-z0-9]+$/;
-                    if (!alnum.test(ticketNo)) { setRowError(row.id, 'ticketNo', 'Ticket Number may only contain letters and numbers.'); return false; }
-                    if (ticketNo.length > 25) { setRowError(row.id, 'ticketNo', 'Ticket Number cannot exceed 25 characters.'); return false; }
-                    if (!alnum.test(pnr)) { setRowError(row.id, 'pnr', 'PNR may only contain letters and numbers.'); return false; }
-                    if (pnr.length < 5 || pnr.length > 15) { setRowError(row.id, 'pnr', 'PNR must be 5-15 characters long.'); return false; }
+                    if (!alnum.test(ticketNo)) { showToast(`Item #${rowNum}: Ticket Number may only contain letters and numbers.`, "error"); setRowError(row.id, 'ticketNo', 'Ticket Number may only contain letters and numbers.'); return false; }
+                    if (ticketNo.length > 25) { showToast(`Item #${rowNum}: Ticket Number cannot exceed 25 characters.`, "error"); setRowError(row.id, 'ticketNo', 'Ticket Number cannot exceed 25 characters.'); return false; }
+                    if (!alnum.test(pnr)) { showToast(`Item #${rowNum}: PNR may only contain letters and numbers.`, "error"); setRowError(row.id, 'pnr', 'PNR may only contain letters and numbers.'); return false; }
+                    if (pnr.length < 5 || pnr.length > 15) { showToast(`Item #${rowNum}: PNR must be 5-15 characters long.`, "error"); setRowError(row.id, 'pnr', 'PNR must be 5-15 characters long.'); return false; }
                 } else if (mode === 'Train') {
-                    if (!ticketNo) { setRowError(row.id, 'ticketNo', 'Ticket Number is mandatory for Train.'); return false; }
-                    if (!pnr) { setRowError(row.id, 'pnr', 'PNR is mandatory for Train.'); return false; }
-                    if (!row.details.carrier) { setRowError(row.id, 'carrier', 'Train Name is mandatory.'); return false; }
-                    if (!row.details.classType) { setRowError(row.id, 'classType', 'Class is mandatory for Train.'); return false; }
+                    if (!ticketNo) { showToast(`Item #${rowNum}: Ticket Number is mandatory for Train.`, "error"); setRowError(row.id, 'ticketNo', 'Ticket Number is mandatory for Train.'); return false; }
+                    if (!pnr) { showToast(`Item #${rowNum}: PNR is mandatory for Train.`, "error"); setRowError(row.id, 'pnr', 'PNR is mandatory for Train.'); return false; }
+                    if (!row.details.carrier) { showToast(`Item #${rowNum}: Train Name is mandatory.`, "error"); setRowError(row.id, 'carrier', 'Train Name is mandatory.'); return false; }
+                    if (!row.details.classType) { showToast(`Item #${rowNum}: Class is mandatory for Train.`, "error"); setRowError(row.id, 'classType', 'Class is mandatory for Train.'); return false; }
                     const alnum = /^[A-Za-z0-9]+$/;
                     if (!alnum.test(ticketNo)) { showToast(`Item #${rowNum}: Ticket Number may only contain letters and numbers.`, "error"); return false; }
                     if (ticketNo.length > 25) { showToast(`Item #${rowNum}: Ticket Number cannot exceed 25 characters.`, "error"); return false; }
                     if (!alnum.test(pnr)) { showToast(`Item #${rowNum}: PNR / Reference may only contain letters and numbers.`, "error"); return false; }
                     if (pnr.length < 3 || pnr.length > 20) { showToast(`Item #${rowNum}: PNR must be 3-20 characters long.`, "error"); return false; }
                 } else if (mode === 'Intercity Bus') {
-                    if (!row.details.carrier) { setRowError(row.id, 'carrier', 'Bus Operator is mandatory.'); return false; }
+                    if (!row.details.carrier) { showToast(`Item #${rowNum}: Bus Operator is mandatory.`, "error"); setRowError(row.id, 'carrier', 'Bus Operator is mandatory.'); return false; }
                 } else if (mode === 'Intercity Cab') {
-                    if (!provider) { setRowError(row.id, 'provider', 'Provider / Vendor (Ola/Uber etc) is mandatory.'); return false; }
-                    if (!row.timeDetails.boardingTime || !row.timeDetails.actualTime) { setRowError(row.id, 'time', 'Departure and Arrival times are mandatory for Cab.'); return false; }
+                    if (!provider) { showToast(`Item #${rowNum}: Provider / Vendor (Ola/Uber etc) is mandatory.`, "error"); setRowError(row.id, 'provider', 'Provider / Vendor is mandatory.'); return false; }
+                    if (!row.timeDetails.boardingTime || !row.timeDetails.actualTime) { showToast(`Item #${rowNum}: Departure and Arrival times are mandatory for Cab.`, "error"); setRowError(row.id, 'time', 'Departure and Arrival times are mandatory for Cab.'); return false; }
                 }
 
                 if (isSelfBooked) {
@@ -901,6 +1440,21 @@ const TripExpenseGrid = ({
                     }
                 }
             } else if (row.nature === 'Local Travel') {
+                // Itemized Local Incidentals "Others" validation
+                const localIncidentals = row.details.localIncidentals || [];
+                for (let j = 0; j < localIncidentals.length; j++) {
+                    const item = localIncidentals[j];
+                    if (isIncidentalOthersType(item.type) && (!item.otherDescription || !item.otherDescription.trim())) {
+                        showToast(`Item #${rowNum}: Please specify the incidental type for 'Others'.`, "error");
+                        return false;
+                    }
+                    if ((item.type || '').toLowerCase().includes('laundry') && !isLaundryAllowed()) {
+                        const threshold = getLaundryThreshold();
+                        showToast(`Item #${rowNum}: Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least ${threshold} nights.`, "error");
+                        return false;
+                    }
+                }
+
                 const { mode, subType, odoStart, odoEnd, origin, destination } = row.details;
 
                 // Prevent during active long distance travel
@@ -1002,6 +1556,22 @@ const TripExpenseGrid = ({
                     }
                 }
 
+                // Mileage limit warning check
+                if (odoStart && odoEnd) {
+                    const distance = parseFloat(odoEnd) - parseFloat(odoStart);
+                    const mileageCheck = checkMileage(distance);
+                    if (mileageCheck.exceeds) {
+                        const confirmMileage = await confirm(
+                            `Warning (Item #${rowNum}): ${mileageCheck.warnMessage}\n\nDo you want to proceed with saving anyway?`
+                        );
+                        if (!confirmMileage) return false;
+
+                        row.is_deviated = true;
+                        row.details.is_deviated = true;
+                        row.details.deviation_reason = mileageCheck.warnMessage;
+                    }
+                }
+
 
             } else if (row.nature === 'Food') {
 
@@ -1075,17 +1645,26 @@ const TripExpenseGrid = ({
                     showToast(`Item #${rowNum}: Actual check-in and check-out date/time are required.`, "error");
                     return false;
                 }
-                if (!row.details.bookingType) {
-                    showToast(`Item #${rowNum}: Please select a Booking Type.`, "error");
-                    return false;
-                }
-                if (!row.details.bookingSource) {
-                    showToast(`Item #${rowNum}: Please select a Booking Source.`, "error");
-                    return false;
-                }
                 if (!row.details.accomType) {
                     showToast(`Item #${rowNum}: Please select a Stay Type.`, "error");
                     return false;
+                }
+                const accomTypeVal = (row.details.accomType || '').toLowerCase();
+                const isGuestHouse = accomTypeVal.includes('guest house') || accomTypeVal.includes('guesthouse');
+
+                if (!isGuestHouse) {
+                    if (!row.details.bookingType) {
+                        showToast(`Item #${rowNum}: Please select a Booking Type.`, "error");
+                        return false;
+                    }
+                    if (row.details.bookingType !== 'Walkin' && !row.details.bookingSource) {
+                        showToast(`Item #${rowNum}: Please select a Booking Source.`, "error");
+                        return false;
+                    }
+                    if (!row.amount || parseFloat(row.amount) <= 0) {
+                        showToast(`Item #${rowNum}: Amount must be greater than 0.`, "error");
+                        return false;
+                    }
                 }
                 const needsHotelName = ['Hotel Stay', 'Guest House'].includes(row.details.accomType);
                 if (needsHotelName && !row.details.hotelName) {
@@ -1094,10 +1673,6 @@ const TripExpenseGrid = ({
                 }
                 if (actualCheckInDate && actualCheckOutDate && new Date(actualCheckInDate) > new Date(actualCheckOutDate)) {
                     showToast(`Item #${rowNum}: Actual check-out date cannot be before actual check-in date.`, "error");
-                    return false;
-                }
-                if (!row.amount || parseFloat(row.amount) <= 0) {
-                    showToast(`Item #${rowNum}: Amount must be greater than 0.`, "error");
                     return false;
                 }
 
@@ -1172,6 +1747,11 @@ const TripExpenseGrid = ({
                 }
                 if (row.details.incidentalType === 'Porter Charges' && !hasAdditionalLuggage) {
                     showToast(`Item #${rowNum}: Porter Charges are only allowed if "Additional Luggage" was checked in the Trip Story.`, "error");
+                    return false;
+                }
+                if ((row.details.incidentalType || '').toLowerCase().includes('laundry') && !isLaundryAllowed()) {
+                    const threshold = getLaundryThreshold();
+                    showToast(`Item #${rowNum}: Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least ${threshold} nights.`, "error");
                     return false;
                 }
 
@@ -1411,9 +1991,13 @@ const TripExpenseGrid = ({
                     cancellation_reason: row.nature === 'Travel' ? row.details.cancellationReason : null,
                     booked_by: row.nature === 'Travel' ? row.details.bookedBy : null,
                     reimbursement_eligible: row.nature === 'Travel' ? (row.details.bookedBy === 'Self Booked') : true,
+                    is_deviated: !!row.is_deviated || !!row.details.is_deviated,
+                    deviation_reason: row.deviation_reason || row.details.deviation_reason || null,
                     // description and image always part of payload
                     description: JSON.stringify({
                         ...filteredDetails,
+                        is_deviated: !!row.is_deviated || !!row.details.is_deviated,
+                        deviation_reason: row.deviation_reason || row.details.deviation_reason || '',
                         remarks: row.remarks ? row.remarks.trim() : '',
                         time: row.timeDetails
                     }),
@@ -1449,7 +2033,29 @@ const TripExpenseGrid = ({
 
         } catch (error) {
             console.error("Save error:", error);
-            const errorMsg = error.response?.data?.error || error.response?.data?.message || "Failed to commit registry due to a server error.";
+            let errorMsg = "Failed to commit registry due to a server error.";
+            if (error.response?.data) {
+                const data = error.response.data;
+                if (typeof data === 'string') {
+                    errorMsg = data;
+                } else if (data.error) {
+                    errorMsg = data.error;
+                } else if (data.message) {
+                    errorMsg = data.message;
+                } else if (typeof data === 'object') {
+                    const fieldErrors = [];
+                    for (const [field, messages] of Object.entries(data)) {
+                        const msg = Array.isArray(messages) ? messages[0] : messages;
+                        if (msg) {
+                            const niceField = field.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+                            fieldErrors.push(`${niceField}: ${msg}`);
+                        }
+                    }
+                    if (fieldErrors.length > 0) {
+                        errorMsg = fieldErrors.join(' | ');
+                    }
+                }
+            }
             showToast(errorMsg, "error");
             return false;
         } finally {
@@ -1852,7 +2458,11 @@ const TripExpenseGrid = ({
         setRows(currentRows => currentRows.map(r => {
             if (r.id === rowId) {
                 const newList = [...(r.details.localIncidentals || [])];
-                newList[index] = { ...newList[index], [field]: value };
+                if (field === 'type') {
+                    newList[index] = { ...newList[index], [field]: value, otherDescription: '' };
+                } else {
+                    newList[index] = { ...newList[index], [field]: value };
+                }
                 if (field === 'type' && value === 'Fuel') {
                     newList[index].amount = r.details.fuelAmount || '0.00';
                 }
@@ -1902,7 +2512,11 @@ const TripExpenseGrid = ({
         setRows(currentRows => currentRows.map(r => {
             if (r.id === rowId) {
                 const newList = [...(r.details.travelIncidentals || [])];
-                newList[index] = { ...newList[index], [field]: value };
+                if (field === 'type') {
+                    newList[index] = { ...newList[index], [field]: value, otherDescription: '' };
+                } else {
+                    newList[index] = { ...newList[index], [field]: value };
+                }
                 const ticketAmt = parseFloat(r.details.ticketAmount || 0);
                 const itemizedSum = newList.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
                 const total = (ticketAmt + itemizedSum).toFixed(2);
@@ -2061,8 +2675,8 @@ const TripExpenseGrid = ({
                     if (newDetails.checkIn && newDetails.checkOut) {
                         const start = new Date(newDetails.checkIn);
                         const end = new Date(newDetails.checkOut);
-                        const diffTime = Math.abs(end - start);
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        const diffTime = end - start;
+                        const diffDays = diffTime > 0 ? Math.ceil(diffTime / (1000 * 60 * 60 * 24)) : 0;
                         newDetails.nights = diffDays;
                     }
                 }
@@ -2078,7 +2692,7 @@ const TripExpenseGrid = ({
                         const start = new Date(checkInDate);
                         const end = new Date(checkOutDate);
                         const diffMs = end - start;
-                        newDetails.nights = diffMs >= 0 ? Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24))) : 0;
+                        newDetails.nights = diffMs > 0 ? Math.ceil(diffMs / (1000 * 60 * 60 * 24)) : 0;
                     } else {
                         newDetails.nights = 0;
                     }
@@ -2482,7 +3096,7 @@ const TripExpenseGrid = ({
 
         return (
             <tr key={row.id} className="category-row-block incidental-card-row">
-                <td>
+                <td colSpan={100} style={{ padding: '0', border: 'none' }}>
                     <div className="incidental-entry-shell">
                         <div className="incidental-entry-header">
                             <div className="incidental-entry-title">
@@ -2527,7 +3141,11 @@ const TripExpenseGrid = ({
                                         <label>Expense Type *</label>
                                         <select className="cat-input" value={row.details.incidentalType || ''} onChange={e => updateDetails(row.id, 'incidentalType', e.target.value)} disabled={isLocked}>
                                             <option value="">Select Type</option>
-                                            {generalIncidentalTypes.filter(t => !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage).map(t => (
+                                            {generalIncidentalTypes.filter(t => {
+                                                const isPorterAllowed = !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage;
+                                                const isLaundryAllowedVal = !t.toLowerCase().includes('laundry') || isLaundryAllowed() || (row.details.incidentalType === t);
+                                                return isPorterAllowed && isLaundryAllowedVal;
+                                            }).map(t => (
                                                 <option key={t} value={t}>{t}</option>
                                             ))}
                                         </select>
@@ -2682,8 +3300,19 @@ const TripExpenseGrid = ({
 
         return (
             <tr key={row.id} className="category-row-block incidental-card-row">
-                <td>
+                <td colSpan={100} style={{ padding: '0', border: 'none' }}>
                     <div className="incidental-entry-shell travel-entry-shell">
+                        {getRowWarning(row) && (
+                            <div style={{
+                                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
+                                fontSize: '0.82rem', color: '#92400e', lineHeight: 1.4
+                            }}>
+                                <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0, color: '#f59e0b' }} />
+                                <span>{getRowWarning(row)}</span>
+                            </div>
+                        )}
                         <div className="incidental-entry-header">
                             <div className="incidental-entry-title">
                                 <Plane size={16} />
@@ -2763,7 +3392,7 @@ const TripExpenseGrid = ({
                                         <label>From *</label>
                                         <SearchableLocationSelect
                                             placeholder="Select Starting Location..."
-                                            options={locationsPool}
+                                            options={citiesPool}
                                             value={row.details.origin || ''}
                                             onSelect={(val) => updateDetails(row.id, 'origin', val)}
                                             disabled={isLocked}
@@ -2775,7 +3404,7 @@ const TripExpenseGrid = ({
                                         <label>To *</label>
                                         <SearchableLocationSelect
                                             placeholder="Select Final Destination..."
-                                            options={locationsPool}
+                                            options={citiesPool}
                                             value={row.details.destination || ''}
                                             onSelect={(val) => updateDetails(row.id, 'destination', val)}
                                             disabled={isLocked}
@@ -3080,20 +3709,34 @@ const TripExpenseGrid = ({
                                     <div style={{ marginTop: '10px' }}>
                                         <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.3px' }}>Incidental Expense</div>
                                         {(row.details.travelIncidentals || []).map((item, idx) => (
-                                            <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                                                <select className="cat-input" style={{ flex: 2, padding: '5px', fontSize: '12px' }} value={item.type} onChange={e => updateTravelIncidental(row.id, idx, 'type', e.target.value)} disabled={isLocked}>
-                                                    <option value="">Select Type</option>
-                                                    {travelIncidentalTypes.filter(t => {
-                                                        const isDuplicate = (row.details.travelIncidentals || []).some((otherItem, otherIdx) => otherIdx !== idx && otherItem.type === t);
-                                                        const isPorterAllowed = !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage;
-                                                        return !isDuplicate && isPorterAllowed;
-                                                    }).map(t => <option key={t} value={t}>{t}</option>)}
-                                                </select>
-                                                <input type="number" className="cat-input" style={{ flex: 1, padding: '5px', fontSize: '12px' }} placeholder="Cost" value={item.amount} onChange={e => updateTravelIncidental(row.id, idx, 'amount', e.target.value)} disabled={isLocked} />
-                                                {!isLocked && (
-                                                    <button onClick={() => deleteTravelIncidental(row.id, idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }} title="Delete item">
-                                                        <Trash2 size={14} />
-                                                    </button>
+                                            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                    <select className="cat-input" style={{ flex: 2, padding: '5px', fontSize: '12px' }} value={item.type} onChange={e => updateTravelIncidental(row.id, idx, 'type', e.target.value)} disabled={isLocked}>
+                                                        <option value="">Select Type</option>
+                                                        {travelIncidentalTypes.filter(t => {
+                                                            const isDuplicate = (row.details.travelIncidentals || []).some((otherItem, otherIdx) => otherIdx !== idx && otherItem.type === t);
+                                                            const isPorterAllowed = !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage;
+                                                            const isLaundryAllowedVal = !t.toLowerCase().includes('laundry') || isLaundryAllowed() || (item.type === t);
+                                                            return !isDuplicate && isPorterAllowed && isLaundryAllowedVal;
+                                                        }).map(t => <option key={t} value={t}>{t}</option>)}
+                                                    </select>
+                                                    <input type="number" className="cat-input" style={{ flex: 1, padding: '5px', fontSize: '12px' }} placeholder="Cost" value={item.amount} onChange={e => updateTravelIncidental(row.id, idx, 'amount', e.target.value)} disabled={isLocked} />
+                                                    {!isLocked && (
+                                                        <button onClick={() => deleteTravelIncidental(row.id, idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }} title="Delete item">
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {isIncidentalOthersType(item.type) && (
+                                                    <input
+                                                        type="text"
+                                                        className="cat-input"
+                                                        style={{ padding: '5px', fontSize: '12px', borderColor: (!item.otherDescription || !item.otherDescription.trim()) ? '#ef4444' : '#cbd5e1' }}
+                                                        placeholder="Specify incidental type (mandatory)"
+                                                        value={item.otherDescription || ''}
+                                                        onChange={e => updateTravelIncidental(row.id, idx, 'otherDescription', e.target.value)}
+                                                        disabled={isLocked}
+                                                    />
                                                 )}
                                             </div>
                                         ))}
@@ -3194,8 +3837,19 @@ const TripExpenseGrid = ({
 
         return (
             <tr key={row.id} className="category-row-block incidental-card-row">
-                <td colSpan={10}>
+                <td colSpan={100} style={{ padding: '0', border: 'none' }}>
                     <div className="incidental-entry-shell local-entry-shell">
+                        {getRowWarning(row) && (
+                            <div style={{
+                                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
+                                fontSize: '0.82rem', color: '#92400e', lineHeight: 1.4
+                            }}>
+                                <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0, color: '#f59e0b' }} />
+                                <span>{getRowWarning(row)}</span>
+                            </div>
+                        )}
                         <div className="incidental-entry-header">
                             <div className="incidental-entry-title">
                                 <Car size={16} />
@@ -3296,26 +3950,24 @@ const TripExpenseGrid = ({
                                 <div className="incidental-card-body">
                                     <div className="input-with-label-mini">
                                         <label>From Location</label>
-                                        <SearchableLocationSelect
-                                            placeholder="Select Start Location..."
-                                            options={locationsPool}
+                                        <input
+                                            type="text"
+                                            className="cat-input"
+                                            placeholder="Enter start location..."
                                             value={row.details.origin || ''}
-                                            onSelect={(val) => updateDetails(row.id, 'origin', val)}
+                                            onChange={(e) => updateDetails(row.id, 'origin', e.target.value)}
                                             disabled={isLocked}
-                                            showCode={true}
-                                            icon={MapPin}
                                         />
                                     </div>
                                     <div className="input-with-label-mini">
                                         <label>To Location</label>
-                                        <SearchableLocationSelect
-                                            placeholder="Select Destination..."
-                                            options={locationsPool}
+                                        <input
+                                            type="text"
+                                            className="cat-input"
+                                            placeholder="Enter destination..."
                                             value={row.details.destination || ''}
-                                            onSelect={(val) => updateDetails(row.id, 'destination', val)}
+                                            onChange={(e) => updateDetails(row.id, 'destination', e.target.value)}
                                             disabled={isLocked}
-                                            showCode={true}
-                                            icon={MapPin}
                                         />
                                     </div>
                                     {row.details.tollAmount !== undefined && row.details.tollAmount > 0 && (
@@ -3356,22 +4008,36 @@ const TripExpenseGrid = ({
                                         <div style={{ marginTop: '10px' }}>
                                             <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.3px' }}>Incidental Expense</div>
                                             {(row.details.localIncidentals || []).map((item, idx) => (
-                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
-                                                    <select className="cat-input" style={{ flex: 2, padding: '5px', fontSize: '12px' }} value={item.type} onChange={e => updateLocalIncidental(row.id, idx, 'type', e.target.value)} disabled={isLocked}>
-                                                        <option value="">Select Type</option>
-                                                        {localIncidentalTypes.filter(t => {
-                                                            const isDuplicate = (row.details.localIncidentals || []).some((otherItem, otherIdx) => otherIdx !== idx && otherItem.type === t);
-                                                            if (isDuplicate) return false;
-                                                            if (t === 'Fuel' && parseFloat(row.details.fuelAmount || 0) > 0) return false;
-                                                            if (t === 'Toll Charges' && parseFloat(row.details.tollAmount || 0) > 0) return false;
-                                                            return true;
-                                                        }).map(t => <option key={t} value={t}>{t}</option>)}
-                                                    </select>
-                                                    <input type="number" className="cat-input" style={{ flex: 1, padding: '5px', fontSize: '12px' }} placeholder="Cost" value={item.amount} onChange={e => updateLocalIncidental(row.id, idx, 'amount', e.target.value)} disabled={isLocked} />
-                                                    {!isLocked && (
-                                                        <button onClick={() => deleteLocalIncidental(row.id, idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }} title="Delete item">
-                                                            <Trash2 size={14} />
-                                                        </button>
+                                                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                        <select className="cat-input" style={{ flex: 2, padding: '5px', fontSize: '12px' }} value={item.type} onChange={e => updateLocalIncidental(row.id, idx, 'type', e.target.value)} disabled={isLocked}>
+                                                            <option value="">Select Type</option>
+                                                            {localIncidentalTypes.filter(t => {
+                                                                const isDuplicate = (row.details.localIncidentals || []).some((otherItem, otherIdx) => otherIdx !== idx && otherItem.type === t);
+                                                                if (isDuplicate) return false;
+                                                                if (t === 'Fuel' && parseFloat(row.details.fuelAmount || 0) > 0) return false;
+                                                                if (t === 'Toll Charges' && parseFloat(row.details.tollAmount || 0) > 0) return false;
+                                                                const isLaundryAllowedVal = !t.toLowerCase().includes('laundry') || isLaundryAllowed() || (item.type === t);
+                                                                return isLaundryAllowedVal;
+                                                            }).map(t => <option key={t} value={t}>{t}</option>)}
+                                                        </select>
+                                                        <input type="number" className="cat-input" style={{ flex: 1, padding: '5px', fontSize: '12px' }} placeholder="Cost" value={item.amount} onChange={e => updateLocalIncidental(row.id, idx, 'amount', e.target.value)} disabled={isLocked} />
+                                                        {!isLocked && (
+                                                            <button onClick={() => deleteLocalIncidental(row.id, idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }} title="Delete item">
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    {isIncidentalOthersType(item.type) && (
+                                                        <input
+                                                            type="text"
+                                                            className="cat-input"
+                                                            style={{ padding: '5px', fontSize: '12px', borderColor: (!item.otherDescription || !item.otherDescription.trim()) ? '#ef4444' : '#cbd5e1' }}
+                                                            placeholder="Specify incidental type (mandatory)"
+                                                            value={item.otherDescription || ''}
+                                                            onChange={e => updateLocalIncidental(row.id, idx, 'otherDescription', e.target.value)}
+                                                            disabled={isLocked}
+                                                        />
                                                     )}
                                                 </div>
                                             ))}
@@ -3585,6 +4251,17 @@ const TripExpenseGrid = ({
             <tr key={row.id} className="category-row-block incidental-card-row">
                 <td colSpan={100} style={{ padding: '0', border: 'none' }}>
                     <div className="incidental-entry-shell food-entry-shell">
+                        {getRowWarning(row) && (
+                            <div style={{
+                                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
+                                fontSize: '0.82rem', color: '#92400e', lineHeight: 1.4
+                            }}>
+                                <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0, color: '#f59e0b' }} />
+                                <span>{getRowWarning(row)}</span>
+                            </div>
+                        )}
                         <div className="incidental-entry-header">
                             <div className="incidental-entry-title">
                                 <Coffee size={16} />
@@ -3811,11 +4488,24 @@ const TripExpenseGrid = ({
         const actualCheckInTime = row.details.actualCheckInTime || row.details.checkInTime || '';
         const actualCheckOutDate = row.details.actualCheckOutDate || row.details.checkOut || '';
         const actualCheckOutTime = row.details.actualCheckOutTime || row.details.checkOutTime || '';
+        const accomType = (row.details.accomType || '').toLowerCase();
+        const isGuestHouse = accomType.includes('guest house') || accomType.includes('guesthouse');
 
         return (
             <tr key={row.id} className="category-row-block incidental-card-row">
-                <td>
+                <td colSpan={100} style={{ padding: '0', border: 'none' }}>
                     <div className="incidental-entry-shell accommodation-entry-shell">
+                        {getRowWarning(row) && (
+                            <div style={{
+                                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                background: '#fffbeb', border: '1px solid #fcd34d',
+                                borderRadius: '8px', padding: '8px 12px', marginBottom: '12px',
+                                fontSize: '0.82rem', color: '#92400e', lineHeight: 1.4
+                            }}>
+                                <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0, color: '#f59e0b' }} />
+                                <span>{getRowWarning(row)}</span>
+                            </div>
+                        )}
                         <div className="incidental-entry-header">
                             <div className="incidental-entry-title">
                                 <Hotel size={16} />
@@ -3903,6 +4593,20 @@ const TripExpenseGrid = ({
                                                 {stayTypes.map(o => <option key={o} value={o}>{o}</option>)}
                                             </select>
                                         </div>
+                                        {row.details.accomType && row.details.accomType !== 'No Stay' && (
+                                            <div className="input-with-label-mini" style={{ position: 'relative' }}>
+                                                <label>Location *</label>
+                                                <SearchableLocationSelect
+                                                    placeholder="Select / Search Location..."
+                                                    options={locationsPool}
+                                                    value={row.details.location || ''}
+                                                    onSelect={(val) => updateDetails(row.id, 'location', val)}
+                                                    disabled={isLocked}
+                                                    showCode={true}
+                                                    icon={MapPin}
+                                                />
+                                            </div>
+                                        )}
                                         {['Hotel Stay', 'Guest House'].includes(row.details.accomType) && (
                                             <div className="input-with-label-mini">
                                                 <label>{row.details.accomType === 'Guest House' ? 'Guest House Info *' : 'Hotel Name *'}</label>
@@ -3921,7 +4625,7 @@ const TripExpenseGrid = ({
                                     <div className="details-box-head"><span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase' }}>Booking Details</span></div>
                                     <div className="details-box-body" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <div className="input-with-label-mini">
-                                            <label>Booking Type *</label>
+                                            <label>Booking Type{isGuestHouse ? '' : ' *'}</label>
                                             <select className="cat-input" value={row.details.bookingType || ''} onChange={e => updateDetails(row.id, 'bookingType', e.target.value)} disabled={isLocked}>
                                                 <option value="">Select Booking Type</option>
                                                 {stayBookingTypes.map(o => <option key={o} value={o}>{o}</option>)}
@@ -3929,7 +4633,7 @@ const TripExpenseGrid = ({
                                         </div>
                                         {row.details.bookingType !== 'Walkin' && (
                                             <div className="input-with-label-mini mt-1">
-                                                <label>Booking Source *</label>
+                                                <label>Booking Source{isGuestHouse ? '' : ' *'}</label>
                                                 <select className="cat-input" value={row.details.bookingSource || ''} onChange={e => updateDetails(row.id, 'bookingSource', e.target.value)} disabled={isLocked}>
                                                     <option value="">Select Booking Source</option>
                                                     {stayBookingSources.map(o => <option key={o} value={o}>{o}</option>)}
@@ -3938,7 +4642,7 @@ const TripExpenseGrid = ({
                                         )}
                                         {row.details.bookingType === 'Online Booking' && (
                                             <div className="input-with-label-mini">
-                                                <label>Booking ID *</label>
+                                                <label>Booking ID{isGuestHouse ? '' : ' *'}</label>
                                                 <input type="text" className="cat-input" placeholder="Enter Booking ID" value={row.details.bookingId || ''} onChange={e => updateDetails(row.id, 'bookingId', e.target.value)} disabled={isLocked} />
                                             </div>
                                         )}
@@ -3950,7 +4654,7 @@ const TripExpenseGrid = ({
                                     <div className="details-box-head"><span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase' }}>Expense & Upload</span></div>
                                     <div className="details-box-body" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                         <div className="input-with-label-mini">
-                                            <label>Base Amount *</label>
+                                            <label>Base Amount{isGuestHouse ? '' : ' *'}</label>
                                             <div className="amount-with-currency">
                                                 <span className="currency-symbol">₹</span>
                                                 <input
@@ -5016,7 +5720,11 @@ const TripExpenseGrid = ({
                                                                         <label>EXPENSE TYPE</label>
                                                                         <select className="cat-input" value={row.details.incidentalType || ''} onChange={e => updateDetails(row.id, 'incidentalType', e.target.value)}>
                                                                             <option value="">Select Type</option>
-                                                                            {incidentalTypes.filter(t => !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage).map(t => (
+                                                                            {incidentalTypes.filter(t => {
+                                                                                const isPorterAllowed = !['Porter Charges', 'Porter'].includes(t) || hasAdditionalLuggage;
+                                                                                const isLaundryAllowedVal = !t.toLowerCase().includes('laundry') || isLaundryAllowed() || (row.details.incidentalType === t);
+                                                                                return isPorterAllowed && isLaundryAllowedVal;
+                                                                            }).map(t => (
                                                                                 <option key={t} value={t}>{t}</option>
                                                                             ))}
                                                                         </select>
@@ -5353,6 +6061,17 @@ const TripExpenseGrid = ({
                                                     <td className="rev-amount-cell text-right">
                                                         <div className="amount-stack">
                                                             <span className="main-amt">₹{formatIndianCurrency(parseFloat(r.amount || 0))}</span>
+                                                            {(() => {
+                                                                const allowed = getAllowedAmountForRow(r);
+                                                                if (allowed !== null && parseFloat(r.amount || 0) > allowed) {
+                                                                    return (
+                                                                        <span className="amt-note" style={{ color: '#ef4444', fontWeight: '500' }}>
+                                                                            (Allowed: ₹{formatIndianCurrency(allowed)})
+                                                                        </span>
+                                                                    );
+                                                                }
+                                                                return null;
+                                                            })()}
                                                             {r.details.travelStatus === 'Cancelled' && (
                                                                 <>
                                                                     <span className="amt-note">CANCELLATION ONLY</span>
@@ -5552,10 +6271,10 @@ const TripExpenseGrid = ({
                     <div className="registry-title-row">
                         <h3>{isLocked ? 'Finalized Journey Ledger' : 'Dynamic Journey Ledger'}</h3>
                     </div>
-                    {!isLocalOnly && (
+                    {(!isLocalOnly || activeCategory === 'Review') && (
                         <>
                             <div className="category-tabs-selector mt-2">
-                                {NATURE_OPTIONS.filter(opt => enabledNatures.includes(opt.value)).map(opt => (
+                                {NATURE_OPTIONS.filter(opt => enabledNatures.includes(opt.value) || opt.value === 'Review').map(opt => (
                                     <button
                                         key={opt.value}
                                         className={`cat-tab-btn ${activeCategory === opt.value ? 'active' : ''}`}
@@ -5643,12 +6362,12 @@ const TripExpenseGrid = ({
                     <div className="review-action-footer">
                         {/* Always show Commit/Save button on every tab to allow incremental saving */}
                         <button
-                            className={`master-save-btn ${(isSaving || (rows.length > 0 && rows.every(r => r.isSaved))) ? 'loading btn-disabled' : ''}`}
+                            className={`master-save-btn ${(isSaving || (displayRows.length > 0 && displayRows.filter(r => activeCategory === 'Review' || r.nature === activeCategory).every(r => r.isSaved))) ? 'loading btn-disabled' : ''}`}
                             onClick={saveRegistry}
-                            disabled={isSaving || isSubmitting || (rows.length > 0 && rows.every(r => r.isSaved))}
+                            disabled={isSaving || isSubmitting || (displayRows.length > 0 && displayRows.filter(r => activeCategory === 'Review' || r.nature === activeCategory).every(r => r.isSaved))}
                         >
                             {isSaving ? <Clock className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
-                            <span>{isSaving ? 'Saving Progress...' : (rows.length > 0 && rows.every(r => r.isSaved) ? 'Saved' : 'Commit Registry')}</span>
+                            <span>{isSaving ? 'Saving Progress...' : (displayRows.length > 0 && displayRows.filter(r => activeCategory === 'Review' || r.nature === activeCategory).every(r => r.isSaved) ? 'Saved' : 'Commit Registry')}</span>
                         </button>
 
                         {activeCategory === 'Review' ? (

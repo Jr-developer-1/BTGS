@@ -19,7 +19,7 @@ class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'user_name', 'user_emp_id', 'position_id', 'position_name', 
             'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active', 
-            'trip_type', 'trip_control'
+            'trip_type', 'trip_control', 'can_view_reports'
         ]
 
 class FinanceIntimationSerializer(serializers.ModelSerializer):
@@ -36,7 +36,10 @@ class FinanceIntimationSerializer(serializers.ModelSerializer):
 class HRPositionConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = HRPositionConfig
-        fields = ['id', 'position_id', 'position_name', 'department_name', 'can_approve', 'is_active']
+        fields = [
+            'id', 'position_id', 'position_name', 'department_name', 'can_approve', 'is_active',
+            'sequence_order', 'project_code', 'trips_approval', 'bulk_approval', 'claims_approval', 'edit_claims', 'can_view_reports'
+        ]
 
 class HRIntimationSerializer(serializers.ModelSerializer):
     hr_user_name = serializers.ReadOnlyField(source='hr_user.name')
@@ -226,6 +229,126 @@ class TripOdometerSerializer(serializers.ModelSerializer):
             data['end_odo_image'] = encrypt_key(data['end_odo_image'])
         return super().to_internal_value(data)
 
+def is_global_policy_enabled():
+    try:
+        from api_management.models import SystemConfig
+        config = SystemConfig.objects.filter(key='global_policy_enabled').first()
+        return config.value.lower() == 'true' if config else True
+    except Exception:
+        return True
+
+def get_user_max_mileage(user):
+    if not is_global_policy_enabled():
+        return 0.0
+    from travel_masters.models import Cadre, EligibilityRule
+    if not user:
+        return 0.0
+
+    desig = (user.designation or '').strip().lower()
+    matched_cadre = None
+
+    if desig:
+        keyword_cadre_pairs = []
+        for cadre in Cadre.objects.all():
+            for kw in (cadre.designation_keywords or []):
+                if kw:
+                    keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
+        
+        keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        
+        import re
+        desig_words = re.findall(r'[a-z0-9]+', desig)
+        desig_words_set = set(desig_words)
+        
+        for kw_clean, cadre in keyword_cadre_pairs:
+            kw_words = re.findall(r'[a-z0-9]+', kw_clean)
+            if not kw_words:
+                continue
+            if all(word in desig_words_set for word in kw_words):
+                matched_cadre = cadre
+                break
+            if kw_clean in desig:
+                matched_cadre = cadre
+                break
+
+    if not matched_cadre:
+        role = getattr(user, 'active_role', '') or ''
+        role = role.lower()
+        if role in ['admin', 'cfo']:
+            matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
+        elif role in ['hr', 'finance']:
+            matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
+
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.first()
+
+    if not matched_cadre:
+        return 0.0
+
+    rule = EligibilityRule.objects.filter(cadre=matched_cadre, is_active=True).first()
+    if not rule:
+        return 0.0
+
+    return float(rule.max_mileage_km or 0.0)
+
+def get_user_laundry_threshold(user):
+    if not is_global_policy_enabled():
+        return 0
+    from travel_masters.models import Cadre, EligibilityRule
+    if not user:
+        return 4
+
+    desig = (user.designation or '').strip().lower()
+    matched_cadre = None
+
+    if desig:
+        keyword_cadre_pairs = []
+        for cadre in Cadre.objects.all():
+            for kw in (cadre.designation_keywords or []):
+                if kw:
+                    keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
+        
+        keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        
+        import re
+        desig_words = re.findall(r'[a-z0-9]+', desig)
+        desig_words_set = set(desig_words)
+        
+        for kw_clean, cadre in keyword_cadre_pairs:
+            kw_words = re.findall(r'[a-z0-9]+', kw_clean)
+            if not kw_words:
+                continue
+            if all(word in desig_words_set for word in kw_words):
+                matched_cadre = cadre
+                break
+            if kw_clean in desig:
+                matched_cadre = cadre
+                break
+
+    if not matched_cadre:
+        role = getattr(user, 'active_role', '') or ''
+        role = role.lower()
+        if role in ['admin', 'cfo']:
+            matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
+        elif role in ['hr', 'finance']:
+            matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
+
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.first()
+
+    if not matched_cadre:
+        return 4
+
+    rule = EligibilityRule.objects.filter(cadre=matched_cadre, is_active=True).first()
+    if not rule:
+        return 4
+
+    return int(rule.laundry_days_threshold if rule.laundry_days_threshold is not None else 4)
+
 class ExpenseSerializer(serializers.ModelSerializer):
     user_name = serializers.ReadOnlyField(source='trip.user.name')
     trip_user_id = serializers.ReadOnlyField(source='trip.user.employee_id')
@@ -256,6 +379,10 @@ class ExpenseSerializer(serializers.ModelSerializer):
                         representation['planned_origin'] = desc_json.get('planned_origin', '')
                     if not representation.get('planned_destination'):
                         representation['planned_destination'] = desc_json.get('planned_destination', '')
+                # Surface from_bulk_upload as a top-level field so the frontend
+                # can distinguish bulk expenses without re-parsing description JSON
+                if desc_json.get('from_bulk_upload'):
+                    representation['from_bulk_upload'] = True
             except:
                 pass
         return representation
@@ -298,6 +425,65 @@ class ExpenseSerializer(serializers.ModelSerializer):
             description = json.loads(description_str)
         except:
             description = {}
+
+        # Validate otherDescription in itemized incidentals
+        if category in ['Travel', 'Outstation Travel', 'Local Travel']:
+            travel_inc = description.get('travelIncidentals') or []
+            local_inc = description.get('localIncidentals') or []
+            for item in (travel_inc + local_inc):
+                if isinstance(item, dict):
+                    item_type = str(item.get('type') or item.get('category') or '').strip().lower()
+                    if item_type in ['others', 'other']:
+                        other_desc = str(item.get('otherDescription') or '').strip()
+                        if not other_desc:
+                            raise serializers.ValidationError({"description": "Please specify the incidental type for 'Others'."})
+
+        # --- LAUNDRY ELIGIBILITY VALIDATION ---
+        has_laundry = False
+        if category == 'Incidental':
+            incidental_type = str(description.get('incidentalType') or '').strip().lower()
+            if 'laundry' in incidental_type:
+                has_laundry = True
+        elif category in ['Travel', 'Outstation Travel', 'Local Travel']:
+            travel_inc = description.get('travelIncidentals') or []
+            local_inc = description.get('localIncidentals') or []
+            for item in (travel_inc + local_inc):
+                if isinstance(item, dict):
+                    item_type = str(item.get('type') or item.get('category') or '').strip().lower()
+                    if 'laundry' in item_type:
+                        has_laundry = True
+                        break
+
+        if has_laundry:
+            if trip:
+                threshold = get_user_laundry_threshold(trip.user)
+                total_nights = 0
+                existing_stays = Expense.objects.filter(trip=trip, category='Accommodation')
+                if self.instance:
+                    existing_stays = existing_stays.exclude(id=self.instance.id)
+                    
+                for stay in existing_stays:
+                    try:
+                        stay_desc = json.loads(stay.description) if isinstance(stay.description, str) else stay.description
+                        if not isinstance(stay_desc, dict):
+                            stay_desc = {}
+                        accom_type = str(stay_desc.get('accomType') or '').strip().lower()
+                        if 'guest house' in accom_type or 'guesthouse' in accom_type or 'bavya' in accom_type:
+                            s_in = stay_desc.get('checkInDate')
+                            s_out = stay_desc.get('checkOutDate')
+                            if s_in and s_out:
+                                from datetime import datetime
+                                in_date = datetime.fromisoformat(s_in.split('T')[0]).date()
+                                out_date = datetime.fromisoformat(s_out.split('T')[0]).date()
+                                nights = (out_date - in_date).days
+                                if nights > 0:
+                                    total_nights += nights
+                    except Exception:
+                        continue
+                if total_nights < threshold:
+                    raise serializers.ValidationError({
+                        "description": f"Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least {threshold} nights. (Current: {total_nights} nights)"
+                    })
 
         # 1. INCIDENTAL: Duplicate entry check
         if category == 'Incidental':
@@ -366,7 +552,39 @@ class ExpenseSerializer(serializers.ModelSerializer):
                             if (check_in < s_out) and (check_out > s_in):
                                 raise serializers.ValidationError({"description": f"Stay overlaps with an existing entry ({s_in} to {s_out})."})
                     except:
-                        continue
+                         continue
+
+        # 4. Mileage / Odometer validation
+        odo_start = attrs.get('odo_start')
+        odo_end = attrs.get('odo_end')
+        distance = attrs.get('distance')
+
+        dist = None
+        if odo_start is not None and odo_end is not None:
+            if odo_end <= odo_start:
+                raise serializers.ValidationError({"odo_end": "End Odometer must be greater than Start Odometer."})
+            dist = float(odo_end - odo_start)
+        elif distance is not None:
+            dist = float(distance)
+
+        if dist is not None:
+            if trip and trip.user:
+                max_mileage = get_user_max_mileage(trip.user)
+                if max_mileage > 0.0 and dist > max_mileage:
+                    is_deviated = attrs.get('is_deviated', False)
+                    description_str = attrs.get('description', '')
+                    if not is_deviated and description_str and isinstance(description_str, str) and description_str.strip().startswith('{'):
+                        try:
+                            desc_json = json.loads(description_str)
+                            if desc_json.get('is_deviated') is True:
+                                is_deviated = True
+                        except:
+                            pass
+                    if not is_deviated:
+                        field = "odo_end" if odo_end is not None else "distance"
+                        raise serializers.ValidationError({
+                            field: f"Odometer reading distance ({dist:.2f} km) exceeds your cadre entitlement limit of {max_mileage:.2f} km."
+                        })
 
         return attrs
 
@@ -564,15 +782,24 @@ class TripSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         source = attrs.get('source')
         destination = attrs.get('destination')
-        
+
+        # Primary check from submitted data
         is_local = attrs.get('consider_as_local', False)
-        
+
+        # Secondary fallback: TravelListCreateView exclusively handles local trips,
+        # so if this serializer is being used in that view context, treat as local
+        # regardless of whether consider_as_local reached attrs.
+        if not is_local:
+            view = self.context.get('view')
+            if view and view.__class__.__name__ == 'TravelListCreateView':
+                is_local = True
+
         if not is_local and source and destination and str(source).strip().lower() == str(destination).strip().lower():
             raise serializers.ValidationError({
                 "to": "Source and Destination cannot be the same.",
                 "from": "Source and Destination cannot be the same."
             })
-            
+
         return attrs
 
 

@@ -7,7 +7,12 @@ import 'trip_expense_form_detailed.dart';
 
 class TripExpenseGridScreen extends StatefulWidget {
   final String tripId;
-  const TripExpenseGridScreen({super.key, required this.tripId});
+  final bool hasAdditionalLuggage;
+  const TripExpenseGridScreen({
+    super.key,
+    required this.tripId,
+    this.hasAdditionalLuggage = false,
+  });
 
   @override
   _TripExpenseGridScreenState createState() => _TripExpenseGridScreenState();
@@ -33,17 +38,24 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
 
   bool _hasChanged = false;
 
-  Future<void> _fetchExpenses({bool showLoader = true, bool isUpdate = false}) async {
+  Future<void> _fetchExpenses({
+    bool showLoader = true,
+    bool isUpdate = false,
+  }) async {
     if (!mounted) return;
     if (isUpdate) _hasChanged = true;
     if (showLoader) setState(() => _isLoading = true);
     try {
       final trip = await _tripService.fetchTripDetails(widget.tripId);
-      final manualExpenses = await _tripService.fetchExpenses(tripId: widget.tripId);
+      final manualExpenses = await _tripService.fetchExpenses(
+        tripId: widget.tripId,
+      );
 
       if (!mounted) return;
       setState(() {
-        _expenses = manualExpenses.isNotEmpty ? manualExpenses : (trip.expenses ?? []);
+        _expenses = manualExpenses.isNotEmpty
+            ? manualExpenses
+            : (trip.expenses ?? []);
         _claimStatus = trip.claimStatus;
         _isLoading = false;
       });
@@ -169,6 +181,65 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     );
   }
 
+  Map<String, dynamic> _parseDescription(dynamic exp) {
+    Map<String, dynamic> details = {};
+    try {
+      final descRaw = exp['description'];
+      if (descRaw is String && descRaw.startsWith('{')) {
+        details = Map<String, dynamic>.from(jsonDecode(descRaw));
+      } else if (descRaw is Map) {
+        details = Map<String, dynamic>.from(descRaw);
+      }
+    } catch (_) {}
+
+    // Restore stripped fields from top-level database columns
+    if (details['mode'] == null && exp['travel_mode'] != null) {
+      details['mode'] = exp['travel_mode'];
+    }
+    if (details['classType'] == null && exp['class_type'] != null) {
+      details['classType'] = exp['class_type'];
+    }
+    if (details['pnr'] == null && exp['booking_reference'] != null) {
+      details['pnr'] = exp['booking_reference'];
+    }
+    if (details['bookingRef'] == null && exp['booking_reference'] != null) {
+      details['bookingRef'] = exp['booking_reference'];
+    }
+    if (details['subType'] == null && exp['vehicle_type'] != null) {
+      details['subType'] = exp['vehicle_type'];
+    }
+    if (details['vehicleType'] == null && exp['vehicle_type'] != null) {
+      details['vehicleType'] = exp['vehicle_type'];
+    }
+    if (details['bookedBy'] == null && exp['booked_by'] != null) {
+      details['bookedBy'] = exp['booked_by'];
+    }
+    if (details['travelStatus'] == null && exp['cancellation_status'] != null) {
+      details['travelStatus'] = exp['cancellation_status'];
+    }
+    if (details['cancellationDate'] == null &&
+        exp['cancellation_date'] != null) {
+      details['cancellationDate'] = exp['cancellation_date'];
+    }
+    if (details['refundAmount'] == null && exp['refund_amount'] != null) {
+      details['refundAmount'] = exp['refund_amount'].toString();
+    }
+    if (details['cancellationReason'] == null &&
+        exp['cancellation_reason'] != null) {
+      details['cancellationReason'] = exp['cancellation_reason'];
+    }
+    if (details['odoStart'] == null && exp['odo_start'] != null) {
+      details['odoStart'] = exp['odo_start'].toString();
+    }
+    if (details['odoEnd'] == null && exp['odo_end'] != null) {
+      details['odoEnd'] = exp['odo_end'].toString();
+    }
+    if (details['totalKm'] == null && exp['distance'] != null) {
+      details['totalKm'] = exp['distance'].toString();
+    }
+    return details;
+  }
+
   Widget _buildCategorySection(
     String title,
     String category,
@@ -176,38 +247,39 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     IconData icon,
   ) {
     final filteredExpenses = _expenses.where((e) {
-      String nature = (e['nature'] ?? e['category'])?.toString().toLowerCase() ?? '';
-      
-      // Look into description to see if it's actually Travel data stored as Others
-      Map<String, dynamic> details = {};
-      try {
-        if (e['description'] is String && e['description'].toString().startsWith('{')) {
-          details = jsonDecode(e['description']);
-        } else if (e['description'] is Map) {
-          details = e['description'];
-        }
-      } catch (_) {}
+      String nature =
+          (e['nature'] ?? e['category'])?.toString().toLowerCase() ?? '';
 
-      bool isOthers = nature == 'others' || nature == 'other' || nature == 'miscellaneous';
-      bool hasTravelData = details['origin'] != null && details['destination'] != null && details['mode'] != null;
+      // Look into description to see if it's actually Travel data stored as Others
+      Map<String, dynamic> details = _parseDescription(e);
+
+      bool isOthers =
+          nature == 'others' || nature == 'other' || nature == 'miscellaneous';
+      bool hasTravelData =
+          details['origin'] != null &&
+          details['destination'] != null &&
+          details['mode'] != null;
 
       if (category == 'Travel') {
-        return nature == 'travel' || 
-               nature == 'outstation' || 
-               nature == 'outstation travel' ||
-               (isOthers && hasTravelData);
+        return nature == 'travel' ||
+            nature == 'outstation' ||
+            nature == 'outstation travel' ||
+            (isOthers && hasTravelData);
       }
-      
+
       if (category == 'Local Travel') {
         bool isFuel = nature == 'fuel' || nature == 'local travel';
         return isFuel;
       }
-      
+
       if (category == 'Incidental') {
         // Only include in Incidental if it's NOT Travel data
-        return (nature == 'others' || nature == 'incidental' || nature == 'miscellaneous') && !hasTravelData;
+        return (nature == 'others' ||
+                nature == 'incidental' ||
+                nature == 'miscellaneous') &&
+            !hasTravelData;
       }
-      
+
       return nature == category.toLowerCase();
     }).toList();
 
@@ -360,17 +432,11 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
     Color themeColor,
     bool isLast,
   ) {
-    Map<String, dynamic> desc = {};
-    try {
-      if (exp['description'] is String) {
-        desc = jsonDecode(exp['description'] ?? '{}');
-      } else {
-        desc = exp['description'] ?? {};
-      }
-    } catch (e) {}
+    Map<String, dynamic> desc = _parseDescription(exp);
 
     final amountStr = exp['amount']?.toString() ?? '0';
-    final amount = double.tryParse(amountStr.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+    final amount =
+        double.tryParse(amountStr.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
     final date =
         DateTime.tryParse(
           exp['date']?.toString() ?? DateTime.now().toString(),
@@ -435,40 +501,43 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
                               fontSize: 10,
                             ),
                           ),
-                            Text(
-                              desc['subType'].toString().toUpperCase(),
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 9,
-                                color: themeColor,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (desc['is_deviated'] == true) ...[
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFEF2F2),
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: const Color(0xFFFECACA)),
-                          ),
-                          child: Text(
-                            'FLAGGED DEVIATION',
+                          Text(
+                            desc['subType'].toString().toUpperCase(),
                             style: GoogleFonts.plusJakartaSans(
-                              fontSize: 8,
-                              fontWeight: FontWeight.w900,
-                              color: const Color(0xFFDC2626),
+                              fontSize: 9,
+                              color: themeColor,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
                             ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (desc['is_deviated'] == true) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF2F2),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: const Color(0xFFFECACA)),
+                        ),
+                        child: Text(
+                          'FLAGGED DEVIATION',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFFDC2626),
                           ),
                         ),
-                      ],
+                      ),
                     ],
-                  ),
+                  ],
                 ),
+              ),
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
@@ -519,14 +588,11 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
 
   String _getExpenseMainDisplay(dynamic exp) {
     try {
-      Map<String, dynamic> desc = {};
-      if (exp['description'] is String) {
-        desc = jsonDecode(exp['description'] ?? '{}');
-      } else {
-        desc = exp['description'] ?? {};
-      }
+      Map<String, dynamic> desc = _parseDescription(exp);
 
-      final category = (exp['category'] ?? exp['nature'] ?? '').toString().toLowerCase();
+      final category = (exp['category'] ?? exp['nature'] ?? '')
+          .toString()
+          .toLowerCase();
       final remarks = exp['remarks']?.toString() ?? '';
 
       // 1. Local Travel / Fuel
@@ -552,17 +618,20 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
       }
 
       // 3. Hotel / Restaurant specific fallbacks
-      if (desc['hotelName'] != null && desc['hotelName'].toString().trim().isNotEmpty) {
+      if (desc['hotelName'] != null &&
+          desc['hotelName'].toString().trim().isNotEmpty) {
         return desc['hotelName'].toString();
       }
-      if (desc['restaurant'] != null && desc['restaurant'].toString().trim().isNotEmpty) {
+      if (desc['restaurant'] != null &&
+          desc['restaurant'].toString().trim().isNotEmpty) {
         return desc['restaurant'].toString();
       }
 
       // 4. Default fallbacks
       if (remarks.trim().isNotEmpty) return remarks.trim();
-      
-      final String catName = exp['category']?.toString() ?? exp['nature']?.toString() ?? '';
+
+      final String catName =
+          exp['category']?.toString() ?? exp['nature']?.toString() ?? '';
       if (catName.trim().isNotEmpty) return catName.trim();
 
       return 'Trip Expense';
@@ -578,6 +647,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
         builder: (context) => TripExpenseFormDetailedScreen(
           category: category,
           tripId: widget.tripId,
+          hasAdditionalLuggage: widget.hasAdditionalLuggage,
         ),
       ),
     );
@@ -592,6 +662,7 @@ class _TripExpenseGridScreenState extends State<TripExpenseGridScreen> {
           category: category,
           tripId: widget.tripId,
           expenseData: exp,
+          hasAdditionalLuggage: widget.hasAdditionalLuggage,
         ),
       ),
     );

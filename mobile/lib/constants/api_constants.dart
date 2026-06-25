@@ -9,7 +9,7 @@ class ApiConstants {
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
   // static const String baseUrl = 'https://one.bhspl.in/tgs';
-  static const String baseUrl = 'http://10.2.1.31:4567/';
+  static const String baseUrl = 'http://10.2.1.31:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -66,6 +66,8 @@ class ApiConstants {
   static const String masterMealSources = '$baseUrl/api/meal-source-masters/';
   static const String masterMealProviders =
       '$baseUrl/api/meal-provider-masters/';
+  static const String masterMyEligibility =
+      '$baseUrl/api/masters/my-eligibility/';
 
   // Expense Endpoints
   static const String expenses = '$baseUrl/api/expenses/';

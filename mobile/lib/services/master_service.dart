@@ -11,6 +11,7 @@ class MasterService {
   // Cache to avoid redundant API calls
   Map<String, List<String>> _masterCache = {};
   Map<String, dynamic> _rawMasterCache = {};
+  List<Map<String, dynamic>>? _geoHierarchyCache;
 
   Future<List<String>> fetchMasterList(
     String endpoint,
@@ -55,7 +56,9 @@ class MasterService {
 
       if (list.isNotEmpty) {
         _masterCache[endpoint] = list;
-        print('MASTER_SUCCESS: $endpoint -> Found ${list.length} items (Key: $displayKey)');
+        print(
+          'MASTER_SUCCESS: $endpoint -> Found ${list.length} items (Key: $displayKey)',
+        );
         return list;
       } else {
         print('MASTER_EMPTY: $endpoint -> No items found with key $displayKey');
@@ -113,10 +116,12 @@ class MasterService {
         rawList = response['results'] ?? response['data'] ?? [];
       }
       return rawList
-          .where((item) =>
-              item is Map &&
-              (item['status'] == true || item['status'] == null) &&
-              !(item['is_deleted'] == true))
+          .where(
+            (item) =>
+                item is Map &&
+                (item['status'] == true || item['status'] == null) &&
+                !(item['is_deleted'] == true),
+          )
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
     } catch (e) {
@@ -167,18 +172,93 @@ class MasterService {
   }
 
   Future<List<Map<String, dynamic>>> getGeoHierarchy() async {
+    if (_geoHierarchyCache != null) return _geoHierarchyCache!;
     try {
       final response = await _apiService.get(ApiConstants.geoHierarchy);
+      List<Map<String, dynamic>> result = [];
       if (response is Map &&
           (response['results'] != null || response['data'] != null)) {
         final data = response['results'] ?? response['data'];
-        return List<Map<String, dynamic>>.from(data is List ? data : []);
+        result = List<Map<String, dynamic>>.from(data is List ? data : []);
+      } else if (response is List) {
+        result = List<Map<String, dynamic>>.from(response);
       }
-      if (response is List) return List<Map<String, dynamic>>.from(response);
+      _geoHierarchyCache = result;
+      return result;
     } catch (e) {
       print('Error fetching geo hierarchy: $e');
     }
     return [];
+  }
+
+  Future<String> getCityType(String locationName) async {
+    final hierarchy = await getGeoHierarchy();
+    String target = locationName.trim();
+    if (target.contains(' - ')) {
+      target = target.split(' - ')[0].trim();
+    }
+    if (target.isEmpty) return 'Others';
+
+    String? foundType;
+    void walk(dynamic node) {
+      if (foundType != null) return;
+      if (node == null || node is! Map) return;
+
+      final clusterKeys = ['clusters', 'cluster'];
+      for (var key in clusterKeys) {
+        final arr = node[key];
+        if (arr is List) {
+          for (var c in arr) {
+            if (c is Map && c.containsKey('name')) {
+              final name = c['name']?.toString() ?? '';
+              if (name.toLowerCase().trim() == target.toLowerCase()) {
+                foundType = (c['cluster_type'] ?? c['type'] ?? 'Cluster').toString();
+                return;
+              }
+            }
+            walk(c);
+          }
+        }
+      }
+
+      final recurseKeys = [
+        'cities',
+        'metro_polyten_cities',
+        'children',
+        'continents',
+        'countries',
+        'states',
+        'districts',
+        'mandals',
+        'towns',
+        'villages',
+        'locations',
+      ];
+      for (var key in recurseKeys) {
+        final arr = node[key];
+        if (arr is List) {
+          for (var child in arr) {
+            walk(child);
+            if (foundType != null) return;
+          }
+        }
+      }
+    }
+
+    for (var node in hierarchy) {
+      walk(node);
+      if (foundType != null) break;
+    }
+
+    if (foundType != null) {
+      final ct = foundType!.toLowerCase();
+      if (ct.contains('metro') || ct.contains('state hq')) {
+        return 'State HQ';
+      } else if (ct.contains('city') || ct.contains('town') || ct.contains('district')) {
+        return 'Districts';
+      }
+    }
+    return 'Others';
   }
 
   Future<List<String>> getIncidentalTypes() => fetchMasterList(
@@ -191,7 +271,9 @@ class MasterService {
   /// so callers can split them by category (general_incidental / travel_incidental / local_conveyance)
   Future<List<Map<String, dynamic>>> getIncidentalTypesRaw() async {
     try {
-      final response = await _apiService.get(ApiConstants.masterIncidentalTypes);
+      final response = await _apiService.get(
+        ApiConstants.masterIncidentalTypes,
+      );
       List rawList = [];
       if (response is List) {
         rawList = response;
@@ -199,10 +281,12 @@ class MasterService {
         rawList = response['results'] ?? response['data'] ?? [];
       }
       return rawList
-          .where((item) =>
-              item is Map &&
-              (item['status'] == true || item['status'] == null) &&
-              !(item['is_deleted'] == true))
+          .where(
+            (item) =>
+                item is Map &&
+                (item['status'] == true || item['status'] == null) &&
+                !(item['is_deleted'] == true),
+          )
           .map((item) => Map<String, dynamic>.from(item))
           .toList();
     } catch (e) {
@@ -221,11 +305,22 @@ class MasterService {
     try {
       final response = await _apiService.get(ApiConstants.masterOperators);
       List rawList = [];
-      if (response is List) rawList = response;
-      else if (response is Map) rawList = response['results'] ?? response['data'] ?? [];
-      return rawList.where((item) => item is Map && (item['status'] == true || item['status'] == null) && !(item['is_deleted'] == true))
-          .map((item) => Map<String, dynamic>.from(item)).toList();
-    } catch (e) { return []; }
+      if (response is List)
+        rawList = response;
+      else if (response is Map)
+        rawList = response['results'] ?? response['data'] ?? [];
+      return rawList
+          .where(
+            (item) =>
+                item is Map &&
+                (item['status'] == true || item['status'] == null) &&
+                !(item['is_deleted'] == true),
+          )
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (e) {
+      return [];
+    }
   }
 
   Future<List<String>> getProviders() =>
@@ -235,22 +330,44 @@ class MasterService {
     try {
       final response = await _apiService.get(ApiConstants.masterProviders);
       List rawList = [];
-      if (response is List) rawList = response;
-      else if (response is Map) rawList = response['results'] ?? response['data'] ?? [];
-      return rawList.where((item) => item is Map && (item['status'] == true || item['status'] == null) && !(item['is_deleted'] == true))
-          .map((item) => Map<String, dynamic>.from(item)).toList();
-    } catch (e) { return []; }
+      if (response is List)
+        rawList = response;
+      else if (response is Map)
+        rawList = response['results'] ?? response['data'] ?? [];
+      return rawList
+          .where(
+            (item) =>
+                item is Map &&
+                (item['status'] == true || item['status'] == null) &&
+                !(item['is_deleted'] == true),
+          )
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (e) {
+      return [];
+    }
   }
 
   Future<List<Map<String, dynamic>>> getLocalProvidersRaw() async {
     try {
       final response = await _apiService.get(ApiConstants.masterLocalProviders);
       List rawList = [];
-      if (response is List) rawList = response;
-      else if (response is Map) rawList = response['results'] ?? response['data'] ?? [];
-      return rawList.where((item) => item is Map && (item['status'] == true || item['status'] == null) && !(item['is_deleted'] == true))
-          .map((item) => Map<String, dynamic>.from(item)).toList();
-    } catch (e) { return []; }
+      if (response is List)
+        rawList = response;
+      else if (response is Map)
+        rawList = response['results'] ?? response['data'] ?? [];
+      return rawList
+          .where(
+            (item) =>
+                item is Map &&
+                (item['status'] == true || item['status'] == null) &&
+                !(item['is_deleted'] == true),
+          )
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    } catch (e) {
+      return [];
+    }
   }
 
   Future<List<String>> getLocationsPool() async {
@@ -258,13 +375,73 @@ class MasterService {
     final List<String> result = [];
     final seen = <String>{};
 
-    const cityTypes = ['city', 'metropolitan city', 'metro city', 'metro_city', 'metropolyten city'];
-    bool isCityType(String? t) => cityTypes.contains((t ?? '').toLowerCase().trim());
+    void walk(dynamic node) {
+      if (node == null || node is! Map) return;
+
+      // Collect all cluster nodes (matching web locationsPool)
+      final clusterKeys = ['clusters', 'cluster'];
+      for (var key in clusterKeys) {
+        final arr = node[key];
+        if (arr is List) {
+          for (var c in arr) {
+            if (c is Map && c.containsKey('name')) {
+              final finalName = formatLocation(Map<String, dynamic>.from(c));
+              if (finalName.isNotEmpty && !seen.contains(finalName)) {
+                seen.add(finalName);
+                result.add(finalName);
+              }
+            }
+            walk(c);
+          }
+        }
+      }
+
+      // Recurse into all other structural levels
+      final recurseKeys = [
+        'cities',
+        'metro_polyten_cities',
+        'children',
+        'continents',
+        'countries',
+        'states',
+        'districts',
+        'mandals',
+        'towns',
+        'villages',
+        'locations',
+      ];
+      for (var key in recurseKeys) {
+        final arr = node[key];
+        if (arr is List) {
+          for (var child in arr) walk(child);
+        }
+      }
+    }
+
+    for (var node in hierarchy) walk(node);
+    result.sort();
+    return result;
+  }
+
+  Future<List<String>> getCitiesPool() async {
+    final hierarchy = await getGeoHierarchy();
+    final List<String> result = [];
+    final seen = <String>{};
+
+    const cityTypes = [
+      'city',
+      'metropolitan city',
+      'metro city',
+      'metro_city',
+      'metropolyten city',
+    ];
+    bool isCityType(String? t) =>
+        cityTypes.contains((t ?? '').toLowerCase().trim());
 
     void walk(dynamic node) {
       if (node == null || node is! Map) return;
 
-      // 1. Process explicit city buckets (Matches web logic)
+      // Collect explicit cities
       final cityKeys = ['cities', 'metro_polyten_cities'];
       for (var key in cityKeys) {
         final arr = node[key];
@@ -282,8 +459,8 @@ class MasterService {
         }
       }
 
-      // 2. Process clusters/children with type filter
-      final clusterKeys = ['clusters', 'cluster', 'children'];
+      // Collect only clusters matching cityTypes
+      final clusterKeys = ['clusters', 'cluster'];
       for (var key in clusterKeys) {
         final arr = node[key];
         if (arr is List) {
@@ -303,9 +480,19 @@ class MasterService {
         }
       }
 
-      // 3. Recurse into others without adding them to results (Matches web logic)
-      final otherKeys = ['continents', 'countries', 'states', 'districts', 'mandals', 'towns', 'villages', 'locations'];
-      for (var key in otherKeys) {
+      // Recurse into all other structural levels
+      final recurseKeys = [
+        'children',
+        'continents',
+        'countries',
+        'states',
+        'districts',
+        'mandals',
+        'towns',
+        'villages',
+        'locations',
+      ];
+      for (var key in recurseKeys) {
         final arr = node[key];
         if (arr is List) {
           for (var child in arr) walk(child);
@@ -316,5 +503,17 @@ class MasterService {
     for (var node in hierarchy) walk(node);
     result.sort();
     return result;
+  }
+
+  Future<Map<String, dynamic>> getMyEligibility() async {
+    try {
+      final response = await _apiService.get(ApiConstants.masterMyEligibility);
+      if (response is Map<String, dynamic>) {
+        return response;
+      }
+    } catch (e) {
+      print('Error fetching my eligibility rules: $e');
+    }
+    return {};
   }
 }

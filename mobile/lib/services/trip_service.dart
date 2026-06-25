@@ -9,7 +9,11 @@ import '../constants/api_constants.dart';
 class TripService {
   final ApiService _apiService = ApiService();
 
-  Future<List<Trip>> fetchTrips({String? search, bool all = false, int page = 1}) async {
+  Future<List<Trip>> fetchTrips({
+    String? search,
+    bool all = false,
+    int page = 1,
+  }) async {
     List<String> params = ['page=$page'];
     if (search != null && search.isNotEmpty) params.add('search=$search');
     if (all) params.add('all=true');
@@ -24,7 +28,7 @@ class TripService {
     );
 
     List<Trip> trips = [];
-    
+
     // Handle paginated or list response for trips
     if (tripsResponse is Map && tripsResponse.containsKey('results')) {
       final results = tripsResponse['results'] as List;
@@ -32,7 +36,7 @@ class TripService {
     } else if (tripsResponse is List) {
       trips.addAll(tripsResponse.map((json) => Trip.fromJson(json)));
     }
-    
+
     // Handle paginated or list response for travels
     if (travelsResponse is Map && travelsResponse.containsKey('results')) {
       final results = travelsResponse['results'] as List;
@@ -40,7 +44,7 @@ class TripService {
     } else if (travelsResponse is List) {
       trips.addAll(travelsResponse.map((json) => Trip.fromJson(json)));
     }
-    
+
     return trips;
   }
 
@@ -199,7 +203,10 @@ class TripService {
     return [];
   }
 
-  Future<Map<String, dynamic>> fetchApprovalCounts({String? source, String? viewType}) async {
+  Future<Map<String, dynamic>> fetchApprovalCounts({
+    String? source,
+    String? viewType,
+  }) async {
     String url = ApiConstants.approvalsCount;
     List<String> params = [];
     if (source != null) params.add('source=$source');
@@ -227,6 +234,36 @@ class TripService {
       body: body,
       includeAuth: true,
     );
+  }
+
+  Future<Map<String, dynamic>?> hrDecide(
+    dynamic claimId,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _apiService.patch(
+      '${ApiConstants.baseUrl}/api/claims/$claimId/hr-decide/',
+      body: payload,
+      includeAuth: true,
+    );
+    if (response is Map) {
+      return Map<String, dynamic>.from(response);
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> financeDecide(
+    dynamic claimId,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _apiService.patch(
+      '${ApiConstants.baseUrl}/api/claims/$claimId/finance-decide/',
+      body: payload,
+      includeAuth: true,
+    );
+    if (response is Map) {
+      return Map<String, dynamic>.from(response);
+    }
+    return null;
   }
 
   Future<dynamic> getReportingManager() async {
@@ -598,7 +635,9 @@ class TripService {
 
   Future<Map<String, dynamic>?> fetchLatestTrackingPoint(String tripId) async {
     try {
-      final response = await _apiService.get('/api/trips/$tripId/tracking/?latest=true');
+      final response = await _apiService.get(
+        '/api/trips/$tripId/tracking/?latest=true',
+      );
       if (response != null && response is Map) {
         return Map<String, dynamic>.from(response);
       }
@@ -627,10 +666,14 @@ class TripService {
     return await _apiService.getBinary(ApiConstants.bulkTemplate);
   }
 
-  Future<void> uploadBulkLocalConveyance(String tripId, File file) async {
+  Future<void> uploadBulkLocalConveyance(
+    String tripId,
+    File file, {
+    String status = 'Submitted',
+  }) async {
     await _apiService.postMultipart(
       ApiConstants.bulkUpload,
-      fields: {'trip_id': tripId},
+      fields: {'trip_id': tripId, 'status': status},
       fileKey: 'file',
       file: file,
       includeAuth: true,
@@ -665,10 +708,12 @@ class TripService {
     required String tripId,
     required List<dynamic> jsonData,
     String? parentBatchId,
+    String status = 'Submitted',
   }) async {
     final Map<String, dynamic> body = {
       'trip_id': tripId,
       'data_json': jsonData,
+      'status': status,
     };
     if (parentBatchId != null) {
       body['parent_batch_id'] = parentBatchId;
@@ -705,14 +750,19 @@ class TripService {
   }
 
   Future<List<Map<String, dynamic>>> fetchProjects() async {
-    final response = await _apiService.get('${ApiConstants.baseUrl}/api/projects/');
+    final response = await _apiService.get(
+      '${ApiConstants.baseUrl}/api/masters/jurisdictions/projects/',
+    );
     if (response is List) {
       return List<Map<String, dynamic>>.from(response);
     }
     return [];
   }
 
-  Future<Map<String, dynamic>> fetchHistoricalStops(String date, {String? employeeId}) async {
+  Future<Map<String, dynamic>> fetchHistoricalStops(
+    String date, {
+    String? employeeId,
+  }) async {
     try {
       String url = '${ApiConstants.historicalStops}?date=$date';
       if (employeeId != null) url += '&employee_id=$employeeId';

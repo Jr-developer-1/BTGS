@@ -45,10 +45,28 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
   @override
   void initState() {
     super.initState();
+    _checkPermissions();
     _initFromSession();
     _updatePurposeFromMonth(_selectedMonth);
     _detectManager();
     _fetchProjects();
+  }
+
+  void _checkPermissions() {
+    final user = _apiService.getUser();
+    final permissions = user?['role_permissions'] as Map<String, dynamic>?;
+    final canCreateTourPlan = permissions?['can_create_tour_plan'] == true;
+    if (!canCreateTourPlan) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Access Restricted: Your role does not have permission to initiate Tour Plans'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.pop(context);
+      });
+    }
   }
 
   void _initFromSession() {
@@ -83,25 +101,75 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             : 'VIJ';
       }
 
-      final String? positionName = profile['position']?['name']?.toString();
-      if (positionName != null) {
-        final words = positionName
-            .split(' ')
-            .where((String w) => w.trim().isNotEmpty)
+      _positionCode = _derivePositionCode(profile);
+    }
+  }
+
+  String _derivePositionCode(dynamic me) {
+    if (me == null || me is! Map) return 'EMP';
+    final position = me['position'] as Map?;
+    final positionName = (position?['name'] ?? 'Employee').toString();
+
+    String? jobName;
+    final posDetails = me['positions_details'];
+    if (posDetails is List && posDetails.isNotEmpty) {
+      final firstDetail = posDetails[0];
+      if (firstDetail is Map) {
+        jobName = firstDetail['job_name']?.toString();
+      }
+    }
+    jobName ??= position?['role_name']?.toString();
+
+    String derivedPosition = 'EMP';
+
+    if (jobName != null && jobName.trim().isNotEmpty) {
+      final cleanJob = jobName.trim();
+      if (cleanJob.length <= 4 && !cleanJob.contains(' ')) {
+        derivedPosition = cleanJob.toUpperCase();
+      } else {
+        final words = cleanJob
+            .split(RegExp(r'[\s-]+'))
+            .where((w) => w.isNotEmpty)
             .toList();
-        if (words.isNotEmpty) {
-          final firstWord = words[0];
-          if (firstWord.length <= 3) {
-            _positionCode = firstWord.toUpperCase();
-          } else {
-            _positionCode = words
-                .map((String w) => w.isNotEmpty ? w[0] : '')
-                .join('')
-                .toUpperCase();
+        derivedPosition = words.map((w) => w[0]).join('').toUpperCase();
+      }
+    } else if (positionName.isNotEmpty) {
+      final words = positionName
+          .split(RegExp(r'[\s-]+'))
+          .where((w) => w.isNotEmpty)
+          .toList();
+      if (words.isNotEmpty) {
+        final firstWord = words[0];
+        final isFirstWordNumeric = double.tryParse(firstWord) != null;
+        if (firstWord.length <= 3 && !isFirstWordNumeric) {
+          derivedPosition = firstWord.toUpperCase();
+        } else {
+          derivedPosition = words
+              .where((w) => double.tryParse(w) == null)
+              .map((w) => w.isNotEmpty ? w[0] : '')
+              .join('')
+              .toUpperCase();
+          if (derivedPosition.isEmpty) {
+            derivedPosition = 'EMP';
           }
         }
       }
     }
+
+    // Append district if available
+    final office = me['office'] as Map?;
+    final officeGeo = office?['geo_location'] as Map?;
+    final positionGeo = position?['geo_location'] as Map?;
+
+    final district =
+        (officeGeo?['district'] ?? positionGeo?['district'])?.toString();
+    if (district != null && district.trim().isNotEmpty) {
+      final cleanDistrict =
+          district.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '').toUpperCase();
+      derivedPosition = '$derivedPosition$cleanDistrict';
+    }
+
+    return derivedPosition;
   }
 
   Future<void> _fetchProjects() async {
@@ -196,24 +264,8 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
               : 'VIJ';
         });
 
-        // Derive Position Code (matches Profile detail logic)
-        final String positionName = (me['position']?['name'] ?? 'Employee')
-            .toString();
-        final words = positionName
-            .split(' ')
-            .where((String w) => w.trim().isNotEmpty)
-            .toList();
-        if (words.isNotEmpty) {
-          final firstWord = words[0];
-          if (firstWord.length <= 3) {
-            _positionCode = firstWord.toUpperCase();
-          } else {
-            _positionCode = words
-                .map((String w) => w.isNotEmpty ? w[0] : '')
-                .join('')
-                .toUpperCase();
-          }
-        }
+        // Derive Position Code (matches Profile detail logic exactly)
+        _positionCode = _derivePositionCode(me);
 
         // Project Resolution (Matches ProfilePage's derivedProjectCode logic)
         final String projectName = (me['project']?['name'] ?? '').toString();
@@ -286,7 +338,28 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       allowedExtensions: ['xlsx', 'xls'],
     );
     if (result != null && result.files.single.path != null) {
-      setState(() => _selectedFile = File(result.files.single.path!));
+      final filePath = result.files.single.path!;
+      final fileName = result.files.single.name.toLowerCase();
+      
+      final expectedFullName = _buildTemplateFilename().toLowerCase();
+      final expectedBaseName = expectedFullName.replaceAll(RegExp(r'\.xlsx$|\.xls$'), '');
+      
+      final lastDotIndex = fileName.lastIndexOf('.');
+      final selectedBaseName = lastDotIndex != -1 ? fileName.substring(0, lastDotIndex) : fileName;
+      
+      if (selectedBaseName != expectedBaseName) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Invalid File Name! The uploaded file must be named exactly: ${_buildTemplateFilename()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+      
+      setState(() => _selectedFile = File(filePath));
     }
   }
 
@@ -368,13 +441,29 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
     }
   }
 
-  Future<void> _handleSubmit() async {
+  Future<void> _handleSubmit({String status = 'Submitted'}) async {
     if (!_formKey.currentState!.validate()) return;
 
     if (_selectedFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please upload the activities file'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final expectedFullName = _buildTemplateFilename().toLowerCase();
+    final expectedBaseName = expectedFullName.replaceAll(RegExp(r'\.xlsx$|\.xls$'), '');
+    final fileName = _selectedFile!.path.split(Platform.pathSeparator).last.toLowerCase();
+    final lastDotIndex = fileName.lastIndexOf('.');
+    final selectedBaseName = lastDotIndex != -1 ? fileName.substring(0, lastDotIndex) : fileName;
+
+    if (selectedBaseName != expectedBaseName) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('File name must match the expected template name: ${_buildTemplateFilename()}'),
           backgroundColor: Colors.red,
         ),
       );
@@ -410,6 +499,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       'travel_mode': 'Car / Jeep / Van',
       'project_code': _projectController.text,
       'consider_as_local': true,
+      'is_tour_plan': true,
       if (_reportingManagerId != null)
         'reporting_manager': int.tryParse(_reportingManagerId!),
     };
@@ -422,6 +512,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
         await _tripService.uploadBulkLocalConveyance(
           trip.tripId,
           _selectedFile!,
+          status: status,
         );
       } catch (uploadError) {
         if (mounted) {
@@ -438,7 +529,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
 
       if (mounted) {
         setState(() => _isLoading = false);
-        _showSuccessDialog(trip.tripId);
+        _showSuccessDialog(trip.tripId, status: status);
       }
     } catch (e) {
       if (mounted) {
@@ -450,7 +541,8 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
     }
   }
 
-  void _showSuccessDialog(String tripId) {
+  void _showSuccessDialog(String tripId, {String status = 'Submitted'}) {
+    final bool isDraft = status == 'Draft';
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -474,7 +566,7 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'Tour Plan Created!',
+              isDraft ? 'Tour Plan Saved as Draft!' : 'Tour Plan Created!',
               style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w900,
                 fontSize: 20,
@@ -483,7 +575,9 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              'Tour plan request submitted.\nID: $tripId',
+              isDraft
+                  ? 'Your monthly tour plan draft has been saved.\nID: $tripId'
+                  : 'Tour plan request submitted.\nID: $tripId',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 color: const Color(0xFF64748B),
@@ -575,36 +669,24 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: _isLoading ? null : _handleSubmit,
+                      onPressed: _isLoading ? null : () => _handleSubmit(status: 'Submitted'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF134E4A),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(18),
                         ),
-                        elevation: 8,
-                        shadowColor: const Color(0xFF134E4A).withOpacity(0.3),
+                        elevation: 4,
                       ),
                       child: _isLoading
-                          ? const CircularProgressIndicator(color: Colors.white)
-                          : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.description_outlined,
-                                  size: 20,
-                                  color: Colors.white,
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'SEND ITS FOR APPROVAL',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontWeight: FontWeight.w900,
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                              ],
+                          ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)))
+                          : Text(
+                              'SEND FOR APPROVAL',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                fontSize: 12,
+                                letterSpacing: 0.5,
+                              ),
                             ),
                     ),
                   ),
@@ -1163,15 +1245,29 @@ class _LocalTravelScreenState extends State<LocalTravelScreen> {
       child: CheckboxListTile(
         value: _policyAccepted,
         onChanged: (val) => setState(() => _policyAccepted = val ?? false),
-        title: Text(
-          'I accept the Travel & Expense Policy',
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: _policyAccepted
-                ? const Color(0xFF1E3A8A)
-                : const Color(0xFF9A3412),
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'I confirm the authenticity of the tour plan logs provided above.',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _policyAccepted
+                    ? const Color(0xFF1E3A8A)
+                    : const Color(0xFF9A3412),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'I have read and accepted the Travel Governance Policy',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[500],
+              ),
+            ),
+          ],
         ),
         controlAffinity: ListTileControlAffinity.leading,
         contentPadding: EdgeInsets.zero,

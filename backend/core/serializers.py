@@ -47,10 +47,31 @@ class SessionSerializer(serializers.ModelSerializer):
 class LoginHistorySerializer(serializers.ModelSerializer):
     user_name = serializers.ReadOnlyField(source='user.name')
     user_email = serializers.ReadOnlyField(source='user.email')
+    user_employee_id = serializers.ReadOnlyField(source='user.employee_id')
+    user_designation = serializers.SerializerMethodField()
+    user_position_code = serializers.SerializerMethodField()
+
+    def get_user_designation(self, obj):
+        try:
+            return obj.user.designation or ''
+        except Exception:
+            return ''
+
+    def get_user_position_code(self, obj):
+        try:
+            pos = obj.user.get_current_position()
+            return pos.get('code', '') if pos else ''
+        except Exception:
+            return ''
 
     class Meta:
         model = LoginHistory
-        fields = ['id', 'user', 'user_name', 'user_email', 'login_time', 'logout_time', 'ip_address', 'user_agent', 'device_type', 'browser_type', 'status', 'failure_reason']
+        fields = [
+            'id', 'user', 'user_name', 'user_email', 'user_employee_id',
+            'user_designation', 'user_position_code',
+            'login_time', 'logout_time', 'ip_address', 'user_agent',
+            'device_type', 'browser_type', 'status', 'failure_reason'
+        ]
 
 class AuditLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.name', read_only=True)

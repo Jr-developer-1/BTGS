@@ -19,6 +19,157 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
   final TripService _tripService = TripService();
   final ApiService _apiService = ApiService();
   final Map<String, String> _auditRemarks = {};
+  String _luggageWeight = '';
+  String _luggageRemarks = '';
+
+  void _showLuggageDialog() {
+    final weightController = TextEditingController(text: _luggageWeight);
+    final remarksController = TextEditingController(text: _luggageRemarks);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        actionsAlignment: MainAxisAlignment.spaceBetween,
+        title: Row(
+          children: [
+            const Icon(Icons.luggage_rounded, color: Color(0xFFDB2777)),
+            const SizedBox(width: 8),
+            Text(
+              'Additional Luggage',
+              style: GoogleFonts.plusJakartaSans(
+                fontWeight: FontWeight.w900,
+                fontSize: 18,
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Luggage weight (in kg/grams) *',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF475569),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: weightController,
+                decoration: InputDecoration(
+                  hintText: 'e.g., 5 kg',
+                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 13),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Remarks *',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF475569),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: remarksController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: 'Add any additional notes...',
+                  hintStyle: GoogleFonts.plusJakartaSans(fontSize: 13),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          if (_luggageWeight.isNotEmpty)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _luggageWeight = '';
+                  _luggageRemarks = '';
+                });
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Additional Luggage info cleared.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+              child: Text(
+                'DELETE',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.red,
+                ),
+              ),
+            )
+          else
+            const SizedBox.shrink(),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'CANCEL',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () {
+                  if (weightController.text.trim().isEmpty ||
+                      remarksController.text.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter both luggage weight and remarks.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  setState(() {
+                    _luggageWeight = weightController.text.trim();
+                    _luggageRemarks = remarksController.text.trim();
+                  });
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Additional Luggage info saved locally.'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFDB2777),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: Text(
+                  'SAVE',
+                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
   bool _isLoading = true;
   bool _isActionLoading = false;
   Trip? _trip;
@@ -258,34 +409,71 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    _buildSectionHeader(
-                      Icons.account_balance_wallet_rounded,
-                      'DETAILED EXPENSE REGISTRY',
-                    ),
-                    if (_trip!.claim == null ||
-                        (_trip!.claim!['status'] ?? '')
-                                .toString()
-                                .toLowerCase() ==
-                            'draft')
-                      IconButton(
-                        onPressed: () async {
-                          final refresh = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  TripExpenseGridScreen(tripId: widget.tripId),
-                            ),
-                          );
-                          if (refresh == true) _fetchDetails(showLoader: false);
-                        },
-                        icon: const Icon(
-                          Icons.add_circle_rounded,
-                          size: 24,
-                          color: Color(0xFF0F172A),
-                        ),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                    Expanded(
+                      child: _buildSectionHeader(
+                        Icons.account_balance_wallet_rounded,
+                        'DETAILED EXPENSE REGISTRY',
                       ),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton(
+                          onPressed: _showLuggageDialog,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFDB2777),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            'Additional Luggage',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (_trip!.claim == null ||
+                            (_trip!.claim!['status'] ?? '')
+                                    .toString()
+                                    .toLowerCase() ==
+                                'draft') ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: () async {
+                              final refresh = await Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      TripExpenseGridScreen(
+                                        tripId: widget.tripId,
+                                        hasAdditionalLuggage: _luggageWeight.isNotEmpty,
+                                      ),
+                                ),
+                              );
+                              if (refresh == true)
+                                _fetchDetails(showLoader: false);
+                            },
+                            icon: const Icon(
+                              Icons.add_circle_rounded,
+                              size: 24,
+                              color: Color(0xFF0F172A),
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -949,13 +1137,17 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
       children: [
         Icon(icon, size: 16, color: const Color(0xFF64748B)),
         const SizedBox(width: 8),
-        Text(
-          title,
-          style: GoogleFonts.plusJakartaSans(
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF64748B),
-            letterSpacing: 1.2,
+        Expanded(
+          child: Text(
+            title,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF64748B),
+              letterSpacing: 1.2,
+            ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
         ),
       ],
@@ -1990,6 +2182,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                             category: displayNature,
                             tripId: widget.tripId,
                             expenseData: exp,
+                            hasAdditionalLuggage: _luggageWeight.isNotEmpty,
                           ),
                         ),
                       );
@@ -2081,6 +2274,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                                         category: displayNature,
                                         tripId: widget.tripId,
                                         expenseData: exp,
+                                        hasAdditionalLuggage: _luggageWeight.isNotEmpty,
                                       ),
                                 ),
                               );

@@ -1121,7 +1121,36 @@ const CreateTrip = () => {
                             </div>
                         </div>
 
-                        {/* Travel Mode removed as per user request */}
+                        <div className="date-row" style={{ marginTop: '4px' }}>
+                            <div className="input-field">
+                                <label>Travel Mode</label>
+                                <select
+                                    name="travelMode"
+                                    value={formData.travelMode}
+                                    onChange={handleChange}
+                                >
+                                    <option value="Airways">Airways</option>
+                                    <option value="Train">Train</option>
+                                    <option value="Bus">Bus</option>
+                                    <option value="Car / Jeep / Van">Car / Jeep / Van</option>
+                                    <option value="2 Wheeler">2 Wheeler</option>
+                                    <option value="3 Wheeler">3 Wheeler</option>
+                                </select>
+                            </div>
+                            {['Car / Jeep / Van', '2 Wheeler', '3 Wheeler'].includes(formData.travelMode) && (
+                                <div className="input-field">
+                                    <label>Vehicle Ownership</label>
+                                    <select
+                                        name="vehicleType"
+                                        value={formData.vehicleType}
+                                        onChange={handleChange}
+                                    >
+                                        <option value="Own">Own Vehicle</option>
+                                        <option value="Service">Service / Outsourced</option>
+                                    </select>
+                                </div>
+                            )}
+                        </div>
 
 
                     </div>

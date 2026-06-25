@@ -495,9 +495,11 @@ const TripStory = () => {
                                     </thead>
                                     <tbody>
                                         {trip.expenses.map(exp => {
+                                            const dept = user?.department?.toLowerCase() || '';
+                                            const desig = user?.designation?.toLowerCase() || '';
                                             const role = user?.role?.toLowerCase() || '';
-                                            const isFinance = role.includes('finance');
-                                            const isHR = role.includes('hr');
+                                            const isFinance = role.includes('finance') || dept.includes('finance') || desig.includes('finance');
+                                            const isHR = role.includes('hr') || dept.includes('hr') || desig.includes('hr') || dept.includes('human resources') || desig.includes('human resources');
                                             const isRM = !isFinance && !isHR;
 
                                             return (
@@ -635,6 +637,7 @@ const TripStory = () => {
                             showBulkUpload={trip.trip_id?.startsWith('TRP-')}
                             onJobReportClick={() => setShowJobReportModal(true)}
                             hasAdditionalLuggage={!!luggageWeight}
+                            isBulkUpload={trip.is_bulk_upload || false}
                         />
                     )}
                 </div>
@@ -832,7 +835,21 @@ const TripStory = () => {
                                     style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid #cbd5e1', minHeight: '80px', fontSize: '0.9rem', resize: 'vertical' }}
                                 />
                             </div>
-                            <div className="modal-actions-p" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <div className="modal-actions-p" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', width: '100%' }}>
+                                {luggageWeight && (
+                                    <button 
+                                        className="modal-btn delete" 
+                                        onClick={() => {
+                                            setLuggageWeight('');
+                                            setLuggageRemarks('');
+                                            setShowLuggagePopup(false);
+                                            showToast("Additional Luggage info cleared.", "success");
+                                        }} 
+                                        style={{ marginRight: 'auto', padding: '8px 16px', borderRadius: '6px', border: '1px solid #ef4444', background: '#fef2f2', cursor: 'pointer', fontWeight: 600, color: '#ef4444' }}
+                                    >
+                                        Delete
+                                    </button>
+                                )}
                                 <button className="modal-btn cancel" onClick={() => setShowLuggagePopup(false)} style={{ padding: '8px 16px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#fff', cursor: 'pointer', fontWeight: 600, color: '#475569' }}>Cancel</button>
                                 <button className="modal-btn confirm" onClick={() => {
                                     if (!luggageWeight || !luggageRemarks) {

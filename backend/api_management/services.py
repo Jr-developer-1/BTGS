@@ -40,7 +40,7 @@ HR_ID_TO_INFO_CACHE = {}
 
 # Full employee list cache for team filtering
 GLOBAL_EMPLOYEE_CACHE = {'timestamp': 0, 'data': []}
-GLOBAL_CACHE_TIMEOUT = 600 # 10 minutes
+GLOBAL_CACHE_TIMEOUT = 86400 # 24 hours
 
 def _find_best_matching_employee_code(s_res, target_position_name):
     """
@@ -107,7 +107,7 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
     try:
         url = f"{api_url.rstrip('/')}/{hr_id_str}/"
         url = url.replace('//', '/').replace(':/', '://')
-        resp = requests.get(url, headers=headers, timeout=5.0)
+        resp = requests.get(url, headers=headers, timeout=5.0)  # Short timeout — non-blocking per-ID lookup
         if resp.status_code == 200:
             data = resp.json() or {}
             emp_obj = data.get('employee', {})
@@ -115,7 +115,7 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
             name = emp_obj.get('name') or data.get('name')
             
             info = {'code': code, 'name': name} if code else {'code': None, 'name': None}
-            safe_cache_set(cache_key, info, 3600) # Cache for 1 hour
+            safe_cache_set(cache_key, info, 2592000) # Cache for 30 days since these mappings are static
             return info.get('code'), info.get('name')
         else:
             info = {'code': None, 'name': None}
@@ -186,6 +186,8 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
     if not force_fresh:
         persistent_data = safe_cache_get(cache_key)
         if persistent_data:
+            if isinstance(persistent_data, dict) and persistent_data.get('not_found'):
+                return None
             return persistent_data
     # 2. Check memory/persistent global employee cache (Alternative local fallback)
     now = time.time()
@@ -201,7 +203,7 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
             for item in g_cached['data']:
                 if item.get('employee', {}).get('employee_code') == employee_code:
                     # Promote to persistent cache and return
-                    safe_cache_set(cache_key, item, timeout=3600)
+                    safe_cache_set(cache_key, item, timeout=2592000)
                     return item
 
             
@@ -209,9 +211,12 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
     data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
     if data and not data.get('error') and data.get('results'):
         emp_data = data['results'][0]
-        # Commit to persistent cache with 1-hour timeout (Organizational structures are stable)
-        safe_cache_set(cache_key, emp_data, timeout=3600)
+        # Commit to persistent cache with 30-day timeout (Organizational structures are stable)
+        safe_cache_set(cache_key, emp_data, timeout=2592000)
         return emp_data
+    else:
+        # Cache negative result to prevent repeating slow queries for non-existent users
+        safe_cache_set(cache_key, {"not_found": True}, timeout=2592000)
         
     return None
 
@@ -359,7 +364,9 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
         # Fetch the first page to get metadata
         try:
             start_time = time.time()
-            response = requests.get(api_url, params=params, headers=headers, timeout=120)
+            # Fast fail-fast timeout of 35 seconds for single records, 120 seconds for full listing
+            t_val = 35 if (employee_id_filter or search) else 120
+            response = requests.get(api_url, params=params, headers=headers, timeout=t_val)
             latency = (time.time() - start_time) * 1000
 
             try:
@@ -415,8 +422,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                             try:
                                 p_params = params.copy()
                                 p_params['page'] = p_num
-                                # Use 30s timeout for reliable read buffered streaming
-                                p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=30)
+                                # 15s timeout per page — frees thread-pool fast when API is slow
+                                p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=15)
                                 if p_resp.status_code == 200:
                                     return p_resp.json().get('results', [])
                                 elif p_resp.status_code == 429:
@@ -429,8 +436,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                     delay *= 1.5
                         return []
 
-                    # Lower to 8 workers to prevent external system connection exhaustion
-                    with ThreadPoolExecutor(max_workers=8) as executor:
+                    # Lower concurrency to prevent external system connection exhaustion
+                    with ThreadPoolExecutor(max_workers=3) as executor:
                         extra_results_list = list(executor.map(fetch_single_page, pages_to_fetch))
                     
                     for er in extra_results_list:
@@ -477,8 +484,14 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             
             if employee_id_filter and emp_id_api:
                 try:
+                    detail_cache_key = f"emp_detail_data_{emp_id_api}"
+                    cached_item = safe_cache_get(detail_cache_key)
+                    if cached_item:
+                        transformed_results.append(cached_item)
+                        continue
+
                     detail_url = api_url.rstrip('/') + f"/{emp_id_api}/"
-                    detail_resp = requests.get(detail_url, headers=headers, timeout=5)
+                    detail_resp = requests.get(detail_url, headers=headers, timeout=8)  # fast-fail
                     if detail_resp.status_code == 200:
                         detail_data = detail_resp.json() or {}
                         pos_list = detail_data.get('positions_details') or []
@@ -512,7 +525,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                                 code = cached_code
                                             else:
                                                 try:
-                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=5.0)
+                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=10.0)
                                                     if s_resp.status_code == 200:
                                                         s_data = s_resp.json() or {}
                                                         s_res = s_data.get('results', [])
@@ -547,7 +560,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                         code = cached_code
                                     else:
                                         try:
-                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=5.0)
+                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=10.0)
                                             if s_resp.status_code == 200:
                                                 s_data = s_resp.json() or {}
                                                 s_res = s_data.get('results', [])
@@ -574,7 +587,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                     resolved_reporting_to = [raw_reporting_to] if raw_reporting_to else []
                             
                             pos['reporting_to'] = resolved_reporting_to
-
+ 
                         # We NO LONGER inject the primary position's reporting_to into the top-level item['position']
                         # because that causes stale data when switching roles. 
                         # The User model's get_current_position() will now handle picking the right one from positions_details.
@@ -589,6 +602,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         if detail_data.get('positions_details'):
                             item['positions_details'] = detail_data.get('positions_details')
                             
+                        safe_cache_set(detail_cache_key, item, 86400) # Cache details for 24 hours
                         transformed_results.append(item)
                         continue 
                 except Exception as e:
@@ -708,9 +722,9 @@ def get_manager_reports_locations(manager_code):
     
     if is_empty or is_expired:
         lock_key = 'GLOBAL_EMPLOYEE_DATA_REFRESH_LOCK'
-        # Set lock to prevent concurrent background downloads
+        # Set lock to prevent concurrent background downloads (increased to 2 hours for slow external API)
         try:
-            if cache.add(lock_key, '1', timeout=600):
+            if cache.add(lock_key, '1', timeout=7200):
                 t = threading.Thread(target=_bg_refresh_global_employee_cache)
                 t.daemon = True
                 t.start()
@@ -813,7 +827,7 @@ def fetch_geo_data():
         }
         
         start_time = time.time()
-        response = requests.get(api_url, headers=headers, timeout=30)
+        response = requests.get(api_url, headers=headers, timeout=10)  # geo API — fast-fail
         latency = (time.time() - start_time) * 1000
 
         try:

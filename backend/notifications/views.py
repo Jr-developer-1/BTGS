@@ -11,6 +11,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.custom_user
+        if not user or not hasattr(user, 'get_active_position_identifiers'):
+            return Notification.objects.none()
         from django.db.models import Q
         pos_ids = user.get_active_position_identifiers()
         

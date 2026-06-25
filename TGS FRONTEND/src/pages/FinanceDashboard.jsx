@@ -75,6 +75,55 @@ const FinanceDashboard = () => {
         }
     }, [isRejectModalOpen]);
 
+    const aggregateApprovedAmount = (item) => {
+        if (!item) return 0;
+        const details = item.details || item.raw?.details;
+        if (!details) {
+            const costStr = item.cost || item.amount || '0';
+            return parseFloat(String(costStr).replace(/[^\d.-]/g, '') || 0);
+        }
+        
+        // Prioritize claim-level approved amounts as they reflect manual edits/approvals
+        const claimLevelApproved = details.executive_approved_amount || details.approved_amount || details.hr_approved_amount;
+        if (claimLevelApproved !== undefined && claimLevelApproved !== null && claimLevelApproved !== '') {
+            const parsed = parseFloat(claimLevelApproved);
+            if (!isNaN(parsed)) return parsed;
+        }
+
+        const type = item.type || item.raw?.type;
+        if (type === 'Expense Claim' || type === 'Monthly Tour Plan') {
+            if (details.expenses && details.expenses.length > 0) {
+                return details.expenses.reduce((s, e) => {
+                    if (e.status === 'Rejected') return s;
+                    const val = e.finance_selected_amount !== null && e.finance_selected_amount !== undefined 
+                        ? parseFloat(e.finance_selected_amount) 
+                        : (e.hr_selected_amount !== null && e.hr_selected_amount !== undefined 
+                            ? parseFloat(e.hr_selected_amount) 
+                            : parseFloat(e.amount || 0));
+                    return s + val;
+                }, 0);
+            }
+            return parseFloat(details.total_amount || 0);
+        } else {
+            return parseFloat(details.requested_amount || 0);
+        }
+    };
+
+    const calculateNetPayout = (item) => {
+        if (!item) return 0;
+        const gross = aggregateApprovedAmount(item);
+        const details = item.details || item.raw?.details;
+        if (!details) return gross;
+        
+        const type = item.type || item.raw?.type;
+        if (type === 'Expense Claim' || type === 'Monthly Tour Plan') {
+            const totalAdv = parseFloat(details.total_advance_taken || 0);
+            const walletBal = parseFloat(details.wallet_balance_used || 0);
+            return Math.max(0, gross - totalAdv - walletBal);
+        }
+        return gross;
+    };
+
     const fetchStats = async () => {
         try {
             // Get pending count
@@ -86,8 +135,8 @@ const FinanceDashboard = () => {
             const paidResp = await api.get(`/api/approvals/?tab=completed&source=hub&date=${today}`);
             const paidData = paidResp.data.results || paidResp.data || [];
             const paidTotal = paidData.reduce((sum, item) => {
-                const amt = item.details?.executive_approved_amount || item.cost || 0;
-                return sum + parseFloat(String(amt).replace(/[^\d.-]/g, '') || 0);
+                const netPayout = calculateNetPayout(item);
+                return sum + netPayout;
             }, 0);
 
             // Get disputes count
@@ -110,16 +159,21 @@ const FinanceDashboard = () => {
             setLoading(true);
             const resp = await api.get(`/api/approvals/?tab=${activeTab}&source=hub`);
             const rawData = resp.data.results || resp.data || [];
-            const data = rawData.map(item => ({
-                id: item.id,
-                trip: item.details?.trip_id || 'N/A',
-                employee: item.requester,
-                amount: item.cost,
-                type: item.type,
-                status: item.status,
-                date: item.date,
-                raw: item // Keep raw data for modal
-            }));
+            const data = rawData.map(item => {
+                const grossAmount = aggregateApprovedAmount(item);
+                const netPayout = calculateNetPayout(item);
+                return {
+                    id: item.id,
+                    trip: item.details?.trip_id || 'N/A',
+                    employee: item.requester,
+                    amount: `₹${grossAmount.toFixed(2)}`,
+                    net_payout: netPayout,
+                    type: item.type,
+                    status: item.status,
+                    date: item.date,
+                    raw: item // Keep raw data for modal
+                };
+            });
             setRecords(data);
 
             if (activeTab === 'pending') {
@@ -221,8 +275,7 @@ const FinanceDashboard = () => {
     const handleTransfer = async () => {
         if (!selectedRecord) return;
 
-        const amtVal = parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0);
-        const netToPay = amtVal;
+        const netToPay = selectedRecord.net_payout !== undefined ? selectedRecord.net_payout : parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0);
 
         if (netToPay > 0 && transferData.payment_mode !== 'Cash' && !transferData.transaction_id) {
             showToast("Transaction ID is required for payouts", "warning");
@@ -476,7 +529,7 @@ const FinanceDashboard = () => {
                         {activeTab !== 'completed' && (
                             <button className="btn-primary" onClick={handleTransfer}>
                                 <Send size={18} />
-                                {parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) > 0
+                                {(selectedRecord?.net_payout !== undefined ? selectedRecord.net_payout : parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0)) > 0
                                     ? " Confirm Transfer"
                                     : " Confirm Reconciliation"}
                             </button>
@@ -491,11 +544,17 @@ const FinanceDashboard = () => {
                             <p>{selectedRecord?.employee}</p>
                         </div>
                         <div className="summary-item">
-                            <label>Amount</label>
+                            <label>Amount to Transfer</label>
                             <div className="amount-payout-wrapper">
-                                <p className="highlight-text">{selectedRecord?.amount}</p>
+                                <p className="highlight-text">
+                                    ₹{(selectedRecord?.net_payout !== undefined ? selectedRecord.net_payout : parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0)).toFixed(2)}
+                                </p>
                                 {selectedRecord?.type === 'Expense Claim' && ((selectedRecord?.raw?.details?.total_advance_taken && parseFloat(selectedRecord.raw.details.total_advance_taken) > 0) || (selectedRecord?.raw?.details?.wallet_balance_used && parseFloat(selectedRecord.raw.details.wallet_balance_used) > 0)) && (
                                     <div className="payout-breakdown-mini" style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem' }}>
+                                        <div className="breakdown-row sub" style={{ display: 'flex', justifyContent: 'space-between', color: '#475569', marginBottom: '4px' }}>
+                                            <span>Gross Approved:</span>
+                                            <span>{selectedRecord?.amount}</span>
+                                        </div>
                                         {parseFloat(selectedRecord.raw.details.total_advance_taken || 0) > 0 && (
                                             <div className="breakdown-row sub" style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
                                                 <span>Advance Recovery:</span>
@@ -508,17 +567,13 @@ const FinanceDashboard = () => {
                                                 <span>-₹{parseFloat(selectedRecord.raw.details.wallet_balance_used).toLocaleString()}</span>
                                             </div>
                                         )}
-                                        <div className="breakdown-row net" style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', color: '#10b981', marginTop: '6px', paddingTop: '4px', borderTop: '1px solid #f1f5f9' }}>
-                                            <span>Requested Amount:</span>
-                                            <span>₹{parseFloat(selectedRecord.raw.details.requested_amount || selectedRecord.raw.details.total_amount || 0).toLocaleString()}</span>
-                                        </div>
                                     </div>
                                 )}
                             </div>
                         </div>
                     </div>
 
-                    {(activeTab === 'completed' || parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0) > 0) ? (
+                    {(activeTab === 'completed' || (selectedRecord?.net_payout !== undefined ? selectedRecord.net_payout : parseFloat(selectedRecord?.amount?.replace(/[^\d.]/g, '') || 0)) > 0) ? (
                         <>
                             <div className="form-grid-2">
                                 <div className="form-group">

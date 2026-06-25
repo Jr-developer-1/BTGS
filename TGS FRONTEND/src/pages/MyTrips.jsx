@@ -175,8 +175,8 @@ const MyTrips = () => {
             const allData = [...tripsData, ...travelsData].sort((a, b) => {
                 const getPriority = (status) => {
                     const s = (status || '').toLowerCase();
-                    // Priority 1: Actionable / Pending Approval
-                    if (s.includes('pending') || s === 'approved' || s === 'manager approved' || s === 'hr approved') return 1;
+                    // Priority 1: Actionable / Pending Approval / Resubmitted / Claim Submitted
+                    if (s.includes('pending') || s === 'approved' || s === 'manager approved' || s === 'hr approved' || s === 'resubmitted' || s === 'claim submitted') return 1;
                     // Priority 3: Finalized / Settled
                     if (['settled', 'paid', 'transferred', 'completed & settled'].some(term => s.includes(term))) return 3;
                     // Priority 2: Everything else
@@ -240,6 +240,7 @@ const MyTrips = () => {
                 enRoute: trip.en_route,
                 project: trip.project_code || 'General',
                 considerAsLocal: trip.consider_as_local,
+                isBulkUpload: trip.is_bulk_upload,
                 accommodationRequests: parseJsonField(trip.accommodation_requests),
                 vehicleType: trip.vehicle_type,
                 members: parseJsonField(trip.members),
@@ -274,8 +275,13 @@ const MyTrips = () => {
             return 'Approved';
         }
 
-        // 3. Pending Approval / Submitted
-        if (['pending', 'submitted', 'resubmitted', 'draft', 'pending_hr', 'pending_executive', 'pending_head', 'pending_final_release'].includes(s)) {
+        // 3. Resubmitted
+        if (s === 'resubmitted') {
+            return 'Resubmitted';
+        }
+
+        // 4. Pending Approval / Submitted
+        if (['pending', 'submitted', 'draft', 'pending_hr', 'pending_executive', 'pending_head', 'pending_final_release'].includes(s)) {
             return 'Pending';
         }
 
@@ -378,7 +384,7 @@ const MyTrips = () => {
                                 </div>
                             )}
                             <div className="card-top">
-                                <div className={`status-pill ${getDisplayStatus(trip.status).toLowerCase()}`}>
+                                <div className={`status-pill ${getDisplayStatus(trip.status).toLowerCase() === 'resubmitted' ? 'pending' : getDisplayStatus(trip.status).toLowerCase()}`}>
                                     {getDisplayStatus(trip.status)}
                                 </div>
                                 <span className="trip-card-id">{trip.id}</span>
@@ -434,9 +440,9 @@ const MyTrips = () => {
                                         <button
                                             className="view-details-btn-v"
                                             style={{ color: 'var(--magenta)' }}
-                                            onClick={() => navigate(`/${trip.considerAsLocal ? 'travel-story' : 'trip-story'}/${encodeId(trip.id)}`)}
+                                            onClick={() => navigate(`/${(trip.considerAsLocal && trip.isBulkUpload) ? 'travel-story' : 'trip-story'}/${encodeId(trip.id)}`)}
                                         >
-                                            <span>View {trip.considerAsLocal ? 'Travel Story' : 'Trip Story'}</span>
+                                            <span>View {(trip.considerAsLocal && trip.isBulkUpload) ? 'Travel Story' : 'Trip Story'}</span>
                                             <TrendingUp size={16} />
                                         </button>
                                     )}
@@ -522,7 +528,7 @@ const MyTrips = () => {
                                 <div className="details-info-grid">
                                     <div className="info-tile">
                                         <label>Current Status</label>
-                                        <div className={`status-tag ${getDisplayStatus(selectedTrip.status).toLowerCase()}`}>
+                                        <div className={`status-tag ${getDisplayStatus(selectedTrip.status).toLowerCase() === 'resubmitted' ? 'pending' : getDisplayStatus(selectedTrip.status).toLowerCase()}`}>
                                             {getDisplayStatus(selectedTrip.status)}
                                         </div>
                                     </div>

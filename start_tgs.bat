@@ -13,7 +13,7 @@ SET "NGINX_URL=http://nginx.org/download/nginx-1.24.0.zip"
 :: --- APP 1: TGS (at %~dp0) ---
 SET APP1_NAME=TGS_Core
 SET APP1_PATH=%~dp0
-SET APP1_FRONTEND=TGS_FRONTEND
+SET APP1_FRONTEND=TGS FRONTEND
 SET APP1_HIGH_LOAD=false
 SET APP1_PORTS=4567 4568
 
@@ -69,7 +69,7 @@ set "APP_ROOT_FWD=%~dp0"
 set "APP_ROOT_FWD=%APP_ROOT_FWD:\=/%"
 if "%APP_ROOT_FWD:~-1%"=="/" set "APP_ROOT_FWD=%APP_ROOT_FWD:~0,-1%"
 
-powershell -Command "(Get-Content '%~dp0nginx.conf') -replace 'include\s+\"[^\"]*?/?tools/nginx/conf/mime\.types\";', 'include       \"%APP_ROOT_FWD%/tools/nginx/conf/mime.types\";' -replace 'root\s+\"[^\"]*?/?TGS_FRONTEND/dist\";', 'root \"%APP_ROOT_FWD%/TGS_FRONTEND/dist\";' | Set-Content '%~dp0nginx.conf'"
+powershell -Command "(Get-Content '%~dp0nginx.conf') -replace 'include\s+\"[^\"]*?/?tools/nginx/conf/mime\.types\";', 'include       \"%APP_ROOT_FWD%/tools/nginx/conf/mime.types\";' -replace 'root\s+\"[^\"]*?/?TGS[ _]FRONTEND/dist\";', 'root \"%APP_ROOT_FWD%/TGS FRONTEND/dist\";' | Set-Content '%~dp0nginx.conf'"
 
 echo [FINAL] Starting Nginx...
 if exist "%NGINX_ROOT%\nginx.exe" (
@@ -88,7 +88,7 @@ echo   - App 1 (TGS): http://localhost:6785
 echo   - App 2 (Finance): http://localhost:6786
 echo   - App 3 (HR): http://localhost:6787
 echo ============================================================================
-pause
+:: pause
 exit /b
 
 :: --- FUNCTION: ProcessApp ---

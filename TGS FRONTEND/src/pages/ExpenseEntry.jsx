@@ -3,18 +3,21 @@ import {
     IndianRupee,
     Upload,
     AlertCircle,
+    AlertTriangle,
     CheckCircle,
     Car,
     Hotel,
     Coffee,
     Fuel,
     MoreHorizontal,
-    Clock
+    Clock,
+    Info
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { encodeId } from '../utils/idEncoder';
 import api from '../api/api';
 import { useToast } from '../context/ToastContext.jsx';
+import { useEligibility } from '../utils/useEligibility';
 
 const ExpenseEntry = () => {
     const location = useLocation();
@@ -24,6 +27,9 @@ const ExpenseEntry = () => {
     const [isLoadingTrips, setIsLoadingTrips] = useState(true);
     const [isLoadingExpenses, setIsLoadingExpenses] = useState(false);
     const [isCapturingBill, setIsCapturingBill] = useState(false);
+
+    // Soft-warning eligibility
+    const { checkTravel, checkAccommodation, checkDA, getEntitlementNote, eligibility } = useEligibility();
 
     const [formData, setFormData] = useState({
         category: 'Food',
@@ -199,9 +205,31 @@ const ExpenseEntry = () => {
                                         <select
                                             value={formData.category}
                                             onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                                            style={{
+                                                borderColor: (() => {
+                                                    const tw = checkTravel(formData.category);
+                                                    return tw.warn ? '#f59e0b' : undefined;
+                                                })()
+                                            }}
                                         >
                                             {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
                                         </select>
+                                        {/* Soft warning: travel mode not entitled */}
+                                        {(() => {
+                                            const note = getEntitlementNote(formData.category);
+                                            return note ? (
+                                                <div style={{
+                                                    display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                                    background: '#fffbeb', border: '1px solid #fcd34d',
+                                                    borderRadius: '8px', padding: '8px 12px', marginTop: '6px',
+                                                    fontSize: '0.78rem', color: '#92400e', lineHeight: 1.4
+                                                }}>
+                                                    <AlertTriangle size={14} style={{ marginTop: '1px', flexShrink: 0, color: '#f59e0b' }} />
+                                                    <span>{note}</span>
+                                                </div>
+                                            ) : null;
+                                        })()} 
+
                                     </div>
 
                                     <div className="input-field">
@@ -212,7 +240,32 @@ const ExpenseEntry = () => {
                                             value={formData.amount}
                                             onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                                             required
+                                            style={{
+                                                borderColor: (() => {
+                                                    if (formData.category === 'Accommodation') {
+                                                        const ck = checkAccommodation(formData.amount, 'Others');
+                                                        return ck.warn ? '#f59e0b' : undefined;
+                                                    }
+                                                    return undefined;
+                                                })()
+                                            }}
                                         />
+                                        {/* Accommodation soft warning */}
+                                        {formData.category === 'Accommodation' && formData.amount && (() => {
+                                            const ck = checkAccommodation(formData.amount, 'Others');
+                                            return ck.warn ? (
+                                                <div style={{
+                                                    display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                                    background: '#fffbeb', border: '1px solid #fcd34d',
+                                                    borderRadius: '8px', padding: '8px 12px', marginTop: '6px',
+                                                    fontSize: '0.78rem', color: '#92400e', lineHeight: 1.4
+                                                }}>
+                                                    <AlertTriangle size={14} style={{ marginTop: '1px', flexShrink: 0, color: '#f59e0b' }} />
+                                                    <span>⚠ Accommodation limit for your cadre: ₹{ck.limit?.toLocaleString()}. Excess will be reviewed by HR.</span>
+                                                </div>
+                                            ) : null;
+                                        })()}
+
                                     </div>
                                 </div>
 
@@ -256,10 +309,20 @@ const ExpenseEntry = () => {
 
                                 <div className="eligibility-box">
                                     <div className="eligibility-info">
-                                        <AlertCircle size={16} />
-                                        <span>Subject to policy limits and manager approval.</span>
+                                        {eligibility?.cadre ? (
+                                            <>
+                                                <Info size={16} style={{ color: '#3b82f6', flexShrink: 0 }} />
+                                                <span>Your entitlement cadre: <strong>{eligibility.cadre}</strong>. Expenses outside your policy are allowed but flagged for HR review.</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <AlertCircle size={16} />
+                                                <span>Subject to policy limits and manager approval.</span>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
+
 
                                 <button type="submit" className="btn-primary full-btn" disabled={isCapturingBill}>Add to Claim</button>
                             </form>

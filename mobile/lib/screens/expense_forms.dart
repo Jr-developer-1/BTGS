@@ -62,6 +62,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   String? _incidentalCategory;
   File? _incidentalImage;
   double _fuelRate = 0.0; // Will be fetched from backend
+  double _maxMileageKm = 0.0; // Cadre odometer limit from EligibilityRule
 
   // Time and Date state
   DateTime _startDate = DateTime.now();
@@ -114,6 +115,25 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         incidentalAmount =
             double.tryParse(_incidentalAmountController.text) ?? 0.0;
         totalAmount = odoAmount + incidentalAmount; // Sum up for grid display
+
+        // Cadre max-mileage guard (admin-configured per EligibilityRule)
+        if (_maxMileageKm > 0.0 && odoStart > 0.0 && odoEnd > odoStart) {
+          if (distance > _maxMileageKm) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Odometer distance (${distance.toStringAsFixed(2)} km) exceeds '
+                  'your cadre entitlement limit of ${_maxMileageKm.toStringAsFixed(2)} km. '
+                  'Please correct the end odometer reading.',
+                ),
+                backgroundColor: Colors.red[700],
+                duration: const Duration(seconds: 4),
+              ),
+            );
+            setState(() => _isProcessing = false);
+            return;
+          }
+        }
       } else {
         totalAmount = double.tryParse(_amountController.text) ?? 0.0;
       }
@@ -261,7 +281,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
 
       if (mounted) {
         Navigator.pop(context, true);
- // Return true to signal refresh
+        // Return true to signal refresh
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -450,6 +470,13 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         widget.category == 'Local Travel' || widget.category == 'Fuel';
     if (isLocal) {
       _fetchAndSetFuelRate();
+      // Also fetch cadre mileage limit from eligibility rules
+      _masterService.getMyEligibility().then((elig) {
+        if (mounted) {
+          final km = double.tryParse((elig['max_mileage_km'] ?? 0.0).toString()) ?? 0.0;
+          setState(() => _maxMileageKm = km);
+        }
+      });
     }
 
     if (widget.expenseData != null) {
@@ -583,13 +610,41 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   Future<void> _loadMasters() async {
     try {
       final results = await Future.wait([
-        _masterService.fetchMasterList('/api/travel-mode-masters/', 'mode_name', 'results'),
-        _masterService.fetchMasterList('/api/meal-category-masters/', 'category_name', 'results'),
-        _masterService.fetchMasterList('/api/meal-type-masters/', 'meal_type', 'results'),
-        _masterService.fetchMasterList('/api/incidental-type-masters/', 'expense_type', 'results'),
-        _masterService.fetchMasterList('/api/stay-type-masters/', 'stay_type', 'results'),
-        _masterService.fetchMasterList('/api/meal-source-masters/', 'source_name', 'results'),
-        _masterService.fetchMasterList('/api/meal-provider-masters/', 'provider_name', 'results'),
+        _masterService.fetchMasterList(
+          '/api/travel-mode-masters/',
+          'mode_name',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/meal-category-masters/',
+          'category_name',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/meal-type-masters/',
+          'meal_type',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/incidental-type-masters/',
+          'expense_type',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/stay-type-masters/',
+          'stay_type',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/meal-source-masters/',
+          'source_name',
+          'results',
+        ),
+        _masterService.fetchMasterList(
+          '/api/meal-provider-masters/',
+          'provider_name',
+          'results',
+        ),
       ]);
 
       if (mounted) {
@@ -599,8 +654,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
           _masterMealTypes = results[2];
           _masterIncidentalTypes = results[3];
           _masterAccomTypes = results[4];
-          _masterMealSources = (results[5] as List).map((e) => e.toString()).toList();
-          _masterMealProviders = (results[6] as List).map((e) => e.toString()).toList();
+          _masterMealSources = (results[5] as List)
+              .map((e) => e.toString())
+              .toList();
+          _masterMealProviders = (results[6] as List)
+              .map((e) => e.toString())
+              .toList();
         });
       }
     } catch (e) {
@@ -697,7 +756,10 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                             child: _buildDropdownMini(
                               'BOOKED BY',
                               _bookedBy,
-                              ['Self Paid', 'Company Paid'], // Often hardcoded on web too, but keeping consistent
+                              [
+                                'Self Paid',
+                                'Company Paid',
+                              ], // Often hardcoded on web too, but keeping consistent
                               (v) => setState(() => _bookedBy = v),
                             ),
                           ),
@@ -997,15 +1059,19 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                       ],
                     ),
                   ),
-                            ] else if (widget.category == 'Food') ...[
+                ),
+              ] else if (widget.category == 'Food') ...[
                 Builder(
                   builder: (context) {
                     final isSelfMeal = _mealCategory == 'Self Meal';
                     final sourceLower = _mealSource?.toLowerCase() ?? '';
                     final showSource = isSelfMeal;
                     final showProvider = isSelfMeal && sourceLower == 'online';
-                    final showHotel = isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
-                    final showRestaurant = isSelfMeal && sourceLower == 'restaurant';
+                    final showHotel =
+                        isSelfMeal &&
+                        (sourceLower == 'hotel' || sourceLower == 'online');
+                    final showRestaurant =
+                        isSelfMeal && sourceLower == 'restaurant';
 
                     return _buildWebCard(
                       title: 'MEAL TRANSACTION DETAILS',
@@ -1087,7 +1153,9 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                         if (showHotel) ...[
                           const SizedBox(height: 16),
                           _buildTextFieldMini(
-                            sourceLower == 'online' ? 'HOTEL / OUTLET NAME' : 'HOTEL NAME',
+                            sourceLower == 'online'
+                                ? 'HOTEL / OUTLET NAME'
+                                : 'HOTEL NAME',
                             _hotelNameController,
                             hint: 'Enter name...',
                           ),
@@ -1136,12 +1204,12 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                         ),
                       ],
                     );
-                  }
+                  },
                 ),
               ] else if (widget.category == 'Accommodation') ...[
                 _buildWebCard(
                   title: 'STAY & LODGING LOGS',
-                color: const Color(0xFF0EA5E9),
+                  color: const Color(0xFF0EA5E9),
                   children: [
                     _buildDropdownMini(
                       'ACCOMMODATION TYPE',
@@ -1694,7 +1762,11 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
           decoration: BoxDecoration(
             color: enabled ? const Color(0xFFF0FDFA) : const Color(0xFFCCFBF1),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: enabled ? const Color(0xFFCCFBF1) : const Color(0xFFE2E8F0)),
+            border: Border.all(
+              color: enabled
+                  ? const Color(0xFFCCFBF1)
+                  : const Color(0xFFE2E8F0),
+            ),
           ),
           child: TextField(
             controller: controller,
@@ -1726,6 +1798,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
     DateTime value,
     Function(DateTime) onType,
   ) {
+    final bool enabled = !_isBulkUpload && !widget.tripId.toUpperCase().startsWith('TRP-');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1739,21 +1812,25 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
         ),
         const SizedBox(height: 4),
         InkWell(
-          onTap: () async {
-            final d = await showDatePicker(
-              context: context,
-              initialDate: value,
-              firstDate: DateTime(2020),
-              lastDate: DateTime(2030),
-            );
-            if (d != null) onType(d);
-          },
+          onTap: !enabled
+              ? null
+              : () async {
+                  final d = await showDatePicker(
+                    context: context,
+                    initialDate: value,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2030),
+                  );
+                  if (d != null) onType(d);
+                },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FDFA),
+              color: enabled ? const Color(0xFFF0FDFA) : const Color(0xFFF1F5F9),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFCCFBF1)),
+              border: Border.all(
+                color: enabled ? const Color(0xFFCCFBF1) : const Color(0xFFE2E8F0),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1764,16 +1841,17 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
+                      color: enabled ? Colors.black : const Color(0xFF94A3B8),
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(
+                Icon(
                   Icons.calendar_today_rounded,
                   size: 12,
-                  color: Color(0xFF64748B),
+                  color: enabled ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
                 ),
               ],
             ),

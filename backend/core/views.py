@@ -38,6 +38,36 @@ from .frs_util import get_face_encoding_from_image, compare_faces, base64_to_fil
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
+def check_user_can_view_reports(user):
+    try:
+        role_name = (user.role.name if user.role else '').lower()
+        if role_name in ['admin', 'it-admin', 'superuser']:
+            return True
+
+        user_pos_codes = user.get_active_position_identifiers()
+        if not user_pos_codes:
+            return False
+
+        from travel.models import HRPositionConfig, FinanceWorkflowStep
+        from django.db.models import Q
+        
+        is_hr_allowed = HRPositionConfig.objects.filter(
+            position_id__in=user_pos_codes, is_active=True, can_view_reports=True
+        ).exists()
+        if is_hr_allowed:
+            return True
+
+        is_finance_allowed = FinanceWorkflowStep.objects.filter(
+            Q(position_id__in=user_pos_codes) | Q(user=user),
+            is_active=True,
+            can_view_reports=True
+        ).exists()
+        if is_finance_allowed:
+            return True
+    except Exception as e:
+        print(f"Error checking report access: {e}")
+    return False
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
@@ -60,8 +90,8 @@ def login_view(request):
         if not user:
              return Response({'error': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
         
-        if not user.is_active:
-             return Response({'error': 'Your account is currently inactive. Please contact support.'}, status=status.HTTP_401_UNAUTHORIZED)
+        if not user.is_active or user.is_blocked_by_api:
+             return Response({'error': 'Your account has been deactivated. Kindly contact the administrator.'}, status=status.HTTP_401_UNAUTHORIZED)
              
         hashed_input = hash_password(password)
         if user.password_hash != hashed_input:
@@ -149,7 +179,8 @@ def login_view(request):
                 'email': getattr(user, 'email', ''),
                 'theme': getattr(user, 'theme', 'classic'),
                 'active_position_id': user.active_position_id,
-                'available_positions': available_positions
+                'available_positions': available_positions,
+                'can_view_reports': check_user_can_view_reports(user)
             }
         })
         
@@ -382,7 +413,8 @@ def me_view(request):
             'email': getattr(user, 'email', ''),
             'theme': getattr(user, 'theme', 'classic'),
             'active_position_id': user.active_position_id,
-            'available_positions': user.get_available_positions(force_fresh=True)
+            'available_positions': user.get_available_positions(force_fresh=True),
+            'can_view_reports': check_user_can_view_reports(user)
         })
     except Exception as e:
         import traceback
@@ -507,7 +539,8 @@ def switch_position_view(request):
                 'office_level': user.office_level,
                 'email': user.email,
                 'active_position_id': user.active_position_id,
-                'available_positions': available
+                'available_positions': available,
+                'can_view_reports': check_user_can_view_reports(user)
             }
         })
     except Exception as e:
@@ -629,7 +662,50 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 if timezone.is_aware(timezone.now()):
                     end_dt = timezone.make_aware(end_dt)
                 queryset = queryset.filter(login_time__lte=end_dt)
-            
+
+        # Project-based filtering — cache-only, never blocks on live API during a request
+        project_code = self.request.query_params.get('project_code') or self.request.query_params.get('project')
+        if project_code:
+            from api_management.services import safe_cache_get, GLOBAL_EMPLOYEE_CACHE
+            import time
+            # Prefer file-based persistent cache; fall back to in-process memory cache
+            persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+            if not persistent_data:
+                mem_cache = GLOBAL_EMPLOYEE_CACHE
+                if mem_cache.get('data') and (time.time() - mem_cache.get('timestamp', 0)) < 7200:
+                    persistent_data = mem_cache['data']
+
+            if persistent_data:
+                emp_codes = []
+                for item in persistent_data:
+                    if isinstance(item, dict):
+                        emp = item.get('employee', {})
+                        proj = item.get('project', {})
+                        emp_proj_code = proj.get('code') if proj else None
+
+                        if project_code.lower() == 'general':
+                            if not emp_proj_code or emp_proj_code.lower() in ['general', 'n/a']:
+                                code = emp.get('employee_code')
+                                if code:
+                                    emp_codes.append(code)
+                        else:
+                            if emp_proj_code and emp_proj_code.lower() == project_code.lower():
+                                code = emp.get('employee_code')
+                                if code:
+                                    emp_codes.append(code)
+                queryset = queryset.filter(user__employee_id__in=emp_codes)
+            else:
+                # Cache cold — trigger background warm-up and return unfiltered so page loads
+                import threading
+                from api_management.services import fetch_employee_data
+                def _warm_cache():
+                    try:
+                        fetch_employee_data(fetch_all_pages=True)
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_warm_cache, daemon=True)
+                t.start()
+
         return queryset
 
     @action(detail=True, methods=['get'])
@@ -648,6 +724,28 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         
         serializer = AuditLogSerializer(activities, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='cache-status')
+    def cache_status(self, request):
+        """Returns whether the employee data cache is warm for project filtering."""
+        from api_management.services import safe_cache_get, GLOBAL_EMPLOYEE_CACHE
+        import time
+
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+        mem_cache = GLOBAL_EMPLOYEE_CACHE
+        mem_warm = bool(mem_cache.get('data')) and (time.time() - mem_cache.get('timestamp', 0)) < 7200
+
+        cache_warm = bool(persistent_data) or mem_warm
+        count = len(persistent_data or mem_cache.get('data') or [])
+        return Response({
+            'cache_warm': cache_warm,
+            'employee_count': count,
+            'message': (
+                'Employee data cache is ready. Project filtering is active.'
+                if cache_warm else
+                'Employee data is still syncing from the HR system. Project filtering will be available shortly — please try again in a moment.'
+            )
+        })
 
     @action(detail=False, methods=['get'], url_path='stats')
     def stats(self, request):
@@ -668,7 +766,8 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Base querysets
         history_qs = LoginHistory.objects.all().select_related('user')
-        trip_qs = Trip.objects.all().select_related('user')
+        bulk_trip_ids = BulkActivityBatch.all_objects.values_list('trip_id', flat=True).distinct()
+        trip_qs = Trip.objects.exclude(trip_id__in=bulk_trip_ids).select_related('user')
         batch_qs = BulkActivityBatch.objects.all().select_related('user')
 
         if not is_privileged:
@@ -704,6 +803,82 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(ip_address__icontains=search_query)
             )
 
+        # Project-based filtering — cache-only, never blocks on live API during a request
+        project_code = request.query_params.get('project_code') or request.query_params.get('project')
+        emp_codes = []
+        emp_details_map = {}
+        
+        from api_management.services import safe_cache_get, GLOBAL_EMPLOYEE_CACHE
+        import time
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+        if not persistent_data:
+            mem_cache = GLOBAL_EMPLOYEE_CACHE
+            if mem_cache.get('data') and (time.time() - mem_cache.get('timestamp', 0)) < 7200:
+                persistent_data = mem_cache['data']
+
+        if persistent_data:
+            for item in persistent_data:
+                if isinstance(item, dict):
+                    emp = item.get('employee', {})
+                    code = emp.get('employee_code')
+                    if code:
+                        pos_info = item.get('position', {}) or {}
+                        emp_details_map[code] = {
+                            'name': emp.get('name') or emp.get('employee_name') or 'Unknown',
+                            'designation': pos_info.get('name') or '',
+                            'position_code': pos_info.get('code') or '',
+                            'role_name': pos_info.get('role_name') or ''
+                        }
+
+        # Populate emp_codes with all employee codes from cache by default
+        if persistent_data:
+            for item in persistent_data:
+                if isinstance(item, dict):
+                    emp = item.get('employee', {})
+                    code = emp.get('employee_code')
+                    if code and code not in emp_codes:
+                        emp_codes.append(code)
+
+        if project_code and project_code != 'All':
+            project_emp_codes = []
+            if persistent_data:
+                for item in persistent_data:
+                    if isinstance(item, dict):
+                        emp = item.get('employee', {})
+                        proj = item.get('project', {})
+                        emp_proj_code = proj.get('code') if proj else None
+
+                        match = False
+                        if project_code.lower() == 'general':
+                            if not emp_proj_code or emp_proj_code.lower() in ['general', 'n/a']:
+                                match = True
+                        else:
+                            if emp_proj_code and emp_proj_code.lower() == project_code.lower():
+                                match = True
+
+                        if match:
+                            code = emp.get('employee_code')
+                            if code:
+                                project_emp_codes.append(code)
+            history_qs = history_qs.filter(user__employee_id__in=project_emp_codes)
+            trip_qs = trip_qs.filter(user__employee_id__in=project_emp_codes)
+            batch_qs = batch_qs.filter(user__employee_id__in=project_emp_codes)
+            emp_codes = project_emp_codes
+
+        # Helper to resolve actual names for any user object
+        def get_resolved_user_name(user_obj):
+            if not user_obj:
+                return 'Unknown'
+            # First try looking up in our bulk loaded cache map
+            cached_emp = emp_details_map.get(user_obj.employee_id)
+            if cached_emp and cached_emp.get('name'):
+                return cached_emp['name']
+            # Fallback to the User object name if present and not equal to employee_id
+            if user_obj.name and user_obj.name != user_obj.employee_id:
+                return user_obj.name
+            # Last fallback
+            return user_obj.employee_id or 'Unknown'
+
         # Calculate counts
         # Unique Users from LoginHistory
         unique_users_data = (
@@ -720,41 +895,270 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         for item in unique_users_data:
             u_obj = users_map.get(item['user_id'])
             if u_obj:
+                try:
+                    pos = u_obj.get_current_position()
+                    pos_code = pos.get('code', '') if pos else ''
+                    designation = u_obj.designation or ''
+                except Exception:
+                    pos_code = ''
+                    designation = ''
                 unique_users_list.append({
                     'employee_id': u_obj.employee_id,
                     'name': u_obj.name,
                     'email': u_obj.email,
+                    'designation': designation,
+                    'position_code': pos_code,
                     'login_count': item['login_count'],
                     'last_login': item['last_login'].isoformat() if item['last_login'] else None
                 })
 
         trips_list = []
         for trip in trip_qs.order_by('-created_at'):
+            try:
+                pos = trip.user.get_current_position() if trip.user else None
+                designation = trip.user.designation or '' if trip.user else ''
+                pos_code = pos.get('code', '') if pos else ''
+                role_name = pos.get('role_name') if pos else (trip.user.role.name if trip.user and trip.user.role else '')
+            except Exception:
+                designation = ''
+                pos_code = ''
+                role_name = ''
+
+            current_approver_name = None
+            if trip.status not in ['Approved', 'Rejected', 'Completed']:
+                if not trip.approver_position:
+                    current_approver_name = get_resolved_user_name(trip.current_approver) if trip.current_approver else 'Pending'
+                else:
+                    try:
+                        from travel.views import get_users_by_position
+                        users = get_users_by_position(trip.approver_position)
+                        target_user = users[0] if users else None
+                        if target_user:
+                            current_approver_name = get_resolved_user_name(target_user)
+                        elif trip.current_approver:
+                            current_approver_name = get_resolved_user_name(trip.current_approver)
+                        else:
+                            current_approver_name = f"Position {trip.approver_position}"
+                    except Exception:
+                        if trip.current_approver:
+                            current_approver_name = get_resolved_user_name(trip.current_approver)
+
+            rejected_by = None
+            rejection_reason = None
+            if trip.status == 'Rejected':
+                rejected_by = get_resolved_user_name(trip.rejected_by) if trip.rejected_by else 'Unknown'
+                rejection_reason = trip.rejection_reason or ''
+
             trips_list.append({
                 'trip_id': trip.trip_id,
                 'user_id': trip.user.employee_id if trip.user else 'N/A',
                 'user_name': trip.user_name or (trip.user.name if trip.user else 'Unknown'),
+                'user_designation': designation,
+                'user_position_code': pos_code,
+                'user_role': role_name,
+                'source': trip.source,
                 'destination': trip.destination,
                 'start_date': trip.start_date.isoformat() if trip.start_date else None,
                 'end_date': trip.end_date.isoformat() if trip.end_date else None,
                 'status': trip.status,
-                'created_at': trip.created_at.isoformat() if trip.created_at else None
+                'created_at': trip.created_at.isoformat() if trip.created_at else None,
+                'is_bulk_upload': False,
+                'current_approver_name': current_approver_name,
+                'rejected_by': rejected_by,
+                'rejection_reason': rejection_reason,
             })
 
         batches_list = []
+        submitted_by_emp_code = {}
         for batch in batch_qs.order_by('-created_at'):
-            batches_list.append({
+            try:
+                pos = batch.user.get_current_position() if batch.user else None
+                designation = batch.user.designation or '' if batch.user else ''
+                pos_code = pos.get('code', '') if pos else ''
+                role_name = pos.get('role_name') if pos else (batch.user.role.name if batch.user and batch.user.role else '')
+            except Exception:
+                designation = ''
+                pos_code = ''
+                role_name = ''
+
+            # Merge live odometer and deviation data from created expenses
+            rows_data = batch.data_json if batch.data_json else []
+            if batch.created_expenses:
+                try:
+                    import json
+                    from travel.models import Expense
+                    expenses = Expense.objects.filter(id__in=batch.created_expenses)
+                    expense_map = {}
+                    for exp in expenses:
+                        try:
+                            desc = json.loads(exp.description)
+                            r_idx = desc.get('row_index')
+                            if r_idx is not None:
+                                expense_map[int(r_idx)] = {
+                                    'odo_start': exp.odo_start,
+                                    'odo_end': exp.odo_end,
+                                    'is_deviated': exp.is_deviated or desc.get('is_deviated', False),
+                                    'deviation_reason': exp.deviation_reason or desc.get('deviation_reason', ''),
+                                    'planned_origin': exp.planned_origin or desc.get('planned_origin', desc.get('origin', '')),
+                                    'planned_destination': exp.planned_destination or desc.get('planned_destination', desc.get('destination', '')),
+                                    'is_not_visited': desc.get('isNotVisited') == True or desc.get('travelStatus') == 'Cancelled' or (exp.deviation_reason and '[cancelled/skip]' in str(exp.deviation_reason).lower()),
+                                    'actual_mode': desc.get('mode', exp.travel_mode or ''),
+                                    'actual_vehicle': desc.get('subType', '')
+                                }
+                        except Exception:
+                            pass
+                    
+                    updated_rows = []
+                    for idx, row in enumerate(rows_data):
+                        new_row = dict(row)
+                        if idx in expense_map:
+                            m_data = expense_map[idx]
+                            if m_data['odo_start'] is not None:
+                                new_row['odo_start'] = float(m_data['odo_start'])
+                            if m_data['odo_end'] is not None:
+                                new_row['odo_end'] = float(m_data['odo_end'])
+                            new_row['is_deviated'] = m_data['is_deviated']
+                            new_row['deviation_reason'] = m_data['deviation_reason']
+                            new_row['planned_origin'] = m_data['planned_origin']
+                            new_row['planned_destination'] = m_data['planned_destination']
+                            new_row['is_not_visited'] = m_data['is_not_visited']
+                            new_row['actual_mode'] = m_data['actual_mode']
+                            new_row['actual_vehicle'] = m_data['actual_vehicle']
+                        updated_rows.append(new_row)
+                    rows_data = updated_rows
+                except Exception:
+                    pass
+
+            current_approver_name = None
+            if batch.status in ['Submitted', 'Resubmitted', 'Pending', 'Forwarded']:
+                if not batch.approver_position:
+                    current_approver_name = get_resolved_user_name(batch.current_approver) if batch.current_approver else 'Pending'
+                else:
+                    try:
+                        from travel.views import get_users_by_position
+                        users = get_users_by_position(batch.approver_position)
+                        target_user = users[0] if users else None
+                        if target_user:
+                            current_approver_name = get_resolved_user_name(target_user)
+                        elif batch.current_approver:
+                            current_approver_name = get_resolved_user_name(batch.current_approver)
+                        else:
+                            current_approver_name = f"Position {batch.approver_position}"
+                    except Exception:
+                        if batch.current_approver:
+                            current_approver_name = get_resolved_user_name(batch.current_approver)
+
+            rejected_by = None
+            rejection_reason = None
+            if batch.status == 'Rejected':
+                try:
+                    from core.models import AuditLog
+                    log = AuditLog.objects.filter(
+                        model_name='BulkActivityBatch',
+                        object_id=str(batch.id),
+                        action='REJECT'
+                    ).order_by('-timestamp').first()
+                    if log:
+                        rejected_by = get_resolved_user_name(log.user) if log.user else 'Unknown'
+                        rejection_reason = log.details.get('reason', '') if isinstance(log.details, dict) else ''
+                    if not rejection_reason:
+                        rejection_reason = batch.remarks or ''
+                    if not rejected_by and batch.trip and batch.trip.rejected_by:
+                        rejected_by = get_resolved_user_name(batch.trip.rejected_by)
+                        rejection_reason = batch.trip.rejection_reason or batch.remarks or ''
+                except Exception:
+                    pass
+
+            batch_item = {
                 'id': batch.id,
                 'user_id': batch.user.employee_id if batch.user else 'N/A',
                 'user_name': batch.user.name if batch.user else 'Unknown',
+                'user_designation': designation,
+                'user_position_code': pos_code,
+                'user_role': role_name,
                 'file_name': batch.file_name,
+                'trip_id': batch.trip.trip_id if batch.trip else None,
                 'status': batch.status,
-                'created_at': batch.created_at.isoformat() if batch.created_at else None
-            })
+                'created_at': batch.created_at.isoformat() if batch.created_at else None,
+                'row_count': len(rows_data),
+                'rows': rows_data,
+                'original_rows': batch.data_json if batch.data_json else [],
+                'current_approver_name': current_approver_name,
+                'rejected_by': rejected_by,
+                'rejection_reason': rejection_reason,
+            }
+            if batch.user and batch.user.employee_id:
+                submitted_by_emp_code.setdefault(batch.user.employee_id, []).append(batch_item)
+            
+            batches_list.append(batch_item)
+
+        actual_batches_count = len(batches_list)
+
+        # Merge with project employee roster to report all employees (Submitted/Not Submitted)
+        if emp_codes:
+            batches_list = []
+            processed_codes = set()
+            
+            # 1. Add all actual submissions
+            for emp_id, items in submitted_by_emp_code.items():
+                batches_list.extend(items)
+                processed_codes.add(emp_id)
+                
+            # 2. Add employees who have not submitted anything
+            for emp_id in emp_codes:
+                if emp_id in processed_codes:
+                    continue
+                
+                # Fetch employee details from DB or cache fallback
+                u_obj = User.objects.filter(employee_id=emp_id).first()
+                if u_obj:
+                    try:
+                        pos = u_obj.get_current_position()
+                        pos_code = pos.get('code', '') if pos else ''
+                        designation = u_obj.designation or ''
+                        role_name = pos.get('role_name') if pos else (u_obj.role.name if u_obj.role else '')
+                    except Exception:
+                        designation = ''
+                        pos_code = ''
+                        role_name = ''
+                    name = u_obj.name
+                else:
+                    cache_info = emp_details_map.get(emp_id, {})
+                    name = cache_info.get('name', 'Unknown')
+                    designation = cache_info.get('designation', '')
+                    pos_code = cache_info.get('position_code', '')
+                    role_name = cache_info.get('role_name', '')
+
+                batches_list.append({
+                    'id': f"not_submitted_{emp_id}",
+                    'user_id': emp_id,
+                    'user_name': name,
+                    'user_designation': designation,
+                    'user_position_code': pos_code,
+                    'user_role': role_name,
+                    'file_name': '—',
+                    'trip_id': None,
+                    'status': 'Not Submitted',
+                    'created_at': None,
+                    'row_count': 0,
+                    'rows': [],
+                    'original_rows': [],
+                    'current_approver_name': None,
+                    'rejected_by': None,
+                    'rejection_reason': None,
+                })
+                processed_codes.add(emp_id)
+
+            # Sort: Submitted (latest first) followed by Not Submitted (alphabetical)
+            submitted_batches = [b for b in batches_list if b.get('created_at')]
+            not_submitted_batches = [b for b in batches_list if not b.get('created_at')]
+            submitted_batches.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            not_submitted_batches.sort(key=lambda x: x.get('user_name', '').lower())
+            batches_list = submitted_batches + not_submitted_batches
 
         return Response({
             'trips_count': len(trips_list),
-            'batches_count': len(batches_list),
+            'batches_count': actual_batches_count,
             'users_count': len(unique_users_list),
             'trips': trips_list,
             'batches': batches_list,
@@ -771,12 +1175,17 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         response['Content-Disposition'] = 'attachment; filename="login_history.csv"'
         
         writer = csv.writer(response)
-        writer.writerow(['User', 'Email', 'IP Address', 'Browser', 'Device', 'Login Time', 'Logout Time', 'Status'])
+        writer.writerow(['Employee Name', 'Employee ID', 'Position', 'IP Address', 'Browser', 'Device', 'Login Time', 'Logout Time', 'Status'])
         
         for log in queryset:
+            try:
+                designation = log.user.designation or '' if log.user else ''
+            except Exception:
+                designation = ''
             writer.writerow([
-                log.user.name,
-                log.user.email,
+                log.user.name if log.user else 'Unknown',
+                log.user.employee_id if log.user else '',
+                designation,
                 log.ip_address,
                 log.browser_type,
                 log.device_type,

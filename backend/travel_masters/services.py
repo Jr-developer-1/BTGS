@@ -13,6 +13,7 @@ TYPE_MAPPING = {
     'cities': 'City',
     'towns': 'Town',
     'villages': 'Village',
+    'clusters': 'Cluster',
     'visiting_locations': 'Site',
     'locations': 'Site',
     'landmarks': 'Landmark'
@@ -57,14 +58,22 @@ def sync_geo_locations():
                     old_loc.location_type = level_name
                     old_loc.save()
 
+            cluster_cat = item.get("cluster_type_display") or item.get("cluster_type") or item.get("cluster_category")
+            if cluster_cat:
+                cluster_cat = cluster_cat.strip().capitalize()
+
+            defaults = {
+                "name": name,
+                "location_type": level_name,
+                "parent_id": parent_id,
+                "code": api_code
+            }
+            if cluster_cat:
+                defaults["cluster_category"] = cluster_cat
+
             loc, created = Location.objects.update_or_create(
                 external_id=ext_id,
-                defaults={
-                    "name": name,
-                    "location_type": level_name,
-                    "parent_id": parent_id,
-                    "code": api_code
-                }
+                defaults=defaults
             )
             
             if created: stats["created"] += 1

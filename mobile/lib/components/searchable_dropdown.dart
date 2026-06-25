@@ -55,18 +55,47 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
     }
   }
 
+  bool _matchesSearch(String option, String query) {
+    final normalizedOption = option.toLowerCase();
+    final normalizedQuery = query.toLowerCase();
+    if (normalizedOption.contains(normalizedQuery)) return true;
+
+    final words = normalizedOption.split(RegExp(r'[^a-z0-9]+'));
+    for (final word in words) {
+      if (word.startsWith(normalizedQuery)) return true;
+    }
+
+    if (normalizedQuery.length <= 3) {
+      var i = 0;
+      for (var char in normalizedQuery.split('')) {
+        i = normalizedOption.indexOf(char, i);
+        if (i == -1) return false;
+        i += 1;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  List<String> _filterOptions(List<String> options, String query) {
+    if (query.isEmpty) return options;
+    return options
+        .where((opt) => _matchesSearch(opt, query))
+        .toList()
+        .cast<String>();
+  }
+
   void _onSearchChanged(String query, Function setModalState) {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
 
-    // Immediate local filtering for better perceived performance
-    if (widget.initialOptions != null && query.isNotEmpty) {
-      final localFiltered = widget.initialOptions!
-          .where((opt) => opt.toLowerCase().contains(query.toLowerCase()))
-          .toList();
-      if (localFiltered.isNotEmpty) {
-        setState(() => _options = localFiltered);
-        setModalState(() {});
-      }
+    final localFiltered = widget.initialOptions != null
+        ? _filterOptions(widget.initialOptions ?? [], query)
+        : <String>[];
+
+    if (query.isNotEmpty) {
+      setState(() => _options = localFiltered);
+      setModalState(() {});
     }
 
     _debounce = Timer(const Duration(milliseconds: 200), () async {
@@ -84,20 +113,25 @@ class _SearchableDropdownState extends State<SearchableDropdown> {
           setModalState(() {});
         }
         final results = await _masterService.searchLocations(query);
+        final formatted = results.map((e) => _masterService.formatLocation(e)).toList();
+
         if (mounted) {
           setState(() {
-            _options = results.map((e) => _masterService.formatLocation(e)).toList();
+            if (formatted.isNotEmpty) {
+              _options = formatted.cast<String>();
+            } else if (localFiltered.isNotEmpty) {
+              _options = localFiltered;
+            } else {
+              _options = <String>[];
+            }
             _isLoading = false;
           });
           setModalState(() {});
         }
       } else {
-        // Simple local filtering
         if (mounted) {
           setState(() {
-            _options = (widget.initialOptions ?? [])
-                .where((opt) => opt.toLowerCase().contains(query.toLowerCase()))
-                .toList();
+            _options = _filterOptions(widget.initialOptions ?? [], query);
             _isLoading = false;
           });
           setModalState(() {});

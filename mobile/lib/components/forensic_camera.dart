@@ -216,6 +216,41 @@ class _ForensicCameraState extends State<ForensicCamera> {
     }
   }
 
+  List<String> _wrapText(String text, int maxChars) {
+    List<String> lines = [];
+    List<String> words = text.split(' ');
+    String currentLine = '';
+    
+    for (String word in words) {
+      if (word.length > maxChars) {
+        if (currentLine.isNotEmpty) {
+          lines.add(currentLine);
+          currentLine = '';
+        }
+        int start = 0;
+        while (start < word.length) {
+          int end = start + maxChars;
+          if (end > word.length) end = word.length;
+          lines.add(word.substring(start, end));
+          start = end;
+        }
+      } else {
+        if (currentLine.isEmpty) {
+          currentLine = word;
+        } else if (currentLine.length + 1 + word.length <= maxChars) {
+          currentLine = '$currentLine $word';
+        } else {
+          lines.add(currentLine);
+          currentLine = word;
+        }
+      }
+    }
+    if (currentLine.isNotEmpty) {
+      lines.add(currentLine);
+    }
+    return lines;
+  }
+
   Future<String> _applyWatermark(String path) async {
     try {
       final bytes = await File(path).readAsBytes();
@@ -227,10 +262,18 @@ class _ForensicCameraState extends State<ForensicCamera> {
       final locText = _liveGPS.isNotEmpty ? "GPS: ${_currentPosition?.latitude.toStringAsFixed(6)}, ${_currentPosition?.longitude.toStringAsFixed(6)}" : "GPS: N/A";
       final addrText = "Address: $_liveLocation";
 
-      // Scale watermark based on image height
-      final boxHeight = (image.height * 0.15).toInt();
+      final font = img.arial48;
+      final lineSpacing = (font.lineHeight * 1.2).toInt();
+
       final boxWidth = (image.width * 0.9).toInt();
       final padding = (image.height * 0.02).toInt();
+
+      // Wrap address if too long
+      final maxChars = (boxWidth / 24).toInt();
+      final addressLines = _wrapText(addrText, maxChars);
+
+      final totalLinesCount = 2 + addressLines.length;
+      final boxHeight = (totalLinesCount * lineSpacing + 40).toInt();
       
       img.fillRect(
         image,
@@ -241,14 +284,18 @@ class _ForensicCameraState extends State<ForensicCamera> {
         color: img.ColorRgba8(0, 0, 0, 180)
       );
 
-      final font = img.arial48;
-      final lineSpacing = (font.lineHeight * 1.2).toInt();
+      int currentY = image.height - boxHeight - padding + 20;
 
-      img.drawString(image, stamp, font: font, x: padding + 20, y: image.height - boxHeight - padding + 20, color: img.ColorRgba8(255, 255, 255, 255));
-      img.drawString(image, locText, font: font, x: padding + 20, y: image.height - boxHeight - padding + 20 + lineSpacing, color: img.ColorRgba8(255, 255, 255, 255));
-      
-      // Wrap address if too long
-      img.drawString(image, addrText, font: font, x: padding + 20, y: image.height - boxHeight - padding + 20 + (lineSpacing * 2), color: img.ColorRgba8(255, 255, 255, 255));
+      img.drawString(image, stamp, font: font, x: padding + 20, y: currentY, color: img.ColorRgba8(255, 255, 255, 255));
+      currentY += lineSpacing;
+
+      img.drawString(image, locText, font: font, x: padding + 20, y: currentY, color: img.ColorRgba8(255, 255, 255, 255));
+      currentY += lineSpacing;
+
+      for (String line in addressLines) {
+        img.drawString(image, line, font: font, x: padding + 20, y: currentY, color: img.ColorRgba8(255, 255, 255, 255));
+        currentY += lineSpacing;
+      }
 
       final directory = await getTemporaryDirectory();
       final wmPath = p.join(directory.path, "forensic_${p.basename(path)}");

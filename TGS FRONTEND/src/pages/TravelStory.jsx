@@ -570,9 +570,11 @@ const TravelStory = () => {
                                     </thead>
                                     <tbody>
                                         {travel.expenses.map(exp => {
+                                            const dept = user?.department?.toLowerCase() || '';
+                                            const desig = user?.designation?.toLowerCase() || '';
                                             const role = user?.role?.toLowerCase() || '';
-                                            const isFinance = role.includes('finance');
-                                            const isHR = role.includes('hr');
+                                            const isFinance = role.includes('finance') || dept.includes('finance') || desig.includes('finance');
+                                            const isHR = role.includes('hr') || dept.includes('hr') || desig.includes('hr') || dept.includes('human resources') || desig.includes('human resources');
                                             const isRM = !isFinance && !isHR;
 
                                             return (

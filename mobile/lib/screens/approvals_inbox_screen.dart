@@ -6,6 +6,60 @@ import '../services/trip_service.dart';
 import '../services/api_service.dart';
 import '../constants/api_constants.dart';
 
+Map<String, dynamic> _parseExpenseDescription(dynamic exp) {
+  Map<String, dynamic> details = {};
+  try {
+    final descRaw = exp['description'];
+    if (descRaw is String && descRaw.trim().startsWith('{')) {
+      details = Map<String, dynamic>.from(jsonDecode(descRaw.trim()));
+    } else if (descRaw is Map) {
+      details = Map<String, dynamic>.from(descRaw);
+    }
+  } catch (_) {}
+
+  // Prioritize explicit backend fields over legacy description string parsing
+  if (exp['travel_mode'] != null && exp['travel_mode'].toString().isNotEmpty) {
+    details['mode'] = exp['travel_mode'];
+  }
+  if (exp['class_type'] != null && exp['class_type'].toString().isNotEmpty) {
+    details['class'] = exp['class_type'];
+    details['classType'] = exp['class_type'];
+  }
+  if (exp['booking_reference'] != null && exp['booking_reference'].toString().isNotEmpty) {
+    details['pnr'] = exp['booking_reference'];
+    details['bookingRef'] = exp['booking_reference'];
+  }
+  if (exp['vehicle_type'] != null && exp['vehicle_type'].toString().isNotEmpty) {
+    details['subType'] = exp['vehicle_type'];
+    details['vehicleType'] = exp['vehicle_type'];
+  }
+  if (exp['booked_by'] != null && exp['booked_by'].toString().isNotEmpty) {
+    details['bookedBy'] = exp['booked_by'];
+  }
+  if (exp['cancellation_status'] != null && exp['cancellation_status'].toString().isNotEmpty) {
+    details['travelStatus'] = exp['cancellation_status'];
+  }
+  if (exp['cancellation_date'] != null && exp['cancellation_date'].toString().isNotEmpty) {
+    details['cancellationDate'] = exp['cancellation_date'];
+  }
+  if (exp['refund_amount'] != null) {
+    details['refundAmount'] = exp['refund_amount'].toString();
+  }
+  if (exp['cancellation_reason'] != null && exp['cancellation_reason'].toString().isNotEmpty) {
+    details['cancellationReason'] = exp['cancellation_reason'];
+  }
+  if (exp['odo_start'] != null) {
+    details['odoStart'] = exp['odo_start'].toString();
+  }
+  if (exp['odo_end'] != null) {
+    details['odoEnd'] = exp['odo_end'].toString();
+  }
+  if (exp['distance'] != null) {
+    details['totalKm'] = exp['distance'].toString();
+  }
+  return details;
+}
+
 class ApprovalsInboxScreen extends StatefulWidget {
   final bool hideHeader;
   final int? enforceTab;
@@ -41,6 +95,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   bool _isActionLoading = false;
   bool isFinanceHead = false;
   bool isFinanceExec = false;
+  bool isHR = false;
+  bool isFinance = false;
   final Map<String, String> _batchAmounts = {}; // batchId -> amount
   final Map<String, TextEditingController> _batchControllers =
       {}; // batchId -> controller
@@ -85,13 +141,24 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         role == 'cfo' ||
         role.contains('cfo');
 
-    final isFinance =
+    isFinance =
         dept.contains('finance') ||
         desig.contains('finance') ||
         role.contains('finance') ||
         isFinanceHead;
 
     isFinanceExec = isFinance && !isFinanceHead;
+
+    isHR = dept.contains('hr') ||
+        desig.contains('hr') ||
+        role == 'hr' ||
+        role.contains('hr') ||
+        dept.contains('human resources') ||
+        desig.contains('human resources') ||
+        role.contains('human resources') ||
+        dept.contains('human resource') ||
+        desig.contains('human resource') ||
+        role.contains('human resource');
   }
 
   @override
@@ -1309,6 +1376,35 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
 
     final bool isExpanded = _expandedBatchIds.contains(batchId);
 
+    final bool hasRowWiseEditing = (() {
+      final String type = task['type'] ?? '';
+      final details = task['details'] ?? {};
+
+      if (type == 'Money Top-up / Advance') return false;
+      if (details['is_local_travel'] == true ||
+          details['is_bulk_upload'] == true ||
+          type == 'Monthly Tour Plan' ||
+          task['is_local'] == true) {
+        return false;
+      }
+      final List expenses = details['expenses'] is List ? details['expenses'] : [];
+      if (expenses.isEmpty) return false;
+      return expenses.any((exp) {
+        final String cat = (exp['category'] ?? '').toString().toLowerCase();
+        final bool isLocal = cat.contains('local') || cat == 'fuel';
+        bool isBulk = false;
+        final String desc = (exp['description'] ?? '').toString();
+        if (desc.trim().startsWith('{')) {
+          try {
+            final parsed = jsonDecode(desc.trim());
+            isBulk = parsed['from_bulk_upload'] == true;
+          } catch (_) {}
+        }
+        const standardCats = ['food', 'accommodation', 'travel', 'incidental', 'others'];
+        return standardCats.contains(cat) && !isLocal && !isBulk;
+      });
+    })();
+
     final bool canEdit =
         (task['details']?['permissions']?['can_edit_amount'] ??
             task['permissions']?['can_edit_amount']) ??
@@ -1687,6 +1783,12 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   // Executive Amount Adjustment Field (Moved outside filteredRows check)
                   if (canEdit &&
                       [
+                        'PENDING',
+                        'PENDING_HR',
+                        'SUBMITTED',
+                        'MANAGER APPROVED',
+                        'RESUBMITTED',
+                        'FORWARDED',
                         'PENDING_EXECUTIVE',
                         'PENDING_HEAD',
                         'APPROVED',
@@ -1718,11 +1820,14 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: TextField(
+                            enabled: !hasRowWiseEditing,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
                             decoration: InputDecoration(
                               hintText: '0.00',
+                              filled: hasRowWiseEditing,
+                              fillColor: hasRowWiseEditing ? const Color(0xFFE2E8F0) : null,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
@@ -1769,6 +1874,11 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               }
                               setState(() {});
                             },
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              color: hasRowWiseEditing ? const Color(0xFF64748B) : const Color(0xFF10B981),
+                            ),
                           ),
                         ),
                       ],
@@ -2687,11 +2797,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                               exp['description']?.toString() ?? '';
                           String description = rawDesc;
 
-                          if (description.trim().startsWith('{')) {
+                          if (rawDesc.isNotEmpty) {
                             try {
-                              final d =
-                                  jsonDecode(description.trim())
-                                      as Map<String, dynamic>;
+                              final d = _parseExpenseDescription(exp);
 
                               // Extract meaningful location info
                               final String origin =
@@ -2968,15 +3076,25 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   // ────────────────────────────────────────────────────────
                   () {
                     final String rawDesc = exp['description']?.toString() ?? '';
-                    if (!rawDesc.trim().startsWith('{'))
-                      return const SizedBox.shrink();
                     try {
-                      final details =
-                          jsonDecode(rawDesc.trim()) as Map<String, dynamic>;
+                      final details = _parseExpenseDescription(exp);
+                      if (details.isEmpty) return const SizedBox.shrink();
                       if (details['odoStart'] == null &&
                           details['odoEnd'] == null &&
                           details['odoStartImg'] == null &&
                           details['odoEndImg'] == null &&
+                          details['mode'] == null &&
+                          details['classType'] == null &&
+                          details['class'] == null &&
+                          details['pnr'] == null &&
+                          details['bookingRef'] == null &&
+                          details['subType'] == null &&
+                          details['vehicleType'] == null &&
+                          details['bookedBy'] == null &&
+                          details['travelStatus'] == null &&
+                          details['cancellationDate'] == null &&
+                          details['refundAmount'] == null &&
+                          details['cancellationReason'] == null &&
                           (details['selfies'] == null ||
                               (details['selfies'] as List).isEmpty)) {
                         return const SizedBox.shrink();
@@ -2993,20 +3111,60 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             spacing: 12,
                             runSpacing: 8,
                             children: [
-                              if (details['odoStart'] != null)
+                              if (details['odoStart'] != null && details['odoStart'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Odo Start',
                                   '${details['odoStart']} km',
                                 ),
-                              if (details['odoEnd'] != null)
+                              if (details['odoEnd'] != null && details['odoEnd'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Odo End',
                                   '${details['odoEnd']} km',
                                 ),
-                              if (details['mode'] != null)
+                              if (details['mode'] != null && details['mode'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Mode',
                                   details['mode'].toString(),
+                                ),
+                              if (details['vehicleType'] != null && details['vehicleType'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Vehicle Type',
+                                  details['vehicleType'].toString(),
+                                ),
+                              if (details['classType'] != null && details['classType'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Class',
+                                  details['classType'].toString(),
+                                ),
+                              if (details['pnr'] != null && details['pnr'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'PNR/Booking Ref',
+                                  details['pnr'].toString(),
+                                ),
+                              if (details['bookedBy'] != null && details['bookedBy'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Booked By',
+                                  details['bookedBy'].toString(),
+                                ),
+                              if (details['travelStatus'] != null && details['travelStatus'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Travel Status',
+                                  details['travelStatus'].toString(),
+                                ),
+                              if (details['refundAmount'] != null && details['refundAmount'].toString().isNotEmpty && double.tryParse(details['refundAmount'].toString()) != 0)
+                                _miniInfoBlock(
+                                  'Refund Amount',
+                                  '₹${details['refundAmount']}',
+                                ),
+                              if (details['cancellationDate'] != null && details['cancellationDate'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Cancellation Date',
+                                  details['cancellationDate'].toString(),
+                                ),
+                              if (details['cancellationReason'] != null && details['cancellationReason'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Cancellation Reason',
+                                  details['cancellationReason'].toString(),
                                 ),
                             ],
                           ),
@@ -3190,17 +3348,25 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         .replaceFirst(RegExp(r"'\]$"), '')
         .replaceFirst(RegExp(r"'$"), '');
     Widget imageWidget;
+    Widget largeImageWidget;
     try {
       if (path.startsWith('data:image')) {
         final base64String = path.split(',').last;
+        final bytes = base64Decode(base64String);
         imageWidget = Image.memory(
-          base64Decode(base64String),
+          bytes,
           fit: BoxFit.cover,
+        );
+        largeImageWidget = Image.memory(
+          bytes,
+          fit: BoxFit.contain,
         );
       } else if (path.startsWith('/9j/') ||
           path.startsWith('iVBORw0KG') ||
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
-        imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
+        final bytes = base64Decode(path);
+        imageWidget = Image.memory(bytes, fit: BoxFit.cover);
+        largeImageWidget = Image.memory(bytes, fit: BoxFit.contain);
       } else {
         final String backendBase = ApiConstants.baseUrl;
         final String fullUrl = path.startsWith('http')
@@ -3212,6 +3378,12 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
           errorBuilder: (c, e, s) =>
               const Icon(Icons.broken_image, size: 20, color: Colors.grey),
         );
+        largeImageWidget = Image.network(
+          fullUrl,
+          fit: BoxFit.contain,
+          errorBuilder: (c, e, s) =>
+              const Icon(Icons.broken_image, size: 20, color: Colors.grey),
+        );
       }
     } catch (e) {
       imageWidget = const Icon(
@@ -3219,6 +3391,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
         size: 20,
         color: Colors.red,
       );
+      largeImageWidget = imageWidget;
     }
     return GestureDetector(
       onTap: () {
@@ -3234,7 +3407,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                   panEnabled: true,
                   minScale: 0.5,
                   maxScale: 4.0,
-                  child: imageWidget,
+                  child: largeImageWidget,
                 ),
                 Positioned(
                   top: 10,
@@ -3314,6 +3487,13 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
   Map<String, dynamic>? _currentUser;
   bool isFinanceHead = false;
   bool isFinanceExec = false;
+  bool isHR = false;
+  bool isFinance = false;
+
+  // allowance compliance state
+  Map<String, dynamic>? allowanceData;
+  bool allowanceLoading = false;
+  Map<dynamic, Map<String, dynamic>> hrDecisions = {};
 
   // finance-related state for approvals
   String execAmount = '';
@@ -3321,6 +3501,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
   String paymentMode = '';
   String transactionId = '';
   String? receiptFile;
+  String? _errorMessage;
 
   @override
   void dispose() {
@@ -3333,6 +3514,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     super.initState();
     _currentUser = ApiService().getUser();
     _computeRoles();
+    _fetchAllowance();
 
     // Prefill amount exactly like web: Use previously edited amount if available, else requested amount
     final dynamic details = widget.task['details'] ?? {};
@@ -3367,13 +3549,287 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         role == 'cfo' ||
         role.contains('cfo');
 
-    final isFinance =
+    isFinance =
         dept.contains('finance') ||
         desig.contains('finance') ||
         role.contains('finance') ||
         isFinanceHead;
 
     isFinanceExec = isFinance && !isFinanceHead;
+
+    isHR = dept.contains('hr') ||
+        desig.contains('hr') ||
+        role == 'hr' ||
+        role.contains('hr') ||
+        dept.contains('human resources') ||
+        desig.contains('human resources') ||
+        role.contains('human resources') ||
+        dept.contains('human resource') ||
+        desig.contains('human resource') ||
+        role.contains('human resource');
+  }
+
+  Future<void> _fetchAllowance() async {
+    final dbId = widget.task['db_id'] ?? widget.task['id'];
+    if (widget.task['type'] == 'Expense Claim' && (isHR || isFinance) && dbId != null) {
+      setState(() {
+        allowanceLoading = true;
+      });
+      try {
+        final ApiService apiService = ApiService();
+        final response = await apiService.get('/api/claims/$dbId/compute-allowance/');
+        if (response != null && response is Map<String, dynamic>) {
+          setState(() {
+            allowanceData = response;
+            
+            final List? expenseAllowances = response['expense_allowances'] as List?;
+            final List? expenses = widget.task['details']?['expenses'] as List?;
+            
+            if (expenses != null && expenseAllowances != null) {
+              for (var e in expenses) {
+                final ea = expenseAllowances.firstWhere(
+                  (item) => item['expense_id'].toString() == e['id'].toString(),
+                  orElse: () => null,
+                );
+                if (ea != null) {
+                  e['allowed_amount'] = ea['allowed_amount'];
+                  if (e['hr_amount_source'] == null && e['finance_amount_source'] == null) {
+                    e['policy_note'] = ea['policy_note'];
+                  }
+                  e['city_type_resolved'] = ea['city_type'];
+                }
+              }
+            }
+
+            final initialDecisions = <dynamic, Map<String, dynamic>>{};
+            if (expenseAllowances != null) {
+              for (var ea in expenseAllowances) {
+                final expId = ea['expense_id'];
+                final exp = expenses?.firstWhere(
+                  (e) => e['id'].toString() == expId.toString(),
+                  orElse: () => null,
+                );
+                
+                double? savedAmt;
+                String? savedSource;
+                
+                if (isFinance) {
+                  if (exp != null && exp['finance_selected_amount'] != null) {
+                    savedAmt = double.tryParse(exp['finance_selected_amount'].toString());
+                    savedSource = exp['finance_amount_source']?.toString() ?? 'manual';
+                  } else if (exp != null && exp['hr_selected_amount'] != null) {
+                    savedAmt = double.tryParse(exp['hr_selected_amount'].toString());
+                    savedSource = 'allowed';
+                  }
+                } else {
+                  if (exp != null && exp['hr_selected_amount'] != null) {
+                    savedAmt = double.tryParse(exp['hr_selected_amount'].toString());
+                    savedSource = exp['hr_amount_source']?.toString() ?? 'allowed';
+                  }
+                }
+                
+                final String savedNote = (isFinance 
+                  ? (exp?['finance_remarks'] ?? exp?['policy_note'] ?? ea['policy_note'] ?? '') 
+                  : (exp?['policy_note'] ?? ea['policy_note'] ?? '')).toString();
+                
+                final claimedAmt = double.tryParse(ea['claimed_amount']?.toString() ?? '0') ?? 0.0;
+                final allowedAmt = ea['allowed_amount'] != null ? (double.tryParse(ea['allowed_amount'].toString()) ?? 0.0) : null;
+                final exceedsLimit = ea['exceeds_limit'] == true;
+                
+                initialDecisions[expId] = {
+                  'amount': savedAmt ?? (exceedsLimit ? (allowedAmt ?? claimedAmt) : claimedAmt),
+                  'source': savedSource ?? (exceedsLimit ? 'allowed' : 'claimed'),
+                  'note': savedNote,
+                  'error': '',
+                };
+              }
+            }
+            hrDecisions = initialDecisions;
+          });
+        }
+      } catch (err) {
+        debugPrint("Failed to fetch claim allowance: $err");
+      } finally {
+        setState(() {
+          allowanceLoading = false;
+        });
+      }
+    } else {
+      setState(() {
+        allowanceData = null;
+        hrDecisions = {};
+      });
+    }
+  }
+
+  void handleDecisionChange(dynamic expenseId, String field, dynamic value) {
+    setState(() {
+      final current = hrDecisions[expenseId] != null
+          ? Map<String, dynamic>.from(hrDecisions[expenseId]!)
+          : {'amount': 0.0, 'source': 'claimed', 'note': '', 'error': ''};
+      current[field] = value;
+
+      final expenseAllowances = allowanceData?['expense_allowances'] as List?;
+      final ea = expenseAllowances?.firstWhere(
+        (a) => a['expense_id'].toString() == expenseId.toString(),
+        orElse: () => null,
+      );
+
+      final claimed = ea != null ? (double.tryParse(ea['claimed_amount']?.toString() ?? '0') ?? 0.0) : 0.0;
+      final allowed = ea != null && ea['allowed_amount'] != null
+          ? (double.tryParse(ea['allowed_amount'].toString()) ?? 0.0)
+          : null;
+
+      _errorMessage = null; // Clear general error banner on interaction
+
+      if (field == 'amount') {
+        final valFloat = double.tryParse(value.toString()) ?? 0.0;
+        if (double.tryParse(value.toString()) == null) {
+          current['error'] = 'Please enter a valid number';
+        } else if (valFloat > claimed) {
+          current['error'] = 'Cannot exceed claimed amount (₹$claimed)';
+        } else if (valFloat < 0) {
+          current['error'] = 'Amount cannot be negative';
+        } else if (allowed != null && claimed > allowed && valFloat < allowed) {
+          current['error'] = 'Amount cannot be less than policy limit (₹$allowed)';
+        } else {
+          current['error'] = '';
+        }
+      } else if (field == 'source') {
+        final amt = value == 'claimed'
+            ? claimed
+            : (value == 'allowed' ? (allowed ?? claimed) : current['amount']);
+
+        if (value == 'manual') {
+          final valFloat = double.tryParse(amt.toString()) ?? 0.0;
+          if (double.tryParse(amt.toString()) == null) {
+            current['error'] = 'Please enter a valid number';
+          } else if (valFloat > claimed) {
+            current['error'] = 'Cannot exceed claimed amount (₹$claimed)';
+          } else if (valFloat < 0) {
+            current['error'] = 'Amount cannot be negative';
+          } else if (allowed != null && claimed > allowed && valFloat < allowed) {
+            current['error'] = 'Amount cannot be less than policy limit (₹$allowed)';
+          } else {
+            current['error'] = '';
+          }
+        } else {
+          current['error'] = '';
+        }
+      } else if (field == 'note') {
+        if (value.toString().trim().isNotEmpty && current['error'] == 'Policy deviation note is mandatory for adjustments') {
+          current['error'] = '';
+        }
+      }
+
+      hrDecisions[expenseId] = current;
+    });
+  }
+
+  Future<void> saveExpenseDecision(dynamic expenseId) async {
+    final dec = hrDecisions[expenseId];
+    if (dec == null) return;
+
+    if (dec['error'] != null && dec['error'].toString().isNotEmpty) {
+      setState(() {
+        _errorMessage = dec['error'].toString();
+      });
+      return;
+    }
+
+    if (dec['source'] != 'claimed' && (dec['note'] == null || dec['note'].toString().trim().isEmpty)) {
+      setState(() {
+        _errorMessage = 'Policy deviation note is mandatory for adjustments';
+        dec['error'] = 'Policy deviation note is mandatory for adjustments';
+      });
+      return;
+    }
+
+    setState(() {
+      _isActionLoading = true;
+      _errorMessage = null;
+    });
+    try {
+      final dbId = widget.task['db_id'] ?? widget.task['id'];
+      final String amtField = isFinance ? 'finance_selected_amount' : 'hr_selected_amount';
+      
+      final payload = {
+        'expense_decisions': [
+          {
+            'expense_id': expenseId,
+            amtField: double.tryParse(dec['amount'].toString()) ?? 0.0,
+            'source': dec['source'],
+            'note': dec['note'],
+            'policy_note': dec['note'],
+          }
+        ]
+      };
+
+      final response = isFinance
+          ? await _tripService.financeDecide(dbId, payload)
+          : await _tripService.hrDecide(dbId, payload);
+
+      if (response != null) {
+        if (response['errors'] != null && (response['errors'] as List).isNotEmpty) {
+          final errMsg = response['errors'][0]['error'] ?? 'Failed to save decision';
+          setState(() {
+            _errorMessage = errMsg.toString();
+          });
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(isFinance ? 'Finance decision saved successfully' : 'HR decision saved successfully'),
+              backgroundColor: const Color(0xFF10B981),
+            ),
+          );
+
+          // Update the local task object in-place so the UI reflects the change immediately
+          if (widget.task['details'] != null && widget.task['details']['expenses'] != null) {
+            final List expenses = widget.task['details']['expenses'] as List;
+            for (var e in expenses) {
+              if (e['id'].toString() == expenseId.toString()) {
+                setState(() {
+                  if (isFinance) {
+                    e['finance_selected_amount'] = double.tryParse(dec['amount'].toString());
+                    e['finance_amount_source'] = dec['source'];
+                  } else {
+                    e['hr_selected_amount'] = double.tryParse(dec['amount'].toString());
+                    e['hr_amount_source'] = dec['source'];
+                  }
+                  e['policy_note'] = dec['note'];
+                });
+                break;
+              }
+            }
+          }
+
+          final dynamic newApprovedTotal = response['final_approved_total'];
+          if (newApprovedTotal != null) {
+            setState(() {
+              execAmount = newApprovedTotal.toString();
+              if (_detailExecController != null) {
+                _detailExecController!.text = execAmount;
+              }
+              widget.task['executive_approved_amount'] = newApprovedTotal;
+              if (widget.task['details'] != null) {
+                widget.task['details']['executive_approved_amount'] = newApprovedTotal;
+                widget.task['details']['approved_amount'] = newApprovedTotal;
+              }
+            });
+          }
+
+          widget.onRefresh();
+          _fetchAllowance();
+        }
+      }
+    } catch (err) {
+      setState(() {
+        _errorMessage = 'Failed to save HR decision: $err';
+      });
+      debugPrint("Failed to save HR decision: $err");
+    } finally {
+      setState(() => _isActionLoading = false);
+    }
   }
 
   Future<String?> _showRemarksDialog() async {
@@ -3478,6 +3934,24 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           'remarks': finalRemark,
         },
       );
+      // Update local task object in-place so status updates instantly in the UI
+      if (widget.task['details'] != null && widget.task['details']['expenses'] != null) {
+        final List expenses = widget.task['details']['expenses'] as List;
+        for (var e in expenses) {
+          if (e['id'].toString() == itemId.toString()) {
+            setState(() {
+              e['status'] = status;
+              if (isHR) {
+                e['hr_remarks'] = finalRemark;
+              } else if (isFinance) {
+                e['finance_remarks'] = finalRemark;
+              }
+            });
+            break;
+          }
+        }
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Item ${status.toLowerCase()}ed with feedback'),
@@ -3490,16 +3964,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
       );
       widget.onRefresh(); // Trigger main screen refresh
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update item: $e'),
-          backgroundColor: const Color(0xFFEF4444),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-        ),
-      );
+      setState(() {
+        _errorMessage = 'Failed to update item: $e';
+      });
     } finally {
       if (mounted) setState(() => _isActionLoading = false);
     }
@@ -3510,6 +3977,47 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     final task = widget.task;
     final String type = task['type'] ?? '';
     final details = task['details'] ?? {};
+
+    final bool hasRowWiseEditing = (() {
+      if (type == 'Money Top-up / Advance') return false;
+      if (details['is_local_travel'] == true ||
+          details['is_bulk_upload'] == true ||
+          type == 'Monthly Tour Plan' ||
+          task['is_local'] == true) {
+        return false;
+      }
+      final List expenses = details['expenses'] is List ? details['expenses'] : [];
+      if (expenses.isEmpty) return false;
+      return expenses.any((exp) {
+        final String cat = (exp['category'] ?? '').toString().toLowerCase();
+        final bool isLocal = cat.contains('local') || cat == 'fuel';
+        bool isBulk = false;
+        final String desc = (exp['description'] ?? '').toString();
+        if (desc.trim().startsWith('{')) {
+          try {
+            final parsed = jsonDecode(desc.trim());
+            isBulk = parsed['from_bulk_upload'] == true;
+          } catch (_) {}
+        }
+        final bool isStandard = const ['food', 'accommodation', 'travel', 'incidental', 'others'].contains(cat) && !isLocal && !isBulk;
+        if (!isStandard) return false;
+
+        final List? expenseAllowances = allowanceData?['expense_allowances'] as List?;
+        if (expenseAllowances == null) return false;
+        final ea = expenseAllowances.firstWhere(
+          (a) => a['expense_id'].toString() == exp['id'].toString(),
+          orElse: () => null,
+        );
+        if (ea == null) return false;
+
+        final double claimedAmount = double.tryParse(ea['claimed_amount']?.toString() ?? '0') ?? 0.0;
+        final double? allowedAmount = ea['allowed_amount'] != null ? (double.tryParse(ea['allowed_amount'].toString()) ?? 0.0) : null;
+        final bool exceedsLimit = ea['exceeds_limit'] == true;
+        
+        final bool isWithinLimit = (allowedAmount == null || claimedAmount <= allowedAmount) && !exceedsLimit;
+        return !isWithinLimit;
+      });
+    })();
 
     return Column(
       children: [
@@ -3570,6 +4078,43 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           ),
         ),
         const Divider(height: 32),
+        if (_errorMessage != null) ...[
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFCA5A5)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _errorMessage!,
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFF991B1B),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, color: Color(0xFF991B1B), size: 16),
+                  onPressed: () {
+                    setState(() {
+                      _errorMessage = null;
+                    });
+                  },
+                  constraints: const BoxConstraints(),
+                  padding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+          ),
+        ],
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -3712,11 +4257,14 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       const SizedBox(width: 4),
                       Expanded(
                         child: TextField(
+                          enabled: !hasRowWiseEditing,
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
                           decoration: InputDecoration(
                             hintText: '0.00',
+                            filled: hasRowWiseEditing,
+                            fillColor: hasRowWiseEditing ? const Color(0xFFE2E8F0) : null,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -3761,6 +4309,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 16,
                             fontWeight: FontWeight.w900,
+                            color: hasRowWiseEditing ? const Color(0xFF64748B) : const Color(0xFF10B981),
                           ),
                         ),
                       ),
@@ -3865,7 +4414,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '* Enter the total approved expenses. Deductions are handled automatically.',
+                    hasRowWiseEditing
+                        ? '* This field is auto-calculated from row-wise approvals/adjustments below.'
+                        : '* Enter the total approved expenses. Deductions are handled automatically.',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 10,
                       color: const Color(0xFF94A3B8),
@@ -4069,6 +4620,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
   }
 
   Widget _buildInfoGrid(Map<String, dynamic> task) {
+    final isClaim = task['type']?.toString().contains('Claim') == true ||
+        task['type']?.toString().contains('Plan') == true;
+    final claimedAmount = task['details']?['requested_amount'] ?? task['details']?['total_amount'];
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -4086,21 +4641,54 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
               ),
               const SizedBox(width: 16),
               Expanded(
-                child: _infoBlock('Estimated Cost', task['cost'] ?? '0'),
+                child: _infoBlock(
+                  isClaim ? 'Net Payout' : 'Estimated Cost',
+                  task['cost'] ?? '0',
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _infoBlock('Submitted Date', task['date'] ?? 'N/A'),
-              ),
-              const SizedBox(width: 16),
-              Expanded(child: _infoBlock('Risk Score', task['risk'] ?? 'Low')),
-            ],
-          ),
+          if (isClaim && claimedAmount != null) ...[
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _infoBlock(
+                    'Employee Claimed Amount',
+                    '₹${double.tryParse(claimedAmount.toString())?.toStringAsFixed(2) ?? claimedAmount}',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _infoBlock('Submitted Date', task['date'] ?? 'N/A'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _infoBlock('Risk Score', task['risk'] ?? 'Low'),
+                ),
+                const SizedBox(width: 16),
+                const Spacer(),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _infoBlock('Submitted Date', task['date'] ?? 'N/A'),
+                ),
+                const SizedBox(width: 16),
+                Expanded(child: _infoBlock('Risk Score', task['risk'] ?? 'Low')),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -4265,7 +4853,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     // Detect if this is a bulk batch
     final bool isBulk = widget.task['data_json'] != null;
 
-    if (widget.task['permissions']?['can_edit_amount'] == true) {
+    final bool canEdit = (widget.task['details']?['permissions']?['can_edit_amount'] ??
+        widget.task['permissions']?['can_edit_amount']) == true;
+
+    if (canEdit) {
       approveLabel = 'Verify & Approve (₹$execAmount)';
     } else if (isFinanceHead || isFinanceExec) {
       approveLabel = 'Authorize Payment (₹$execAmount)';
@@ -5261,11 +5852,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                               exp['description']?.toString() ?? '';
                           String description = rawDesc;
 
-                          if (description.trim().startsWith('{')) {
+                          if (rawDesc.isNotEmpty) {
                             try {
-                              final d =
-                                  jsonDecode(description.trim())
-                                      as Map<String, dynamic>;
+                              final d = _parseExpenseDescription(exp);
 
                               // Extract meaningful location info
                               final String origin =
@@ -5541,15 +6130,25 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   ],
                   () {
                     final String rawDesc = exp['description']?.toString() ?? '';
-                    if (!rawDesc.trim().startsWith('{'))
-                      return const SizedBox.shrink();
                     try {
-                      final details =
-                          jsonDecode(rawDesc.trim()) as Map<String, dynamic>;
+                      final details = _parseExpenseDescription(exp);
+                      if (details.isEmpty) return const SizedBox.shrink();
                       if (details['odoStart'] == null &&
                           details['odoEnd'] == null &&
                           details['odoStartImg'] == null &&
                           details['odoEndImg'] == null &&
+                          details['mode'] == null &&
+                          details['classType'] == null &&
+                          details['class'] == null &&
+                          details['pnr'] == null &&
+                          details['bookingRef'] == null &&
+                          details['subType'] == null &&
+                          details['vehicleType'] == null &&
+                          details['bookedBy'] == null &&
+                          details['travelStatus'] == null &&
+                          details['cancellationDate'] == null &&
+                          details['refundAmount'] == null &&
+                          details['cancellationReason'] == null &&
                           (details['selfies'] == null ||
                               (details['selfies'] as List).isEmpty)) {
                         return const SizedBox.shrink();
@@ -5566,20 +6165,60 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                             spacing: 12,
                             runSpacing: 8,
                             children: [
-                              if (details['odoStart'] != null)
+                              if (details['odoStart'] != null && details['odoStart'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Odo Start',
                                   '${details['odoStart']} km',
                                 ),
-                              if (details['odoEnd'] != null)
+                              if (details['odoEnd'] != null && details['odoEnd'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Odo End',
                                   '${details['odoEnd']} km',
                                 ),
-                              if (details['mode'] != null)
+                              if (details['mode'] != null && details['mode'].toString().isNotEmpty)
                                 _miniInfoBlock(
                                   'Mode',
                                   details['mode'].toString(),
+                                ),
+                              if (details['vehicleType'] != null && details['vehicleType'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Vehicle Type',
+                                  details['vehicleType'].toString(),
+                                ),
+                              if (details['classType'] != null && details['classType'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Class',
+                                  details['classType'].toString(),
+                                ),
+                              if (details['pnr'] != null && details['pnr'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'PNR/Booking Ref',
+                                  details['pnr'].toString(),
+                                ),
+                              if (details['bookedBy'] != null && details['bookedBy'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Booked By',
+                                  details['bookedBy'].toString(),
+                                ),
+                              if (details['travelStatus'] != null && details['travelStatus'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Travel Status',
+                                  details['travelStatus'].toString(),
+                                ),
+                              if (details['refundAmount'] != null && details['refundAmount'].toString().isNotEmpty && double.tryParse(details['refundAmount'].toString()) != 0)
+                                _miniInfoBlock(
+                                  'Refund Amount',
+                                  '₹${details['refundAmount']}',
+                                ),
+                              if (details['cancellationDate'] != null && details['cancellationDate'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Cancellation Date',
+                                  details['cancellationDate'].toString(),
+                                ),
+                              if (details['cancellationReason'] != null && details['cancellationReason'].toString().isNotEmpty)
+                                _miniInfoBlock(
+                                  'Cancellation Reason',
+                                  details['cancellationReason'].toString(),
                                 ),
                             ],
                           ),
@@ -5790,7 +6429,377 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       ),
                     );
                   }(),
-                  if (!widget.isHistory) ...[
+                  if (widget.task['type'] == 'Expense Claim' && (isHR || isFinance)) ...[
+                    if (allowanceLoading)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 20.0),
+                          child: CircularProgressIndicator(),
+                        ),
+                      )
+                    else () {
+                      final ea = allowanceData?['expense_allowances']?.firstWhere(
+                        (a) => a['expense_id'].toString() == exp['id'].toString(),
+                        orElse: () => null,
+                      );
+                      final dec = hrDecisions[exp['id']];
+                      if (ea == null || dec == null) return const SizedBox.shrink();
+
+                      final claimedVal = double.tryParse(ea['claimed_amount']?.toString() ?? '0') ?? 0.0;
+                      final allowedVal = ea['allowed_amount'] != null
+                          ? (double.tryParse(ea['allowed_amount'].toString()) ?? 0.0)
+                          : null;
+                      final exceedsLimit = ea['exceeds_limit'] == true;
+                      final isWithinLimit = (allowedVal == null || claimedVal <= allowedVal) && !exceedsLimit;
+
+                      String allowedLabel = 'Allowed Amount';
+                      String allowedValueText = allowedVal != null ? '₹${allowedVal.toStringAsFixed(2)}' : 'No Cap';
+                      Color allowedColor = exceedsLimit ? const Color(0xFFF59E0B) : const Color(0xFF10B981);
+
+                      if (isFinance) {
+                        if (exp['finance_selected_amount'] != null) {
+                          allowedLabel = isFinanceHead ? 'Finance Exec Rec' : 'Finance Approved';
+                          allowedValueText = '₹${double.parse(exp['finance_selected_amount'].toString()).toStringAsFixed(2)}';
+                          allowedColor = const Color(0xFF10B981);
+                        } else if (exp['hr_selected_amount'] != null) {
+                          allowedLabel = 'HR Recommended';
+                          allowedValueText = '₹${double.parse(exp['hr_selected_amount'].toString()).toStringAsFixed(2)}';
+                          allowedColor = const Color(0xFFF59E0B);
+                        }
+                      } else if (isHR) {
+                        if (exp['hr_selected_amount'] != null) {
+                          allowedLabel = 'HR Approved';
+                          allowedValueText = '₹${double.parse(exp['hr_selected_amount'].toString()).toStringAsFixed(2)}';
+                          allowedColor = const Color(0xFF10B981);
+                        }
+                      }
+
+                      return Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.only(top: 20),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.shield_outlined,
+                                      size: 16,
+                                      color: isWithinLimit ? const Color(0xFF10B981) : const Color(0xFFF59E0B),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      isFinance ? "Finance Policy & Approval" : "HR Policy & Approval",
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: const Color(0xFF1E293B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Text(
+                                  'City: ${ea['city_type'] ?? 'Others'}',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                            const SizedBox(height: 12),
+                            
+                            if (exceedsLimit) ...[
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFEF2F2),
+                                  border: Border.all(color: const Color(0xFFFEE2E2)),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Icon(Icons.warning_amber_rounded, size: 16, color: Color(0xFFEF4444)),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Policy Violation: ${ea['policy_note'] ?? "Restricted travel mode, class, or vehicle type selected."}',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: const Color(0xFF991B1B),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Claimed',
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 9, color: const Color(0xFF64748B), fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '₹${claimedVal.toStringAsFixed(2)}',
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: const Color(0xFF334155)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          allowedLabel,
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 9, color: const Color(0xFF64748B), fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          allowedValueText,
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: allowedColor),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Policy details',
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 9, color: const Color(0xFF64748B), fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          ea['policy_note'] ?? 'No policy note.',
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w700, color: const Color(0xFF475569)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+
+                            if (isWithinLimit) ...[
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(10),
+                                margin: const EdgeInsets.only(bottom: 12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFECFDF5),
+                                  border: Border.all(color: const Color(0xFFA7F3D0)),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '✓ Claimed amount is within policy limit.',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF065F46),
+                                  ),
+                                ),
+                              ),
+                            ],
+                            Text(
+                              'Select Claim Approval Option:',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF475569),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () {
+                                      handleDecisionChange(exp['id'], 'source', 'claimed');
+                                      handleDecisionChange(exp['id'], 'amount', claimedVal.toString());
+                                    },
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: dec['source'] == 'claimed' ? const Color(0xFF1E293B) : Colors.white,
+                                      side: BorderSide(color: dec['source'] == 'claimed' ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                    ),
+                                    child: Text(
+                                      'Claimed (₹${claimedVal.toStringAsFixed(0)})',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: dec['source'] == 'claimed' ? Colors.white : const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () {
+                                      handleDecisionChange(exp['id'], 'source', 'allowed');
+                                      handleDecisionChange(exp['id'], 'amount', (allowedVal ?? claimedVal).toString());
+                                    },
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: dec['source'] == 'allowed' ? const Color(0xFF1E293B) : Colors.white,
+                                      side: BorderSide(color: dec['source'] == 'allowed' ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                    ),
+                                    child: Text(
+                                      'Allowed (₹${(allowedVal ?? claimedVal).toStringAsFixed(0)})',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: dec['source'] == 'allowed' ? Colors.white : const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () {
+                                      handleDecisionChange(exp['id'], 'source', 'manual');
+                                    },
+                                    style: OutlinedButton.styleFrom(
+                                      backgroundColor: dec['source'] == 'manual' ? const Color(0xFF1E293B) : Colors.white,
+                                      side: BorderSide(color: dec['source'] == 'manual' ? const Color(0xFF1E293B) : const Color(0xFFCBD5E1)),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      padding: const EdgeInsets.symmetric(vertical: 8),
+                                    ),
+                                    child: Text(
+                                      'Manual',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: dec['source'] == 'manual' ? Colors.white : const Color(0xFF475569),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            
+                            if (dec['source'] == 'manual') ...[
+                              TextField(
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                decoration: InputDecoration(
+                                  labelText: 'Approved Amount (₹)',
+                                  hintText: 'Enter custom amount',
+                                  labelStyle: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w700),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  errorText: dec['error'] != null && dec['error'].toString().isNotEmpty && !dec['error'].toString().contains('note') ? dec['error'] : null,
+                                ),
+                                controller: TextEditingController(text: dec['amount']?.toString() ?? '')..selection = TextSelection.fromPosition(
+                                  TextPosition(offset: (dec['amount']?.toString() ?? '').length),
+                                ),
+                                onChanged: (v) {
+                                  handleDecisionChange(exp['id'], 'amount', v);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+
+                            TextField(
+                              maxLines: 2,
+                              decoration: InputDecoration(
+                                labelText: dec['source'] == 'claimed' ? 'Policy Deviation Note (Optional)' : 'Policy Deviation Note (Mandatory)',
+                                labelStyle: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w700),
+                                hintText: 'Enter reason for policy deviation...',
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                errorText: dec['error'] != null && dec['error'].toString().isNotEmpty && dec['error'].toString().contains('note') ? dec['error'] : null,
+                              ),
+                              controller: TextEditingController(text: dec['note']?.toString() ?? '')..selection = TextSelection.fromPosition(
+                                TextPosition(offset: (dec['note']?.toString() ?? '').length),
+                              ),
+                              onChanged: (v) {
+                                handleDecisionChange(exp['id'], 'note', v);
+                              },
+                            ),
+                            const SizedBox(height: 12),
+
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: _isActionLoading ? null : () => saveExpenseDecision(exp['id']),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF10B981),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
+                                child: _isActionLoading
+                                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                                    : Text(
+                                        'Save Decision',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }(),
+                  ] else if (!widget.isHistory) ...[
                     const SizedBox(height: 16),
                     TextField(
                       onChanged: (v) => itemRemarks[exp['id'].toString()] = v,
@@ -5835,10 +6844,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                             child: Text(
                               'Reject Item',
                               style: GoogleFonts.plusJakartaSans(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.5,
-                              ),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.5),
                             ),
                           ),
                         ),
@@ -6005,17 +7013,25 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         .replaceFirst(RegExp(r"'$"), '');
 
     Widget imageWidget;
+    Widget largeImageWidget;
     try {
       if (path.startsWith('data:image')) {
         final base64String = path.split(',').last;
+        final bytes = base64Decode(base64String);
         imageWidget = Image.memory(
-          base64Decode(base64String),
+          bytes,
           fit: BoxFit.cover,
+        );
+        largeImageWidget = Image.memory(
+          bytes,
+          fit: BoxFit.contain,
         );
       } else if (path.startsWith('/9j/') ||
           path.startsWith('iVBORw0KG') ||
           (path.length > 300 && !path.contains('/') && !path.contains(':'))) {
-        imageWidget = Image.memory(base64Decode(path), fit: BoxFit.cover);
+        final bytes = base64Decode(path);
+        imageWidget = Image.memory(bytes, fit: BoxFit.cover);
+        largeImageWidget = Image.memory(bytes, fit: BoxFit.contain);
       } else {
         final String backendBase = ApiConstants.baseUrl;
         final String fullUrl = path.startsWith('http')
@@ -6027,6 +7043,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           errorBuilder: (c, e, s) =>
               const Icon(Icons.broken_image, size: 20, color: Colors.grey),
         );
+        largeImageWidget = Image.network(
+          fullUrl,
+          fit: BoxFit.contain,
+          errorBuilder: (c, e, s) =>
+              const Icon(Icons.broken_image, size: 20, color: Colors.grey),
+        );
       }
     } catch (e) {
       imageWidget = const Icon(
@@ -6034,6 +7056,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         size: 20,
         color: Colors.red,
       );
+      largeImageWidget = imageWidget;
     }
 
     return GestureDetector(
@@ -6050,7 +7073,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   panEnabled: true,
                   minScale: 0.5,
                   maxScale: 4.0,
-                  child: imageWidget,
+                  child: largeImageWidget,
                 ),
                 Positioned(
                   top: 10,

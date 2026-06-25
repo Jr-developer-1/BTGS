@@ -44,12 +44,13 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
         query = request.query_params.get('q', '').lower()
         from api_management.services import fetch_employee_data
         
-        if query:
-            # Fetch only matching subset directly via external API search (lightning fast, 0.2s)
-            response_data = fetch_employee_data(search=query, page_size=100)
-        else:
-            # Default to local global cache only if query is empty
-            response_data = fetch_employee_data(fetch_all_pages=True)
+        # Use local global cache first (fetch_all_pages=True) as it's much faster and avoids external API timeouts.
+        response_data = fetch_employee_data(fetch_all_pages=True)
+        
+        # If cache returned an error or is empty, fallback to searching via external API as a last resort
+        if not response_data or response_data.get('error'):
+            if query:
+                response_data = fetch_employee_data(search=query, page_size=100)
 
         results = []
         seen_positions = set()
@@ -57,6 +58,10 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
         if response_data and not response_data.get('error'):
             all_emps = response_data.get('results', [])
             for item in all_emps:
+                emp_proj_code = 'General'
+                if item.get('project') and item['project'].get('code') and item['project']['code'] != 'N/A':
+                    emp_proj_code = item['project']['code']
+
                 pos_list = []
                 if item.get('position'):
                     pos_list.append(item['position'])
@@ -84,7 +89,8 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
                                 "position_id": p_id,
                                 "position_name": display_name,
                                 "position_code": p_code,
-                                "department": p_dept
+                                "department": p_dept,
+                                "project_code": emp_proj_code
                             })
                             
         return Response(results[:30])
@@ -148,8 +154,41 @@ class FinanceWorkflowConfigViewSet(viewsets.ModelViewSet):
 
 class HRPositionConfigViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCustomAuthenticated]
-    queryset = HRPositionConfig.objects.all().order_by('position_name')
     serializer_class = HRPositionConfigSerializer
     pagination_class = None
+
+    def get_queryset(self):
+        project_code = self.request.query_params.get('project_code')
+        qs = HRPositionConfig.objects.all().order_by('sequence_order')
+        if project_code:
+            qs = qs.filter(project_code=project_code)
+        return qs
+
+    def perform_create(self, serializer):
+        project_code = serializer.validated_data.get('project_code', 'General')
+        if 'sequence_order' not in serializer.validated_data:
+            max_order = HRPositionConfig.objects.filter(project_code=project_code).aggregate(m=models.Max('sequence_order'))['m'] or 0
+            serializer.save(sequence_order=max_order + 1)
+        else:
+            serializer.save()
+
+    @action(detail=False, methods=['post'], url_path='reorder_steps')
+    def reorder_steps(self, request):
+        new_order_ids = request.data.get('ids', [])
+        if not new_order_ids:
+            return Response({"error": "List of IDs required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Dynamically resolve project_code from the first step ID
+        project_code = 'General'
+        first_step = HRPositionConfig.objects.filter(id=new_order_ids[0]).first()
+        if first_step:
+            project_code = first_step.project_code
+
+        with transaction.atomic():
+            HRPositionConfig.objects.filter(project_code=project_code).update(sequence_order=models.F('sequence_order') + 10000)
+            for index, step_id in enumerate(new_order_ids):
+                HRPositionConfig.objects.filter(id=step_id).update(sequence_order=index + 1)
+        
+        return Response({"message": "Order updated successfully"})
 
 

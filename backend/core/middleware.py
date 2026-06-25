@@ -51,6 +51,14 @@ class CustomAuthMiddleware:
                         session.save(update_fields=['last_activity'])
                         
                         user = session.user
+                        if not user.is_active or user.is_blocked_by_api:
+                            session.is_active = False
+                            session.logged_out_at = timezone.now()
+                            session.save()
+                            return JsonResponse(
+                                {'error': 'Your account has been deactivated. Kindly contact the administrator.'},
+                                status=401
+                            )
                         
                         # Dynamically resolve and set active_position_id on user instance
                         active_pos_id = request.headers.get('X-Active-Position-Id') or payload.get('active_position_id')
@@ -109,7 +117,6 @@ class ThreadLocalMiddleware:
             '/api/heartbeat',
             '/api/bot/chat',
             '/api/audit-logs/', 
-            '/api/login-history/', 
             '/api/audit-history',
             '/api/session-history'
         ]

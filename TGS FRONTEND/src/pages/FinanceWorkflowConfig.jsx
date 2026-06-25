@@ -70,6 +70,7 @@ const FinanceWorkflowConfig = () => {
             let payload = {
                 sequence_order: nextOrder,
                 can_edit_amount: true,
+                can_view_reports: false,
                 visibility_type: 'INBOX',
                 is_active: true
             };
@@ -154,7 +155,7 @@ const FinanceWorkflowConfig = () => {
                 <div>
                     <h1 style={{ fontSize: '28px', fontWeight: 'bold', color: '#0f172a', margin: '0 0 8px 0' }}>Finance Workflow Management</h1>
                     <p style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Shield size={16} /> Configure sequential approval levels and position-centric permissions for the finance team.
+                        <Shield size={16} /> Configure sequential approval levels and position-centric permissions. (Note: Expense Claims and Advances are always approval-based).
                     </p>
                 </div>
                 <button 
@@ -212,14 +213,15 @@ const FinanceWorkflowConfig = () => {
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>APPROVER TARGET</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CAN EDIT AMOUNT</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>VISIBILITY</th>
-                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>TRIP/TRAVEL TYPE</th>
-                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CONTROL MODE</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>TRIP/TRAVEL TYPE (PRE-TRAVEL)</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CONTROL MODE (PRE-TRAVEL)</th>
+                            <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>REPORT ACCESS</th>
                             <th style={{ padding: '16px 24px', color: '#64748b', fontWeight: '600', fontSize: '13px', textAlign: 'right' }}>ACTIONS</th>
                         </tr>
                     </thead>
                     <tbody>
                         {steps.length === 0 ? (
-                            <tr><td colSpan="7" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No approvers configured. Add one to start.</td></tr>
+                            <tr><td colSpan="8" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>No approvers configured. Add one to start.</td></tr>
                         ) : (
                             steps.map((step, idx) => (
                                 <tr key={step.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
@@ -293,6 +295,16 @@ const FinanceWorkflowConfig = () => {
                                             <option value="APPROVAL">Approval</option>
                                             <option value="MARK_READ">Mark as Read</option>
                                         </select>
+                                    </td>
+                                    <td style={{ padding: '16px 24px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: '8px' }}>
+                                            <input 
+                                                type="checkbox" 
+                                                checked={step.can_view_reports} 
+                                                onChange={(e) => updateStep(step.id, { can_view_reports: e.target.checked })}
+                                            />
+                                            <span style={{ fontSize: '14px' }}>{step.can_view_reports ? 'Yes' : 'No'}</span>
+                                        </label>
                                     </td>
                                     <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                                         <button 

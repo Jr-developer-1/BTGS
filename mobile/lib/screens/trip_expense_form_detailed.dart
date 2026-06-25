@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:io';
 import '../constants/api_constants.dart';
+import '../models/trip_model.dart';
 import '../services/trip_service.dart';
 import '../services/master_service.dart';
 import '../components/forensic_camera.dart';
@@ -15,11 +16,13 @@ class TripExpenseFormDetailedScreen extends StatefulWidget {
   final String category;
   final String tripId;
   final dynamic expenseData;
+  final bool hasAdditionalLuggage;
   const TripExpenseFormDetailedScreen({
     super.key,
     required this.category,
     required this.tripId,
     this.expenseData,
+    this.hasAdditionalLuggage = false,
   });
 
   @override
@@ -29,7 +32,29 @@ class TripExpenseFormDetailedScreen extends StatefulWidget {
 
 class _TripExpenseFormDetailedScreenState
     extends State<TripExpenseFormDetailedScreen> {
-  bool get _isTravelo => widget.tripId.toLowerCase().startsWith('its');
+  bool get _isTravelo {
+    if (!widget.tripId.toLowerCase().startsWith('its')) return false;
+    if (_trip != null) return _trip!.isBulkUpload;
+    if (widget.expenseData != null && widget.expenseData is Map) {
+      final descRaw = widget.expenseData['description'];
+      Map<String, dynamic> desc = {};
+      try {
+        if (descRaw is String && descRaw.startsWith('{')) {
+          desc = Map<String, dynamic>.from(jsonDecode(descRaw));
+        } else if (descRaw is Map) {
+          desc = Map<String, dynamic>.from(descRaw);
+        }
+      } catch (_) {}
+      final fromBulk =
+          desc['from_bulk_upload'] == true ||
+          desc['from_bulk_upload'] == 'true';
+      if (fromBulk) return true;
+    }
+    return false;
+  }
+
+  bool get _isFixedLocal => !widget.tripId.toLowerCase().startsWith('trp');
+
   bool _isProcessing = false;
   final picker = ImagePicker();
   final TripService _tripService = TripService();
@@ -61,6 +86,9 @@ class _TripExpenseFormDetailedScreenState
   List<String> _masterOperators = [];
   List<String> _masterProviders = [];
   List<String> _masterLocations = [];
+  List<String> _masterCities = [];
+  String? _accommodationPolicyWarning;
+  String? _foodPolicyWarning;
   List<Map<String, dynamic>> _masterLocalSubTypesRaw = [];
   bool get isStartFieldsComplete =>
       _originController.text.isNotEmpty &&
@@ -162,6 +190,9 @@ class _TripExpenseFormDetailedScreenState
   TimeOfDay _scheduledStartTime = TimeOfDay.now();
   TimeOfDay _scheduledEndTime = TimeOfDay.now();
   List<String> _auditTrail = [];
+  Map<String, dynamic>? _eligibility;
+  List<Map<String, dynamic>> _existingExpenses = [];
+  Trip? _trip;
 
   int? _batchId;
   int? _rowIndex;
@@ -181,6 +212,50 @@ class _TripExpenseFormDetailedScreenState
   List<String> _masterCabProviders = [];
   List<Map<String, dynamic>> _masterLocalProvidersRaw = [];
 
+  int _calculateGuestHouseNights() {
+    int totalNights = 0;
+    for (var r in _existingExpenses) {
+      final category = (r['category'] ?? '').toString().toLowerCase();
+      if (category == 'accommodation') {
+        var details = r['details'] ?? {};
+        if (details.isEmpty &&
+            r['description'] is String &&
+            r['description'].toString().startsWith('{')) {
+          try {
+            details = jsonDecode(r['description']);
+          } catch (_) {}
+        }
+        final accomType = (details['accomType'] ?? '').toString().toLowerCase();
+        if (accomType.contains('guest house') ||
+            accomType.contains('guesthouse') ||
+            accomType.contains('bavya')) {
+          final checkInStr = details['checkInDate']?.toString();
+          final checkOutStr = details['checkOutDate']?.toString();
+          if (checkInStr != null && checkOutStr != null) {
+            try {
+              final checkIn = DateTime.parse(checkInStr);
+              final checkOut = DateTime.parse(checkOutStr);
+              final nights = checkOut.difference(checkIn).inDays;
+              if (nights > 0) {
+                totalNights += nights;
+              }
+            } catch (_) {}
+          }
+        }
+      }
+    }
+    return totalNights;
+  }
+
+  bool _isLaundryApplicable() {
+    final int threshold =
+        int.tryParse(
+          (_eligibility?['laundry_days_threshold'] ?? 4).toString(),
+        ) ??
+        4;
+    return _calculateGuestHouseNights() >= threshold;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -190,18 +265,42 @@ class _TripExpenseFormDetailedScreenState
       if (widget.category == 'Local Travel') {
         _fetchRates();
       }
+      if (widget.category == 'Accommodation') {
+        if (_nightsController.text.isEmpty || _nightsController.text == '0') {
+          _calculateNights();
+        }
+      }
     } else {
       if (widget.category == 'Local Travel') {
-        _travelMode = 'Bike';
-        _travelSubType = 'Own Bike';
+        _travelMode = 'BIKE';
+        _travelSubType = 'OWN BIKE';
         _isPublicTransport = false;
         _fetchRates();
+      }
+      if (widget.category == 'Accommodation') {
+        _endDate = DateTime.now().add(const Duration(days: 1));
+        _scheduledEndDate = DateTime.now().add(const Duration(days: 1));
+        _calculateNights();
       }
     }
     _odoStartController.addListener(_updateFormTotal);
     _odoEndController.addListener(_updateFormTotal);
     _odoRateController.addListener(_updateFormTotal);
     _amountController.addListener(_updateFormTotal);
+
+    if (widget.category == 'Accommodation') {
+      _baseFareController.addListener(_updateFormTotal);
+      _earlyCheckInController.addListener(_updateFormTotal);
+      _lateCheckOutController.addListener(_updateFormTotal);
+      _nightsController.addListener(_updateAccommodationPolicyWarning);
+      _baseFareController.addListener(_updateAccommodationPolicyWarning);
+      _earlyCheckInController.addListener(_updateAccommodationPolicyWarning);
+      _lateCheckOutController.addListener(_updateAccommodationPolicyWarning);
+      _cityController.addListener(_updateAccommodationPolicyWarning);
+    }
+    if (widget.category == 'Food') {
+      _amountController.addListener(_updateFoodPolicyWarning);
+    }
   }
 
   void _updateFormTotal() {
@@ -212,7 +311,8 @@ class _TripExpenseFormDetailedScreenState
 
     if (widget.category == 'Local Travel') {
       final isOwnVehicle =
-          _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+          _travelSubType?.toUpperCase() == 'OWN CAR' ||
+          _travelSubType?.toUpperCase() == 'OWN BIKE';
 
       final start =
           double.tryParse(
@@ -257,6 +357,7 @@ class _TripExpenseFormDetailedScreenState
       if (_amountController.text != total.toStringAsFixed(2)) {
         _amountController.text = total.toStringAsFixed(2);
       }
+      _updateAccommodationPolicyWarning();
     }
 
     if (mounted) setState(() {});
@@ -279,8 +380,8 @@ class _TripExpenseFormDetailedScreenState
 
   void _updateRateForSubType(String? subType) {
     double? rate;
-    if (subType == 'Own Car') rate = _rate4W;
-    if (subType == 'Own Bike') rate = _rate2W;
+    if (subType?.toUpperCase() == 'OWN CAR') rate = _rate4W;
+    if (subType?.toUpperCase() == 'OWN BIKE') rate = _rate2W;
     _odoRateController.text = (rate ?? 0.0).toStringAsFixed(2);
   }
 
@@ -421,6 +522,7 @@ class _TripExpenseFormDetailedScreenState
         safeFetchRaw(_masterService.getOperatorsRaw()), // 19
         safeFetchRaw(_masterService.getProvidersRaw()), // 20
         safeFetchRaw(_masterService.getLocalProvidersRaw()), // 21
+        safeFetch(_masterService.getCitiesPool()), // 22
       ]);
 
       String toTC(String s) => s
@@ -482,6 +584,7 @@ class _TripExpenseFormDetailedScreenState
           _masterOperators = results[15] as List<String>;
           _masterProviders = results[16] as List<String>;
           _masterLocations = results[17] as List<String>;
+          _masterCities = results[22] as List<String>;
           _masterLocalSubTypesRaw = results[18] as List<Map<String, dynamic>>;
 
           // Process Raw Operators & Providers for mode-specific lists
@@ -520,6 +623,30 @@ class _TripExpenseFormDetailedScreenState
           _loadClasses();
         }
       }
+
+      final eligData = await _masterService.getMyEligibility();
+      List<Map<String, dynamic>> exps = [];
+      try {
+        exps = await _tripService.fetchExpenses(tripId: widget.tripId);
+      } catch (e) {
+        debugPrint('Error fetching existing expenses: $e');
+      }
+      Trip? fetchedTrip;
+      try {
+        fetchedTrip = await _tripService.fetchTripDetails(widget.tripId);
+      } catch (e) {
+        debugPrint('Error fetching trip details: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _eligibility = eligData;
+          _existingExpenses = exps;
+          _trip = fetchedTrip;
+        });
+        if (widget.category == 'Food') {
+          _updateFoodPolicyWarning();
+        }
+      }
     } catch (e) {
       debugPrint('Error in _loadMasters: $e');
     }
@@ -532,6 +659,562 @@ class _TripExpenseFormDetailedScreenState
       setState(() {
         _masterClasses = classes;
       });
+    }
+  }
+
+  String? _getPolicyWarning() {
+    if (_eligibility == null || _eligibility!['error'] != null) return null;
+
+    final travel = _eligibility!['travel'];
+    if (travel == null) return null;
+
+    final mode = _travelMode ?? '';
+    final modeClean = mode.trim().toLowerCase();
+    final classType = _travelClass ?? '';
+
+    if (widget.category == 'Local Travel') {
+      final localConv = travel['local_conveyance'];
+      if (localConv != null) {
+        if (localConv['allowed'] == false) {
+          return "Local Conveyance is not applicable for your role.";
+        }
+
+        final allowedTypeStr = (localConv['type']?.toString() ?? '')
+            .toLowerCase();
+        if (allowedTypeStr.isNotEmpty && allowedTypeStr != 'na') {
+          final subType = _travelSubType ?? '';
+          final subClean = subType.trim().toLowerCase();
+
+          if (modeClean.isNotEmpty || subClean.isNotEmpty) {
+            bool isAllowed = true;
+
+            // 1. If mode alone is selected but not subtype yet, check if mode is completely disallowed by policy
+            if (modeClean.isNotEmpty && subClean.isEmpty) {
+              if (allowedTypeStr.contains('company car') &&
+                  !allowedTypeStr.contains('4/3') &&
+                  !allowedTypeStr.contains('cab')) {
+                if (modeClean == 'bike' || modeClean == 'auto')
+                  isAllowed = false;
+              }
+              if (allowedTypeStr.contains('2 or 3 wheeler') ||
+                  allowedTypeStr.contains('2 or 3-wheeler')) {
+                if (modeClean == 'car') isAllowed = false;
+              }
+              if (allowedTypeStr.contains('cab') ||
+                  allowedTypeStr.contains('4/3-wheeler') ||
+                  allowedTypeStr.contains('4 or 3-wheeler')) {
+                if (modeClean == 'bike') isAllowed = false;
+              }
+            } else if (subClean.isNotEmpty) {
+              // Map actual UI subtype/mode values -> policy categories
+              final isOwnCar = subClean == 'own car';
+              final isOwnBike = subClean == 'own bike';
+              final isCompanyCar = subClean == 'company car';
+              final isCompanyBike = subClean == 'company bike';
+              final isPoolingCar =
+                  subClean == 'pooling' || subClean == 'pooling car';
+              final isOnlineCab = [
+                'uber',
+                'ola',
+                'app based cab',
+                'rental',
+                'self drive rental',
+                'cab',
+              ].any((k) => subClean.contains(k));
+              final isAuto = modeClean == 'auto' || subClean.contains('auto');
+              final isPublicTransport = modeClean == 'public transport';
+
+              // Policy: Company Car only (company car / pooling)
+              if (allowedTypeStr.contains('company car') &&
+                  !allowedTypeStr.contains('4/3') &&
+                  !allowedTypeStr.contains('cab')) {
+                if (isOwnCar || isOwnBike || isOnlineCab || isAuto) {
+                  isAllowed = false;
+                } else {
+                  isAllowed =
+                      isCompanyCar ||
+                      isPoolingCar ||
+                      isCompanyBike ||
+                      isPublicTransport;
+                }
+              }
+              // Policy: 2 or 3 Wheeler only
+              else if (allowedTypeStr.contains('2 or 3 wheeler') ||
+                  allowedTypeStr.contains('2 or 3-wheeler')) {
+                if (isOwnCar || isCompanyCar || isPoolingCar || isOnlineCab) {
+                  isAllowed = false;
+                }
+              }
+              // Policy: Online Cab / 4/3-Wheeler for Hire
+              else if (allowedTypeStr.contains('cab') ||
+                  allowedTypeStr.contains('4/3-wheeler') ||
+                  allowedTypeStr.contains('4 or 3-wheeler')) {
+                if (isOwnBike || isCompanyBike) {
+                  isAllowed = false;
+                } else if (isOwnCar) {
+                  isAllowed = false;
+                }
+              }
+            }
+
+            if (!isAllowed) {
+              final policyStr = localConv['type']?.toString() ?? '';
+              final firstPolicy = policyStr.split(',')[0].trim();
+              if (subClean.isEmpty && modeClean.isNotEmpty) {
+                return '"$mode" mode is not permitted for local conveyance for your role. Allowed: $firstPolicy.';
+              }
+              return '"$subType" is not permitted for local conveyance for your role. Allowed: $firstPolicy.';
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    bool allowedByPolicy = true;
+    String warningMsg = "";
+
+    bool isClassAllowed(
+      List<String> categoryClasses,
+      String? allowedLimitClass,
+      String? selectedClass,
+      String modeCategory,
+    ) {
+      if (allowedLimitClass == null || allowedLimitClass == 'NA') return true;
+      if (selectedClass == null || selectedClass.isEmpty) return true;
+
+      String clean(dynamic s) {
+        String str = (s?.toString() ?? '').toLowerCase().trim();
+        // ORDER MATTERS: check most-specific first to prevent 'iii a/c' matching 'i a/c'
+        if (str.contains('iii a/c') ||
+            str.contains('iiia/c') ||
+            str.contains('3 tier') ||
+            str.contains('(3a)') ||
+            str.contains('third')) {
+          return '3a';
+        }
+        if (str.contains('ii a/c') ||
+            str.contains('iia/c') ||
+            str.contains('2 tier') ||
+            str.contains('(2a)') ||
+            str.contains('second')) {
+          return '2a';
+        }
+        if (str.contains('first class') ||
+            str.contains('(1a)') ||
+            str.contains('1st') ||
+            str.contains('i a/c') ||
+            str.contains('ia/c')) {
+          return '1a';
+        }
+        if (str.contains('chair') ||
+            str.contains('(cc)') ||
+            str.contains('(ec)')) {
+          return 'cc';
+        }
+        if (str.contains('sleeper') || str.contains('(sl)')) {
+          return 'sl';
+        }
+        if (str.contains('sitting') || str.contains('(2s)')) {
+          return '2s';
+        }
+        if (str.contains('premium') && str.contains('economy')) {
+          return 'premium_economy';
+        }
+        if (str.contains('economy')) {
+          return 'economy';
+        }
+        if (str.contains('business')) {
+          return 'business';
+        }
+        return str
+            .replaceAll(RegExp(r'\s+'), '')
+            .replaceAll(RegExp(r'[\/-]'), '');
+      }
+
+      final selClean = clean(selectedClass);
+      final limitClean = clean(allowedLimitClass);
+
+      final isTrain = modeCategory == 'train';
+      final isFlight = modeCategory == 'flight';
+      final isBus = modeCategory == 'bus';
+
+      const trainOrder = ['2s', 'sl', 'cc', '3a', '2a', '1a'];
+      const flightOrder = [
+        'economy',
+        'premium_economy',
+        'business',
+        'first_class',
+      ];
+      const busOrder = ['non_ac', 'ac', 'sleeper', 'volvo'];
+
+      List<String> orderList = [];
+      if (isTrain) {
+        orderList = trainOrder;
+      } else if (isFlight) {
+        orderList = flightOrder;
+      } else if (isBus) {
+        orderList = busOrder;
+      } else {
+        orderList = categoryClasses.map((c) => clean(c)).toList();
+      }
+
+      final idxLimit = orderList.indexOf(limitClean);
+      final idxSelected = orderList.indexOf(selClean);
+
+      if (idxLimit != -1 && idxSelected != -1) {
+        return idxSelected <= idxLimit;
+      }
+      return true;
+    }
+
+    if (modeClean.contains('air') ||
+        modeClean.contains('flight') ||
+        modeClean.contains('fly')) {
+      final air = travel['air'];
+      if (air != null) {
+        if (air['allowed'] == false) {
+          warningMsg = "Travel mode Flight is not applicable for your role.";
+          allowedByPolicy = false;
+        } else if (!isClassAllowed(
+          const ['Economy', 'Premium Economy', 'Business Class', 'First Class'],
+          air['class'],
+          classType,
+          'flight',
+        )) {
+          warningMsg =
+              "Flight class ${classType.isEmpty ? 'selected' : classType} is not applicable for your role. Allowed class: ${air['class']}.";
+          allowedByPolicy = false;
+        }
+      }
+    } else if (modeClean.contains('train') || modeClean.contains('rail')) {
+      final train = travel['train'];
+      if (train != null) {
+        if (train['allowed'] == false) {
+          warningMsg = "Travel mode Train is not applicable for your role.";
+          allowedByPolicy = false;
+        } else if (!isClassAllowed(
+          const ['Sleeper', 'Chair Car', 'III A/c', 'II A/c', 'I A/c'],
+          train['class'],
+          classType,
+          'train',
+        )) {
+          warningMsg =
+              "Train class ${classType.isEmpty ? 'selected' : classType} is not applicable for your role. Allowed class: ${train['class']}.";
+          allowedByPolicy = false;
+        }
+      }
+    } else if (modeClean.contains('bus') || modeClean.contains('sleeper')) {
+      final bus = travel['bus'];
+      if (bus != null) {
+        if (bus['allowed'] == false) {
+          warningMsg = "Travel mode Bus is not applicable for your role.";
+          allowedByPolicy = false;
+        } else if (!isClassAllowed(
+          const ['Non-AC Bus', 'AC Bus', 'Sleeper Bus', 'Volvo'],
+          bus['class'],
+          classType,
+          'bus',
+        )) {
+          warningMsg =
+              "Bus class ${classType.isEmpty ? 'selected' : classType} is not applicable for your role. Allowed class: ${bus['class']}.";
+          allowedByPolicy = false;
+        }
+      }
+    } else if (modeClean.contains('car') ||
+        modeClean.contains('cab') ||
+        modeClean.contains('jeep') ||
+        modeClean.contains('van')) {
+      final car = travel['car'];
+      if (car != null && car['allowed'] == false) {
+        warningMsg = "Travel mode $mode is not applicable for your role.";
+        allowedByPolicy = false;
+      }
+    }
+
+    if (!allowedByPolicy) {
+      return warningMsg;
+    }
+    return null;
+  }
+
+  Future<void> _updateAccommodationPolicyWarning() async {
+    if (_eligibility == null || _eligibility!['error'] != null) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final acc = _eligibility!['accommodation'];
+    if (acc == null) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    if (widget.category != 'Accommodation') return;
+
+    final String accomType = _accomType ?? '';
+    final String bookingType = _bookingType ?? '';
+
+    // Only warn for Hotel Stay / Guest House (matches web rules)
+    if (!['Hotel Stay', 'Guest House'].contains(accomType)) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final String location = _cityController.text.trim();
+    if (location.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final double baseAmount = double.tryParse(_baseFareController.text) ?? 0.0;
+    final double earlyCheckIn =
+        double.tryParse(_earlyCheckInController.text) ?? 0.0;
+    final double lateCheckOut =
+        double.tryParse(_lateCheckOutController.text) ?? 0.0;
+    final double claimed = baseAmount + earlyCheckIn + lateCheckOut;
+
+    if (claimed <= 0) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final int nights = int.tryParse(_nightsController.text) ?? 1;
+    if (nights <= 0) {
+      if (mounted) {
+        setState(() {
+          _accommodationPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final String cityType = await _masterService.getCityType(location);
+
+    String? newWarning;
+
+    if (bookingType == 'Own Booking / Paid by Employee') {
+      double pct = 50.0;
+      double hotelLimit = 0.0;
+      if (cityType == 'State HQ') {
+        pct = (acc['own_stay_state_hq_pct'] ?? 50).toDouble();
+        hotelLimit = (acc['state_hq'] ?? 0).toDouble();
+      } else if (cityType == 'Districts') {
+        pct = (acc['own_stay_districts_pct'] ?? 50).toDouble();
+        hotelLimit = (acc['districts'] ?? 0).toDouble();
+      } else {
+        pct = (acc['own_stay_others_pct'] ?? 50).toDouble();
+        hotelLimit = (acc['others'] ?? 0).toDouble();
+      }
+
+      final allowedLimit = hotelLimit * nights * (pct / 100);
+
+      if (claimed > allowedLimit) {
+        newWarning =
+            "For own stay, you will only be reimbursed up to ${pct.toInt()}% of the lodging limit (Allowed: ₹${allowedLimit.toStringAsFixed(0)} for $nights night(s) in $cityType cities).";
+      }
+    } else {
+      double limit = 0.0;
+      if (cityType == 'State HQ') {
+        limit = (acc['state_hq'] ?? 0).toDouble();
+      } else if (cityType == 'Districts') {
+        limit = (acc['districts'] ?? 0).toDouble();
+      } else {
+        limit = (acc['others'] ?? 0).toDouble();
+      }
+
+      final totalLimit = limit * nights;
+      if (claimed > totalLimit) {
+        newWarning =
+            "Accommodation amount ₹${claimed.toStringAsFixed(0)} exceeds your policy limit of ₹${totalLimit.toStringAsFixed(0)} for $nights night(s) in $cityType cities (₹${limit.toStringAsFixed(0)}/night).";
+      }
+    }
+
+    final String? oldWarning = _accommodationPolicyWarning;
+    if (newWarning != null) {
+      if (newWarning != oldWarning) {
+        if (mounted) {
+          setState(() {
+            _accommodationPolicyWarning = newWarning;
+          });
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(newWarning),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } else {
+      if (oldWarning != null) {
+        if (mounted) {
+          setState(() {
+            _accommodationPolicyWarning = null;
+          });
+        }
+      }
+    }
+  }
+
+  Future<void> _updateFoodPolicyWarning() async {
+    if (_eligibility == null || _eligibility!['error'] != null) {
+      if (mounted) {
+        setState(() {
+          _foodPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    if (widget.category != 'Food') return;
+
+    final double limit =
+        double.tryParse((_eligibility!['daily_allowance'] ?? 0.0).toString()) ??
+        0.0;
+    if (limit <= 0) {
+      if (mounted) {
+        setState(() {
+          _foodPolicyWarning = null;
+        });
+      }
+      return;
+    }
+
+    final double claimed = double.tryParse(_amountController.text) ?? 0.0;
+
+    // Sum other Food expenses for the same date (excluding current edit item)
+    final String currentDateStr = DateFormat('yyyy-MM-dd').format(_startDate);
+    double otherFoodTotal = 0.0;
+    for (var exp in _existingExpenses) {
+      if (widget.expenseData != null &&
+          exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+        continue;
+      }
+      final category = (exp['category'] ?? '').toString().toLowerCase();
+      if (category == 'food' || category == 'food & refreshments') {
+        final expDate = exp['date'] ?? '';
+        if (expDate == currentDateStr) {
+          otherFoodTotal +=
+              double.tryParse((exp['amount'] ?? 0.0).toString()) ?? 0.0;
+        }
+      }
+    }
+
+    final double dailyFoodTotal = claimed + otherFoodTotal;
+
+    String? newWarning;
+    if (dailyFoodTotal > limit) {
+      final bool hasGuestHouseStay = _existingExpenses.any((r) {
+        final category = (r['category'] ?? '').toString().toLowerCase();
+        if (category == 'accommodation') {
+          var details = r['details'] ?? {};
+          if (details.isEmpty &&
+              r['description'] is String &&
+              r['description'].toString().startsWith('{')) {
+            try {
+              details = jsonDecode(r['description']);
+            } catch (_) {}
+          }
+          final accomType = (details['accomType'] ?? '')
+              .toString()
+              .toLowerCase();
+          return accomType.contains('guest house') ||
+              accomType.contains('guesthouse');
+        }
+        return false;
+      });
+
+      if (hasGuestHouseStay) {
+        newWarning =
+            "Daily food allowance for this date (₹${dailyFoodTotal.toStringAsFixed(0)}) exceeds the limit of ₹${limit.toStringAsFixed(0)}/day.";
+      } else {
+        newWarning =
+            "Daily allowance for this date (₹${dailyFoodTotal.toStringAsFixed(0)}) exceeds the limit of ₹${limit.toStringAsFixed(0)}/day.";
+      }
+    }
+
+    final String? oldWarning = _foodPolicyWarning;
+    if (newWarning != null) {
+      if (newWarning != oldWarning) {
+        if (mounted) {
+          setState(() {
+            _foodPolicyWarning = newWarning;
+          });
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(newWarning),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+    } else {
+      if (oldWarning != null) {
+        if (mounted) {
+          setState(() {
+            _foodPolicyWarning = null;
+          });
+        }
+      }
+    }
+  }
+
+  DateTime? _parseDateTime(String? dateStr, String? timeStr) {
+    if (dateStr == null || dateStr.isEmpty) return null;
+    try {
+      final baseDate = DateTime.parse(dateStr);
+      if (timeStr == null || timeStr.isEmpty) {
+        return baseDate;
+      }
+      String cleanTime = timeStr.trim().toUpperCase();
+      bool isPm = cleanTime.contains('PM');
+      bool isAm = cleanTime.contains('AM');
+      cleanTime = cleanTime.replaceAll(RegExp(r'[AM|PM|\s]'), '');
+      final parts = cleanTime.split(':');
+      if (parts.length >= 2) {
+        int hour = int.parse(parts[0]);
+        int minute = int.parse(parts[1]);
+        if (isPm && hour < 12) {
+          hour += 12;
+        } else if (isAm && hour == 12) {
+          hour = 0;
+        }
+        return DateTime(
+          baseDate.year,
+          baseDate.month,
+          baseDate.day,
+          hour,
+          minute,
+        );
+      }
+      return baseDate;
+    } catch (e) {
+      debugPrint('Error parsing date/time: $e');
+      return null;
     }
   }
 
@@ -550,8 +1233,59 @@ class _TripExpenseFormDetailedScreenState
         exp['description'] is String &&
         exp['description'].toString().startsWith('{')) {
       try {
-        details = jsonDecode(exp['description']);
+        details = Map<String, dynamic>.from(jsonDecode(exp['description']));
       } catch (e) {}
+    } else if (details is Map) {
+      details = Map<String, dynamic>.from(details);
+    }
+
+    // Restore stripped fields from top-level database columns
+    if (details['mode'] == null && exp['travel_mode'] != null) {
+      details['mode'] = exp['travel_mode'];
+    }
+    if (details['class'] == null && exp['class_type'] != null) {
+      details['class'] = exp['class_type'];
+    }
+    if (details['classType'] == null && exp['class_type'] != null) {
+      details['classType'] = exp['class_type'];
+    }
+    if (details['pnr'] == null && exp['booking_reference'] != null) {
+      details['pnr'] = exp['booking_reference'];
+    }
+    if (details['bookingRef'] == null && exp['booking_reference'] != null) {
+      details['bookingRef'] = exp['booking_reference'];
+    }
+    if (details['subType'] == null && exp['vehicle_type'] != null) {
+      details['subType'] = exp['vehicle_type'];
+    }
+    if (details['vehicleType'] == null && exp['vehicle_type'] != null) {
+      details['vehicleType'] = exp['vehicle_type'];
+    }
+    if (details['bookedBy'] == null && exp['booked_by'] != null) {
+      details['bookedBy'] = exp['booked_by'];
+    }
+    if (details['travelStatus'] == null && exp['cancellation_status'] != null) {
+      details['travelStatus'] = exp['cancellation_status'];
+    }
+    if (details['cancellationDate'] == null &&
+        exp['cancellation_date'] != null) {
+      details['cancellationDate'] = exp['cancellation_date'];
+    }
+    if (details['refundAmount'] == null && exp['refund_amount'] != null) {
+      details['refundAmount'] = exp['refund_amount'].toString();
+    }
+    if (details['cancellationReason'] == null &&
+        exp['cancellation_reason'] != null) {
+      details['cancellationReason'] = exp['cancellation_reason'];
+    }
+    if (details['odoStart'] == null && exp['odo_start'] != null) {
+      details['odoStart'] = exp['odo_start'].toString();
+    }
+    if (details['odoEnd'] == null && exp['odo_end'] != null) {
+      details['odoEnd'] = exp['odo_end'].toString();
+    }
+    if (details['totalKm'] == null && exp['distance'] != null) {
+      details['totalKm'] = exp['distance'].toString();
     }
 
     _batchId = details['batch_id'] != null
@@ -562,7 +1296,9 @@ class _TripExpenseFormDetailedScreenState
         : null;
     _fromBulkUpload =
         details['from_bulk_upload'] == true ||
-        details['from_bulk_upload'] == 'true';
+        details['from_bulk_upload'] == 'true' ||
+        exp['from_bulk_upload'] == true ||
+        exp['from_bulk_upload'] == 'true';
     _isDeviated =
         details['is_deviated'] == true ||
         details['is_deviated'] == 'true' ||
@@ -653,7 +1389,7 @@ class _TripExpenseFormDetailedScreenState
     _bookingType = details['bookingType'];
     _bookingSource = details['bookingSource'];
     _incidentalType = details['incidentalType'];
-    _cityController.text = details['location'] ?? '';
+    _cityController.text = details['location'] ?? details['city'] ?? '';
     _invoiceNoController.text = details['invoiceNo'] ?? '';
     _reasonController.text = details['otherReason'] ?? '';
     _jobReportController.text = details['notes'] ?? details['purpose'] ?? '';
@@ -801,8 +1537,8 @@ class _TripExpenseFormDetailedScreenState
 
       // If incidentals are included in the main amount, subtract them for the fare field display
       if (_incidentals.isNotEmpty &&
-          _travelSubType != 'Own Car' &&
-          _travelSubType != 'Own Bike') {
+          _travelSubType?.toUpperCase() != 'OWN CAR' &&
+          _travelSubType?.toUpperCase() != 'OWN BIKE') {
         double totalAmount =
             double.tryParse(exp['amount']?.toString() ?? '0') ?? 0.0;
         double incidentalSum = 0.0;
@@ -849,6 +1585,27 @@ class _TripExpenseFormDetailedScreenState
         _endTime = _parseTime(timing['actualTime'].toString());
       else
         _endTime = _startTime; // Fallback to start time so it's not "now"
+    } else if (widget.category == 'Travel' ||
+        widget.category == 'Outstation Travel') {
+      if (details['travelIncidentals'] is List) {
+        _incidentals = List<Map<String, dynamic>>.from(
+          details['travelIncidentals'],
+        );
+      }
+      // If incidentals are included in the main amount, subtract them for the fare field display
+      if (_incidentals.isNotEmpty) {
+        double totalAmount =
+            double.tryParse(exp['amount']?.toString() ?? '0') ?? 0.0;
+        double incidentalSum = 0.0;
+        for (var inc in _incidentals) {
+          incidentalSum +=
+              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+        }
+        double baseAmount = totalAmount - incidentalSum;
+        _amountController.text = baseAmount > 0
+            ? baseAmount.toStringAsFixed(2)
+            : '0.00';
+      }
     }
   }
 
@@ -925,12 +1682,1023 @@ class _TripExpenseFormDetailedScreenState
   }
 
   void _calculateNights() {
-    final diff = _endDate.difference(_startDate).inDays;
-    _nightsController.text = diff.clamp(1, 100).toString();
+    final startOnlyDate = DateTime(
+      _startDate.year,
+      _startDate.month,
+      _startDate.day,
+    );
+    final endOnlyDate = DateTime(_endDate.year, _endDate.month, _endDate.day);
+    int diff = endOnlyDate.difference(startOnlyDate).inDays;
+
+    // Fallback to scheduled check-in/out dates if actual difference is <= 0
+    if (diff <= 0) {
+      final schedStart = DateTime(
+        _scheduledStartDate.year,
+        _scheduledStartDate.month,
+        _scheduledStartDate.day,
+      );
+      final schedEnd = DateTime(
+        _scheduledEndDate.year,
+        _scheduledEndDate.month,
+        _scheduledEndDate.day,
+      );
+      final schedDiff = schedEnd.difference(schedStart).inDays;
+      if (schedDiff > 0) {
+        diff = schedDiff;
+      }
+    }
+
+    _nightsController.text = diff.clamp(0, 100).toString();
   }
 
   Future<void> _submitEntry() async {
+    if (widget.category == 'Travel' || widget.category == 'Outstation Travel') {
+      if (_travelMode == null || _travelMode!.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Travel Mode is required'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_bookedBy == null || _bookedBy!.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Booked By is required'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_bookedBy == 'Agent' && _bookingIdController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Booking ID is required for Agent booking'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_originController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('From Location is required'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_destController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('To Location is required'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_travelMode == 'Flight') {
+        if (_travelNoController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Flight Number is required'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (_travelClass == null || _travelClass!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Travel Class is required'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else if (_travelMode == 'Train') {
+        if (_travelClass == null || _travelClass!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Travel Class is required'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else if (_travelMode == 'Bus') {
+        if (_travelClass == null || _travelClass!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Bus Type/Class is required'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      if (_bookedBy != 'Company Booked') {
+        if (_amountController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ticket Fare/Amount is required'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      // --- DATE & TIME OVERLAP VALIDATION FOR OUTSTATION TRAVEL ---
+      final newDep = DateTime(
+        _startDate.year,
+        _startDate.month,
+        _startDate.day,
+        _startTime.hour,
+        _startTime.minute,
+      );
+      final newArr = DateTime(
+        _endDate.year,
+        _endDate.month,
+        _endDate.day,
+        _endTime.hour,
+        _endTime.minute,
+      );
+
+      if (newArr.isBefore(newDep) || newArr == newDep) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Arrival Date & Time must be later than Departure Date & Time',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      for (var exp in _existingExpenses) {
+        // Outstation travel is stored with category='Others' (same as web).
+        // Identify it by a non-empty travel_mode field, which is only populated
+        // for outstation travel records (both from mobile and web).
+        final travelModeRaw = (exp['travel_mode'] ?? '').toString().trim();
+        if (travelModeRaw.isEmpty) {
+          continue;
+        }
+
+        // Skip self when editing
+        if (widget.expenseData != null &&
+            exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+          continue;
+        }
+
+        var details = exp['details'] ?? {};
+        if (details.isEmpty &&
+            exp['description'] is String &&
+            exp['description'].toString().startsWith('{')) {
+          try {
+            details = jsonDecode(exp['description']);
+          } catch (_) {}
+        }
+
+        final String? extDepDate = details['depDate'] ?? exp['date'];
+        final String? extDepTime =
+            details['boardingTime'] ?? details['depTime'];
+        final String? extArrDate = details['arrDate'] ?? extDepDate;
+        final String? extArrTime = details['actualTime'] ?? details['arrTime'];
+
+        final extDep = _parseDateTime(extDepDate, extDepTime);
+        final extArr = _parseDateTime(extArrDate, extArrTime);
+
+        if (extDep != null && extArr != null) {
+          if (newDep.isBefore(extArr) && newArr.isAfter(extDep)) {
+            final String mode = details['mode'] ?? 'Travel';
+            final String from = details['origin'] ?? 'Unknown';
+            final String to = details['destination'] ?? 'Unknown';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Overlap Error: Segment overlaps with existing $mode journey ($from to $to) from '
+                  '${DateFormat('yyyy-MM-dd HH:mm').format(extDep)} to ${DateFormat('yyyy-MM-dd HH:mm').format(extArr)}.',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+        }
+      }
+    } else if (widget.category == 'Food') {
+      if (_mealType == null || _mealType!.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select Meal Type.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_mealCategory == null || _mealCategory!.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select Meal Category.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final isSelfMeal = _mealCategory == 'Self Meal';
+      final sourceLower = _mealSource?.toLowerCase() ?? '';
+      if (isSelfMeal) {
+        if (_mealSource == null || _mealSource!.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please select Meal Source.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (sourceLower == 'online' &&
+            (_mealProvider == null || _mealProvider!.trim().isEmpty)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Provider is required for Online meal source.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (sourceLower == 'hotel' &&
+            _hotelNameController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Hotel Name is required.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (sourceLower == 'restaurant' &&
+            _restaurantController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Restaurant Name is required.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (sourceLower == 'online' &&
+            _hotelNameController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Hotel/Outlet Name is required for Online meal source.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final double amt = double.tryParse(_amountController.text) ?? 0.0;
+        if (amt <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Amount must be greater than 0 for Self Meal.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else {
+        final double amt = double.tryParse(_amountController.text) ?? 0.0;
+        if (amt != 0.0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Amount must be 0 for Client Hosted and Working Meal.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      if (['Breakfast', 'Lunch', 'Dinner'].contains(_mealType)) {
+        final String currentDateStr = DateFormat(
+          'yyyy-MM-dd',
+        ).format(_startDate);
+        for (var exp in _existingExpenses) {
+          if (widget.expenseData != null &&
+              exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+            continue;
+          }
+          final category = (exp['category'] ?? '').toString().toLowerCase();
+          if (category == 'food' || category == 'food & refreshments') {
+            var details = exp['details'] ?? {};
+            if (details.isEmpty &&
+                exp['description'] is String &&
+                exp['description'].toString().startsWith('{')) {
+              try {
+                details = jsonDecode(exp['description']);
+              } catch (_) {}
+            }
+            final String? expMealType = details['mealType'];
+            final String? expDateStr = exp['date'] ?? details['date'];
+            if (expDateStr == currentDateStr && expMealType == _mealType) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'A $_mealType entry already exists for $currentDateStr. Only one allowed per day.',
+                  ),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+          }
+        }
+      }
+
+      final double mealTimeVal = _startTime.hour + (_startTime.minute / 60.0);
+      if (_mealType == 'Breakfast' && (mealTimeVal < 6 || mealTimeVal > 11)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Breakfast time should be between 06:00 and 11:00.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (_mealType == 'Lunch' &&
+          (mealTimeVal < 12 || mealTimeVal > 16)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Lunch time should be between 12:00 and 16:00.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      } else if (_mealType == 'Dinner' && mealTimeVal < 19) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Dinner time should be after 19:00.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } else if (widget.category == 'Accommodation') {
+      if (_accomType == null || _accomType!.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a Stay Type.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final String accomTypeLower = _accomType!.toLowerCase();
+      final bool isGuestHouse =
+          accomTypeLower.contains('guest house') ||
+          accomTypeLower.contains('guesthouse');
+
+      if (!isGuestHouse) {
+        if (_bookingType == null || _bookingType!.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please select a Booking Type.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (_bookingType != 'Walkin' &&
+            (_bookingSource == null || _bookingSource!.trim().isEmpty)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please select a Booking Source.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (_bookingType != 'Company Booking') {
+          final double amount = double.tryParse(_amountController.text) ?? 0.0;
+          if (amount <= 0) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Amount must be greater than 0.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+        }
+      }
+
+      final bool needsHotelName = [
+        'Hotel Stay',
+        'Guest House',
+      ].contains(_accomType);
+      if (needsHotelName && _hotelNameController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Please provide the ${_accomType == 'Guest House' ? 'Guest House Info' : 'Hotel Name'}.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      if (_accomType != 'No Stay') {
+        if (_cityController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please select a Location.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      // Scheduled check-out cannot be before check-in
+      final scheduledCheckIn = DateTime(
+        _scheduledStartDate.year,
+        _scheduledStartDate.month,
+        _scheduledStartDate.day,
+        _scheduledStartTime.hour,
+        _scheduledStartTime.minute,
+      );
+      final scheduledCheckOut = DateTime(
+        _scheduledEndDate.year,
+        _scheduledEndDate.month,
+        _scheduledEndDate.day,
+        _scheduledEndTime.hour,
+        _scheduledEndTime.minute,
+      );
+      if (scheduledCheckOut.isBefore(scheduledCheckIn) ||
+          scheduledCheckOut == scheduledCheckIn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Scheduled check-out date cannot be before scheduled check-in date.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // Check-out date cannot be before check-in date
+      final actualCheckIn = DateTime(
+        _startDate.year,
+        _startDate.month,
+        _startDate.day,
+        _startTime.hour,
+        _startTime.minute,
+      );
+      final actualCheckOut = DateTime(
+        _endDate.year,
+        _endDate.month,
+        _endDate.day,
+        _endTime.hour,
+        _endTime.minute,
+      );
+      if (actualCheckOut.isBefore(actualCheckIn) ||
+          actualCheckOut == actualCheckIn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Actual check-out date cannot be before actual check-in date.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // STAY DURATION VS COST
+      final diffDays = actualCheckOut.difference(actualCheckIn).inDays;
+      final double totalAmount = double.tryParse(_amountController.text) ?? 0.0;
+      final dailyCost = totalAmount / (diffDays > 0 ? diffDays : 1);
+      if (dailyCost < 100 && totalAmount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Daily stay cost seems unusually low (₹${dailyCost.toStringAsFixed(2)}). Please verify.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+
+      // OVERLAP VALIDATION FOR ACCOMMODATION
+      for (var exp in _existingExpenses) {
+        final category = (exp['category'] ?? '').toString().toLowerCase();
+        if (category != 'accommodation') {
+          continue;
+        }
+
+        // Skip self when editing
+        if (widget.expenseData != null &&
+            exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+          continue;
+        }
+
+        var details = exp['details'] ?? {};
+        if (details.isEmpty &&
+            exp['description'] is String &&
+            exp['description'].toString().startsWith('{')) {
+          try {
+            details = jsonDecode(exp['description']);
+          } catch (_) {}
+        }
+
+        final String? extInDate =
+            details['actualCheckInDate'] ?? details['checkIn'] ?? exp['date'];
+        final String? extInTime =
+            details['actualCheckInTime'] ?? details['checkInTime'];
+        final String? extOutDate =
+            details['actualCheckOutDate'] ?? details['checkOut'] ?? extInDate;
+        final String? extOutTime =
+            details['actualCheckOutTime'] ?? details['checkOutTime'];
+
+        final extIn = _parseDateTime(extInDate, extInTime);
+        final extOut = _parseDateTime(extOutDate, extOutTime);
+
+        if (extIn != null && extOut != null) {
+          if (actualCheckIn.isBefore(extOut) && actualCheckOut.isAfter(extIn)) {
+            final String stayType = details['accomType'] ?? 'Accommodation';
+            final String hotelName = details['hotelName'] ?? 'Unknown';
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Overlap Error: Stay period overlaps with existing stay ($stayType - $hotelName) from '
+                  '${DateFormat('yyyy-MM-dd HH:mm').format(extIn)} to ${DateFormat('yyyy-MM-dd HH:mm').format(extOut)}.',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+        }
+      }
+    } else if (widget.category == 'Local Travel') {
+      final modeUpper = _travelMode?.toUpperCase() ?? '';
+      final subTypeUpper = _travelSubType?.toUpperCase() ?? '';
+      final isNonDefault =
+          !_isPublicTransport &&
+          (modeUpper.isNotEmpty &&
+              (modeUpper != 'BIKE' || subTypeUpper != 'OWN BIKE'));
+
+      if (isNonDefault && _reasonController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please enter a reason for selecting non-default travel mode or subtype.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      if (_travelMode == null || _travelMode!.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a Local Travel Mode.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final modeLowerCase = _travelMode!.toLowerCase();
+      final requiresSubType =
+          modeLowerCase.contains('car') ||
+          modeLowerCase.contains('bike') ||
+          modeLowerCase == 'auto';
+      if (requiresSubType &&
+          (_travelSubType == null || _travelSubType!.trim().isEmpty)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Please select a Sub-Type for $_travelMode.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final subTypeLower = _travelSubType?.toLowerCase() ?? '';
+      final isOwnVehicle =
+          subTypeLower == 'own car' || subTypeLower == 'own bike';
+
+      if (subTypeLower == 'ride hailing' || modeLowerCase == 'walk') {
+        if (_originController.text.trim().isEmpty ||
+            _destController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                subTypeLower == 'ride hailing'
+                    ? 'Pickup and Drop locations are required for Ride Hailing.'
+                    : 'From and To locations are required for Walk entries.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      if (modeLowerCase == 'walk') {
+        final double amt = double.tryParse(_amountController.text) ?? 0.0;
+        if (amt > 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Walk mode cannot have an associated cost.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      if (subTypeLower == 'own car') {
+        final startVal = _odoStartController.text.trim();
+        final endVal = _odoEndController.text.trim();
+        if (startVal.isEmpty || endVal.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Both start and end odometer readings are required for Own Car.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final double? startOdo = double.tryParse(startVal);
+        final double? endOdo = double.tryParse(endVal);
+        if (startOdo == null || endOdo == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Odometer readings must be numeric.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (endOdo <= startOdo) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'End Odometer should be greater than Start Odometer.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else if (subTypeLower == 'self drive rental' ||
+          subTypeLower == 'own bike') {
+        final startVal = _odoStartController.text.trim();
+        final endVal = _odoEndController.text.trim();
+        if (startVal.isNotEmpty && endVal.isNotEmpty) {
+          final double? startOdo = double.tryParse(startVal);
+          final double? endOdo = double.tryParse(endVal);
+          if (startOdo != null && endOdo != null && endOdo <= startOdo) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('ODO End must be greater than ODO Start.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+        }
+      }
+
+      // --- Cadre max-mileage validation (fetched dynamically from admin eligibility rules) ---
+      final double _maxMileageKm =
+          double.tryParse(
+            (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+      if (_maxMileageKm > 0.0) {
+        final String _startOdoVal = _odoStartController.text.trim();
+        final String _endOdoVal = _odoEndController.text.trim();
+        if (_startOdoVal.isNotEmpty && _endOdoVal.isNotEmpty) {
+          final double? _parsedStart = double.tryParse(_startOdoVal);
+          final double? _parsedEnd = double.tryParse(_endOdoVal);
+          if (_parsedStart != null && _parsedEnd != null) {
+            final double _travelledKm = _parsedEnd - _parsedStart;
+            if (_travelledKm > _maxMileageKm) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Odometer distance (${_travelledKm.toStringAsFixed(2)} km) exceeds '
+                    'your cadre entitlement limit of ${_maxMileageKm.toStringAsFixed(2)} km. '
+                    'Please correct the end odometer reading.',
+                  ),
+                  backgroundColor: Colors.red[700],
+                  duration: const Duration(seconds: 4),
+                ),
+              );
+              return;
+            }
+          }
+        }
+      }
+
+      if (!isOwnVehicle && modeLowerCase != 'walk') {
+        final double amt = double.tryParse(_amountController.text) ?? 0.0;
+        if (amt <= 0) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Fare Amount is required.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      // Check for overlap with active long distance travel
+      final localStart = DateTime(
+        _startDate.year,
+        _startDate.month,
+        _startDate.day,
+        _startTime.hour,
+        _startTime.minute,
+      );
+      final localEnd = DateTime(
+        _endDate.year,
+        _endDate.month,
+        _endDate.day,
+        _endTime.hour,
+        _endTime.minute,
+      );
+
+      if (localEnd.isBefore(localStart) || localEnd == localStart) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('End Time must be greater than Start Time.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      for (var exp in _existingExpenses) {
+        final category = (exp['category'] ?? '').toString().toLowerCase();
+        if (category == 'travel' ||
+            category == 'outstation travel' ||
+            (category == 'others' &&
+                (exp['travel_mode'] ?? '').toString().trim().isNotEmpty)) {
+          if (widget.expenseData != null &&
+              exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+            continue;
+          }
+          var details = exp['details'] ?? {};
+          if (details.isEmpty &&
+              exp['description'] is String &&
+              exp['description'].toString().startsWith('{')) {
+            try {
+              details = jsonDecode(exp['description']);
+            } catch (_) {}
+          }
+          final String? extDepDate = details['depDate'] ?? exp['date'];
+          final String? extDepTime =
+              details['boardingTime'] ?? details['depTime'];
+          final String? extArrDate = details['arrDate'] ?? extDepDate;
+          final String? extArrTime =
+              details['actualTime'] ?? details['arrTime'];
+
+          final extDep = _parseDateTime(extDepDate, extDepTime);
+          final extArr = _parseDateTime(extArrDate, extArrTime);
+
+          if (extDep != null && extArr != null) {
+            if (localStart.isBefore(extArr) && localEnd.isAfter(extDep)) {
+              final String mode = details['mode'] ?? 'Travel';
+              final String from = details['origin'] ?? 'Unknown';
+              final String to = details['destination'] ?? 'Unknown';
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Overlap Warning: Local Travel overlaps with your $mode journey ($from to $to) from '
+                    '${DateFormat('yyyy-MM-dd HH:mm').format(extDep)} to ${DateFormat('yyyy-MM-dd HH:mm').format(extArr)}.',
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // --- INCIDENTAL OTHERS & PORTER CHARGES VALIDATION ---
+    for (var inc in _incidentals) {
+      final category = (inc['category'] ?? '').toString().toLowerCase();
+      if (category == 'others' || category == 'other') {
+        final otherDesc = (inc['otherDescription'] ?? '').toString().trim();
+        if (otherDesc.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Please specify the incidental type for 'Others'."),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+      if ((category == 'porter charges' || category == 'porter') &&
+          !widget.hasAdditionalLuggage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Porter Charges are only allowed if "Additional Luggage" was checked in the Trip Story.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (category.contains('laundry') && !_isLaundryApplicable()) {
+        final int threshold =
+            int.tryParse(
+              (_eligibility?['laundry_days_threshold'] ?? 4).toString(),
+            ) ??
+            4;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least $threshold nights.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+
+    final mainCategory = widget.category.toLowerCase();
+    if (mainCategory == 'incidental' || mainCategory.contains('incidental')) {
+      final category = (_incidentalType ?? '').toString().toLowerCase();
+      if ((category == 'porter charges' || category == 'porter') &&
+          !widget.hasAdditionalLuggage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Porter Charges are only allowed if "Additional Luggage" was checked in the Trip Story.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (category.contains('laundry') && !_isLaundryApplicable()) {
+        final int threshold =
+            int.tryParse(
+              (_eligibility?['laundry_days_threshold'] ?? 4).toString(),
+            ) ??
+            4;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least $threshold nights.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+
     if (!_formKey.currentState!.validate()) return;
+
+    // --- TRIP DATE RANGE VALIDATION ---
+    if (_trip != null) {
+      try {
+        if (_trip!.startDate.isNotEmpty && _trip!.endDate.isNotEmpty) {
+          final tripStart = DateTime.parse(_trip!.startDate);
+          final tripEnd = DateTime.parse(_trip!.endDate);
+
+          // Subtract 1 day for grace period from start, add 1 day to end
+          final allowedStart = DateTime(
+            tripStart.year,
+            tripStart.month,
+            tripStart.day,
+          ).subtract(const Duration(days: 1));
+          final allowedEnd = DateTime(
+            tripEnd.year,
+            tripEnd.month,
+            tripEnd.day,
+            23,
+            59,
+            59,
+          ).add(const Duration(days: 1));
+
+          // Check main expense date (_startDate)
+          final expenseDateOnly = DateTime(
+            _startDate.year,
+            _startDate.month,
+            _startDate.day,
+          );
+          if (expenseDateOnly.isBefore(allowedStart) ||
+              expenseDateOnly.isAfter(allowedEnd)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Selected date (${DateFormat('yyyy-MM-dd').format(_startDate)}) is outside trip range. '
+                  'Only trip dates +/- 1 day grace allowed (${_trip!.startDate} to ${_trip!.endDate}).',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+
+          // Check Accommodation Check-In and Check-Out dates
+          if (widget.category == 'Accommodation' && _accomType != 'No Stay') {
+            final checkInDateOnly = DateTime(
+              _startDate.year,
+              _startDate.month,
+              _startDate.day,
+            );
+            final checkOutDateOnly = DateTime(
+              _endDate.year,
+              _endDate.month,
+              _endDate.day,
+            );
+
+            if (checkInDateOnly.isBefore(allowedStart) ||
+                checkInDateOnly.isAfter(allowedEnd)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Check-In date is outside trip range.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            if (checkOutDateOnly.isBefore(allowedStart) ||
+                checkOutDateOnly.isAfter(allowedEnd)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Check-Out date is outside trip range.'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Error parsing trip dates for validation: $e');
+      }
+    }
+
+    // Bill/Receipt validation matching web parity:
+    // Mandatory for all categories when amount is entered (amount > 0) except:
+    // 1. Incidental category
+    // 2. Accommodation under Guest House stay type
+    // 3. Local Travel with odometer-based subtypes (Own Bike, Company Bike, Own Car, Company Car)
+    final double amtVal = double.tryParse(_amountController.text) ?? 0.0;
+    final String catLower = widget.category.toLowerCase();
+    final bool isGuestHouse =
+        catLower == 'accommodation' &&
+        (_accomType != null &&
+            (_accomType!.toLowerCase().contains('guest house') ||
+                _accomType!.toLowerCase().contains('guesthouse')));
+    final bool isOdometerBased =
+        catLower == 'local travel' &&
+        (_travelSubType != null &&
+            [
+              'own bike',
+              'company bike',
+              'own car',
+              'company car',
+            ].contains(_travelSubType!.toLowerCase()));
+
+    if (catLower != 'incidental' && !isGuestHouse && !isOdometerBased) {
+      if (amtVal > 0 && _expenseBills.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please upload a bill as amount is entered.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
 
     // --- ODO VALIDATION: If reading exists, image must exist ---
     if (widget.category == 'Local Travel' && !_isPublicTransport) {
@@ -965,7 +2733,8 @@ class _TripExpenseFormDetailedScreenState
 
       if (widget.category == 'Local Travel') {
         final isOwnVehicle =
-            _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+            _travelSubType?.toUpperCase() == 'OWN CAR' ||
+            _travelSubType?.toUpperCase() == 'OWN BIKE';
 
         double startOdo =
             double.tryParse(
@@ -987,7 +2756,7 @@ class _TripExpenseFormDetailedScreenState
         }
 
         if (isOwnVehicle) {
-          final rate = _travelSubType == 'Own Car'
+          final rate = _travelSubType?.toUpperCase() == 'OWN CAR'
               ? (_rate4W ?? double.tryParse(_odoRateController.text) ?? 0.0)
               : (_rate2W ?? double.tryParse(_odoRateController.text) ?? 0.0);
 
@@ -1023,7 +2792,9 @@ class _TripExpenseFormDetailedScreenState
         'booking_reference': _pnrController.text,
         'refundable_flag': false, // or add a toggle if needed in UI
         'meal_included_flag': _mealIncluded,
-        'vehicle_type': _vehicleType,
+        'vehicle_type': widget.category == 'Local Travel'
+            ? _travelSubType
+            : _vehicleType,
         'odo_start': double.tryParse(
           _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
         ),
@@ -1118,6 +2889,7 @@ class _TripExpenseFormDetailedScreenState
         'accomType': _accomType,
         'hotelName': _hotelNameController.text,
         'city': _cityController.text,
+        'location': _cityController.text,
         'bookingType': _bookingType,
         'bookingSource': _bookingSource,
         'bookingId': _bookingIdController.text,
@@ -1203,6 +2975,7 @@ class _TripExpenseFormDetailedScreenState
         'mode': _travelMode,
         'subType': _travelSubType,
         'isPublicTransport': _isPublicTransport,
+        'otherReason': _reasonController.text,
         'remainingRoute': _remainingRouteController.text,
         'odoStart': _isPublicTransport ? '' : _odoStartController.text,
         'odoEnd': _isPublicTransport ? '' : _odoEndController.text,
@@ -1294,8 +3067,10 @@ class _TripExpenseFormDetailedScreenState
                 _buildIncidentalForm(),
 
               if (!(widget.category == 'Local Travel' &&
-                  _isTravelo &&
-                  !_isPublicTransport))
+                      _isTravelo &&
+                      !_isPublicTransport) &&
+                  widget.category != 'Travel' &&
+                  widget.category != 'Outstation Travel')
                 _buildAttachmentSection(),
               const SizedBox(height: 40),
               SizedBox(
@@ -1335,111 +3110,17 @@ class _TripExpenseFormDetailedScreenState
   Widget _buildTravelForm() {
     return Column(
       children: [
+        // 1. MODE & BOOKING
         _buildWebCard(
-          title: 'BOOKING DETAILS',
-          icon: Icons.confirmation_number_outlined,
-          color: Colors.blue,
+          title: 'Mode & Booking',
+          icon: Icons.flight_takeoff_rounded,
+          color: const Color(0xFF0D9488),
           children: [
             Row(
               children: [
                 Expanded(
                   child: _buildDropdownMini(
-                    'BOOKED BY',
-                    _bookedBy,
-                    _masterBookingTypes,
-                    (v) => setState(() => _bookedBy = v),
-                    icon: Icons.person_outline_rounded,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTextFieldMini(
-                    'BOOKING ID',
-                    _bookingIdController,
-                    icon: Icons.tag_rounded,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDatePickerMini(
-                    'BOOKING DATE',
-                    _bookingDate,
-                    (d) => setState(() => _bookingDate = d),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTimePickerMini(
-                    'BOOKING TIME',
-                    _bookingTime,
-                    (t) => setState(() => _bookingTime = t),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDropdownMini(
-                    'TICKET STATUS',
-                    _ticketStatus,
-                    _masterTicketStatuses.isNotEmpty
-                        ? _masterTicketStatuses
-                        : ['Confirmed', 'Waitlist', 'RAC', 'Cancelled'],
-                    (v) => setState(() => _ticketStatus = v),
-                    icon: Icons.confirmation_number_rounded,
-                  ),
-                ),
-                if (_travelMode != 'Train') ...[
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildDropdownMini(
-                      'TRAVEL STATUS',
-                      _travelStatus,
-                      const [
-                        'Completed',
-                        'Pending',
-                        'Cancelled',
-                        'Rescheduled',
-                        'No-Show',
-                      ],
-                      (v) => _handleStatusChange(v),
-                      icon: Icons.info_outline_rounded,
-                    ),
-                  ),
-                ],
-                if (_travelMode == 'Train') ...[
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildDropdownMini(
-                      'QUOTA TYPE',
-                      _quotaType,
-                      _masterQuotaTypes,
-                      (v) => setState(() => _quotaType = v),
-                      icon: Icons.people_outline_rounded,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        _buildWebCard(
-          title: 'ROUTE & TRAVEL DETAILS',
-          icon: Icons.route_outlined,
-          color: Colors.orange,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDropdownMini(
-                    'TRAVEL MODE',
+                    'TRAVEL MODE *',
                     _travelMode,
                     _masterTravelModes,
                     (v) => setState(() {
@@ -1452,53 +3133,118 @@ class _TripExpenseFormDetailedScreenState
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Spacer(),
+                Expanded(
+                  child: _buildDropdownMini(
+                    'BOOKED BY *',
+                    _bookedBy,
+                    _masterBookingTypes,
+                    (v) => setState(() => _bookedBy = v),
+                    icon: Icons.person_outline_rounded,
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 20),
-            if (_travelStatus == 'Cancelled')
-              _buildTextFieldMini(
-                'CANCELLATION CHARGES',
-                _cancellationChargesController,
-                prefix: '₹',
-                keyboardType: TextInputType.number,
-                icon: Icons.money_off_rounded,
-                onChanged: (v) {
-                  _amountController.text = v;
-                },
-              )
-            else if (_travelStatus == 'No-Show')
-              _buildTextFieldMini(
-                'NO-SHOW CHARGES',
-                _noShowChargesController,
-                prefix: '₹',
-                keyboardType: TextInputType.number,
-                icon: Icons.person_off_rounded,
-                onChanged: (v) {
-                  _amountController.text = v;
-                },
-              )
-            else
-              _buildTextFieldMini(
-                'TICKET FARE',
-                _amountController,
-                prefix: '₹',
-                keyboardType: TextInputType.number,
-                icon: Icons.payments_outlined,
-                onChanged: (v) {
-                  _baseFareController.text = v;
-                },
+            if (_getPolicyWarning() != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: Colors.red[700],
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _getPolicyWarning()!,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.red[800],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+            ],
+          ],
+        ),
+
+        // 2. BOOKING DETAILS
+        _buildWebCard(
+          title: 'Booking Details',
+          icon: Icons.confirmation_number_outlined,
+          color: const Color(0xFF6366F1),
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'BOOKING DATE *',
+                    _bookingDate,
+                    (d) => setState(() => _bookingDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'BOOKING TIME *',
+                    _bookingTime,
+                    (t) => setState(() => _bookingTime = t),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
+                  child: _buildTextFieldMini(
+                    _bookedBy == 'Agent' ? 'BOOKING ID *' : 'BOOKING ID',
+                    _bookingIdController,
+                    icon: Icons.tag_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDropdownMini(
+                    'TICKET STATUS',
+                    _ticketStatus,
+                    _masterTicketStatuses.isNotEmpty
+                        ? _masterTicketStatuses
+                        : ['Confirmed', 'Waitlist', 'RAC', 'Cancelled'],
+                    (v) => setState(() => _ticketStatus = v),
+                    icon: Icons.confirmation_number_rounded,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        // 3. ROUTE DETAILS
+        _buildWebCard(
+          title: 'Route Details',
+          icon: Icons.route_outlined,
+          color: const Color(0xFFF59E0B),
+          children: [
+            Row(
+              children: [
+                Expanded(
                   child: SearchableDropdown(
-                    label: 'FROM',
+                    label: 'FROM *',
                     value: _originController.text,
                     icon: Icons.location_on_outlined,
                     isLocation: true,
-                    initialOptions: _masterLocations,
+                    initialOptions: _masterCities,
                     onChanged: (v) =>
                         setState(() => _originController.text = v),
                   ),
@@ -1506,17 +3252,39 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: SearchableDropdown(
-                    label: 'TO',
+                    label: 'TO *',
                     value: _destController.text,
                     icon: Icons.location_on_outlined,
                     isLocation: true,
-                    initialOptions: _masterLocations,
+                    initialOptions: _masterCities,
                     onChanged: (v) => setState(() => _destController.text = v),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            if (_travelMode == 'Train' ||
+                _travelMode == 'Bus' ||
+                _travelMode == 'Intercity Cab') ...[
+              const SizedBox(height: 20),
+              SearchableDropdown(
+                label: 'BOARDING POINT',
+                value: _boardingPointController.text,
+                icon: Icons.pin_drop_outlined,
+                isLocation: true,
+                initialOptions: _masterCities,
+                onChanged: (v) =>
+                    setState(() => _boardingPointController.text = v),
+              ),
+            ],
+          ],
+        ),
+
+        // 4. TRAVEL DETAILS
+        _buildWebCard(
+          title: 'Travel Details',
+          icon: Icons.info_outline_rounded,
+          color: const Color(0xFF06B6D4),
+          children: [
             if (_travelMode == 'Flight') ...[
               Row(
                 children: [
@@ -1532,30 +3300,10 @@ class _TripExpenseFormDetailedScreenState
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: _buildDropdownMini(
-                      'TRAVEL AGENT / PROVIDER',
-                      _providerController.text,
-                      _masterFlightProviders,
-                      (v) => setState(() => _providerController.text = v ?? ''),
-                      icon: Icons.business_rounded,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
                     child: _buildTextFieldMini(
-                      'FLIGHT NO.',
+                      'FLIGHT NO. *',
                       _travelNoController,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      'TICKET NO.',
-                      _ticketNoController,
+                      icon: Icons.tag_rounded,
                     ),
                   ),
                 ],
@@ -1565,7 +3313,7 @@ class _TripExpenseFormDetailedScreenState
                 children: [
                   Expanded(
                     child: _buildDropdownMini(
-                      'TRAVEL CLASS',
+                      'TRAVEL CLASS *',
                       _travelClass,
                       _masterClasses,
                       (v) => setState(() => _travelClass = v),
@@ -1583,21 +3331,186 @@ class _TripExpenseFormDetailedScreenState
                 ],
               ),
               const SizedBox(height: 20),
-              _buildTextFieldMini('PNR / BOOKING REF', _pnrController),
-            ] else if (_travelMode == 'Intercity Cab') ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDFA),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFCCFBF1)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'MEAL INCLUDED?',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF94A3B8),
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    Switch.adaptive(
+                      value: _mealIncluded,
+                      onChanged: (v) => setState(() => _mealIncluded = v),
+                      activeColor: const Color(0xFF0D9488),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (_travelMode == 'Train') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'TRAIN NAME',
+                      _carrierController,
+                      icon: Icons.train_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'TR NO.',
+                      _travelNoController,
+                      icon: Icons.tag_rounded,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 20),
               Row(
                 children: [
                   Expanded(
                     child: _buildDropdownMini(
-                      'PROVIDER / VENDOR',
-                      _providerController.text,
-                      _masterCabProviders,
-                      (v) => setState(() => _providerController.text = v ?? ''),
-                      icon: Icons.business_rounded,
+                      'CLASS *',
+                      _travelClass,
+                      _masterClasses,
+                      (v) => setState(() => _travelClass = v),
+                      icon: Icons.airline_seat_recline_extra_rounded,
                     ),
                   ),
                   const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'COACH & SEAT',
+                      _seatNoController,
+                      icon: Icons.event_seat_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'QUOTA TYPE',
+                      _quotaType,
+                      _masterQuotaTypes,
+                      (v) => setState(() => _quotaType = v),
+                      icon: Icons.people_outline_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      height: 48,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'TATKAL?',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Switch.adaptive(
+                            value: _isTatkal,
+                            onChanged: (v) => setState(() => _isTatkal = v),
+                            activeColor: const Color(0xFF0D9488),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDFA),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFCCFBF1)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'MEAL INCLUDED?',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF94A3B8),
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    Switch.adaptive(
+                      value: _mealIncluded,
+                      onChanged: (v) => setState(() => _mealIncluded = v),
+                      activeColor: const Color(0xFF0D9488),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (_travelMode == 'Bus') ...[
+              Row(
+                children: [
+                  Expanded(
+                    child: SearchableDropdown(
+                      label: 'OPERATOR NAME',
+                      value: _carrierController.text,
+                      icon: Icons.business_rounded,
+                      initialOptions: _masterBusOperators,
+                      onChanged: (v) =>
+                          setState(() => _carrierController.text = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'BUS TYPE *',
+                      _travelClass,
+                      _masterClasses,
+                      (v) => setState(() => _travelClass = v),
+                      icon: Icons.directions_bus_filled_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'SEAT NUMBER',
+                _seatNoController,
+                icon: Icons.event_seat_rounded,
+              ),
+            ] else if (_travelMode == 'Intercity Cab') ...[
+              Row(
+                children: [
                   Expanded(
                     child: _buildDropdownMini(
                       'CAB TYPE',
@@ -1607,298 +3520,57 @@ class _TripExpenseFormDetailedScreenState
                       icon: Icons.directions_car_rounded,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
+                  const SizedBox(width: 12),
                   Expanded(
                     child: _buildTextFieldMini(
                       'DRIVER NAME',
                       _driverNameController,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      'VEHICLE NO.',
-                      _travelNoController,
+                      icon: Icons.person_outline_rounded,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 20),
-              SearchableDropdown(
-                label: 'BOARDING POINT',
-                value: _boardingPointController.text,
-                icon: Icons.pin_drop_outlined,
-                isLocation: true,
-                initialOptions: _masterLocations,
-                onChanged: (v) =>
-                    setState(() => _boardingPointController.text = v),
+              _buildTextFieldMini(
+                'VEHICLE NO.',
+                _travelNoController,
+                icon: Icons.tag_rounded,
               ),
             ] else ...[
-              // Train, Bus, etc.
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: SearchableDropdown(
-                      label: _travelMode == 'Bus'
-                          ? 'OPERATOR NAME'
-                          : 'PROVIDER / AGENT',
-                      value: (_travelMode == 'Bus')
-                          ? _carrierController.text
-                          : _providerController.text,
-                      icon: Icons.business_rounded,
-                      initialOptions: (_travelMode == 'Bus')
-                          ? _masterBusOperators
-                          : (_travelMode == 'Train'
-                                ? _masterTrainProviders
-                                : (_travelMode == 'Bus'
-                                      ? _masterBusProviders
-                                      : _masterProviders)),
-                      onChanged: (v) => setState(() {
-                        if (_travelMode == 'Bus')
-                          _carrierController.text = v;
-                        else
-                          _providerController.text = v;
-                      }),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  if (_travelMode == 'Bus')
-                    Expanded(
-                      child: SearchableDropdown(
-                        label: 'BOOKING AGENT',
-                        value: _providerController.text,
-                        icon: Icons.support_agent_rounded,
-                        initialOptions: _masterBusProviders,
-                        onChanged: (v) =>
-                            setState(() => _providerController.text = v),
-                      ),
-                    )
-                  else
-                    const Spacer(),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: SearchableDropdown(
-                      label: 'BOARDING POINT',
-                      value: _boardingPointController.text,
-                      icon: Icons.pin_drop_outlined,
-                      isLocation: true,
-                      initialOptions: _masterLocations,
-                      onChanged: (v) =>
-                          setState(() => _boardingPointController.text = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Spacer(),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      'TICKET NO.',
-                      _ticketNoController,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildTextFieldMini('PNR / REF', _pnrController),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      _travelMode == 'Train' ? 'TRAIN NAME' : 'CARRIER NAME',
-                      _carrierController,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      _travelMode == 'Train' ? 'TR NO.' : 'CARRIER NO.',
-                      _travelNoController,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildDropdownMini(
-                      _travelMode == 'Intercity Bus' ? 'BUS TYPE' : 'CLASS',
-                      _travelClass,
-                      _masterClasses,
-                      (v) => setState(() => _travelClass = v),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildTextFieldMini(
-                      'SEAT / BERTH NO.',
-                      _seatNoController,
-                      icon: Icons.event_seat_rounded,
-                    ),
-                  ),
-                ],
-              ),
-              if (_travelMode == 'Train') ...[
-                const SizedBox(height: 12),
-                Container(
-                  height: 48,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'TATKAL?',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Switch.adaptive(
-                        value: _isTatkal,
-                        onChanged: (v) => setState(() => _isTatkal = v),
-                        activeColor: Colors.deepPurple,
-                      ),
-                    ],
+              Center(
+                child: Text(
+                  'Select a Travel Mode first',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: Colors.grey,
                   ),
                 ),
-              ],
+              ),
             ],
-            const SizedBox(height: 20),
-            if (_travelMode == 'Flight' || _travelMode == 'Train') ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: CheckboxListTile(
-                      title: Text(
-                        'MEAL INCLUDED?',
-                        style: GoogleFonts.plusJakartaSans(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      value: _mealIncluded,
-                      onChanged: (v) =>
-                          setState(() => _mealIncluded = v ?? false),
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                    ),
-                  ),
-                  if (_travelMode == 'Flight')
-                    Expanded(
-                      child: CheckboxListTile(
-                        title: Text(
-                          'EXCESS BAGGAGE?',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        value: _excessBaggage,
-                        onChanged: (v) =>
-                            setState(() => _excessBaggage = v ?? false),
-                        controlAffinity: ListTileControlAffinity.leading,
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                      ),
-                    ),
-                ],
+            if (_travelMode != null && _travelMode != 'Train') ...[
+              const SizedBox(height: 20),
+              _buildDropdownMini(
+                'TRAVEL STATUS',
+                _travelStatus,
+                const ['Completed', 'Pending', 'Cancelled', 'No-Show'],
+                (v) => _handleStatusChange(v),
+                icon: Icons.info_outline_rounded,
               ),
             ],
           ],
         ),
-        const SizedBox(height: 20),
+
+        // 5. SCHEDULE DETAILS
         _buildWebCard(
-          title: 'JOURNEY SCHEDULE',
-          icon: Icons.schedule_outlined,
-          color: Colors.purple,
+          title: 'Schedule Details',
+          icon: Icons.schedule_rounded,
+          color: const Color(0xFF8B5CF6),
           children: [
-            Text(
-              'ACTUAL TIMINGS',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: _buildDatePickerMini(
-                    'ACTUAL DEP DATE',
-                    _startDate,
-                    (d) => setState(() => _startDate = d),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTimePickerMini(
-                    'ACTUAL DEP TIME',
-                    _startTime,
-                    (t) => setState(() => _startTime = t),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDatePickerMini(
-                    'ACTUAL ARR DATE',
-                    _endDate,
-                    (d) => setState(() => _endDate = d),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTimePickerMini(
-                    'ACTUAL ARR TIME',
-                    _endTime,
-                    (t) => setState(() => _endTime = t),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Divider(),
-            const SizedBox(height: 12),
-            Text(
-              'SCHEDULED TIMINGS (PER TICKET)',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDatePickerMini(
-                    'SCHED DEP DATE',
+                    'SCHED DEP DATE *',
                     _scheduledStartDate,
                     (d) => setState(() => _scheduledStartDate = d),
                   ),
@@ -1906,7 +3578,7 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTimePickerMini(
-                    'SCHED DEP TIME',
+                    'SCHED DEP TIME *',
                     _scheduledStartTime,
                     (t) => setState(() => _scheduledStartTime = t),
                   ),
@@ -1918,7 +3590,7 @@ class _TripExpenseFormDetailedScreenState
               children: [
                 Expanded(
                   child: _buildDatePickerMini(
-                    'SCHED ARR DATE',
+                    'SCHED ARR DATE *',
                     _scheduledEndDate,
                     (d) => setState(() => _scheduledEndDate = d),
                   ),
@@ -1926,39 +3598,152 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTimePickerMini(
-                    'SCHED ARR TIME',
+                    'SCHED ARR TIME *',
                     _scheduledEndTime,
                     (t) => setState(() => _scheduledEndTime = t),
                   ),
                 ),
               ],
             ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        _buildWebCard(
-          title: 'COST & REMARKS',
-          icon: Icons.payments_outlined,
-          color: Colors.green,
-          children: [
-            _buildTextFieldMini(
-              'FARE / TICKET AMOUNT',
-              _amountController,
-              prefix: '₹',
-              keyboardType: TextInputType.number,
-              icon: Icons.payments_outlined,
-              onChanged: (v) => setState(() {}),
+            const Divider(height: 40),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'ACTUAL DEP DATE *',
+                    _startDate,
+                    (d) => setState(() => _startDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'ACTUAL DEP TIME *',
+                    _startTime,
+                    (t) => setState(() => _startTime = t),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 20),
-            _buildTextFieldMini(
-              'PURPOSE / REMARKS',
-              _jobReportController,
-              maxLines: 2,
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDatePickerMini(
+                    'ACTUAL ARR DATE *',
+                    _endDate,
+                    (d) => setState(() => _endDate = d),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildTimePickerMini(
+                    'ACTUAL ARR TIME *',
+                    _endTime,
+                    (t) => setState(() => _endTime = t),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        const SizedBox(height: 20),
-        _buildIncidentalSection(),
+
+        // 6. TICKET DETAILS
+        if (_travelMode != 'Intercity Cab')
+          _buildWebCard(
+            title: 'Ticket Details',
+            icon: Icons.local_activity_outlined,
+            color: const Color(0xFFD97706),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: SearchableDropdown(
+                      label: 'PROVIDER / AGENT',
+                      value: _providerController.text,
+                      icon: Icons.support_agent_rounded,
+                      initialOptions: (_travelMode == 'Bus')
+                          ? _masterBusProviders
+                          : (_travelMode == 'Train'
+                                ? _masterTrainProviders
+                                : (_travelMode == 'Flight'
+                                      ? _masterFlightProviders
+                                      : _masterProviders)),
+                      onChanged: (v) =>
+                          setState(() => _providerController.text = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTextFieldMini(
+                      'TICKET NO.',
+                      _ticketNoController,
+                      icon: Icons.tag_rounded,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'PNR / REFERENCE',
+                _pnrController,
+                icon: Icons.confirmation_number_rounded,
+              ),
+            ],
+          ),
+
+        // 7. EXPENSE
+        _buildWebCard(
+          title: 'Expense',
+          icon: Icons.payments_outlined,
+          color: const Color(0xFF10B981),
+          children: [
+            if (_travelStatus == 'Cancelled')
+              _buildTextFieldMini(
+                'CANCELLATION CHARGES *',
+                _cancellationChargesController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.money_off_rounded,
+                onChanged: (v) {
+                  _amountController.text = v;
+                },
+              )
+            else if (_travelStatus == 'No-Show')
+              _buildTextFieldMini(
+                'NO-SHOW CHARGES *',
+                _noShowChargesController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.person_off_rounded,
+                onChanged: (v) {
+                  _amountController.text = v;
+                },
+              )
+            else
+              _buildTextFieldMini(
+                _bookedBy == 'Company Booked' ? 'TICKET FARE' : 'TICKET FARE *',
+                _amountController,
+                prefix: '₹',
+                keyboardType: TextInputType.number,
+                icon: Icons.payments_outlined,
+                onChanged: (v) {
+                  _baseFareController.text = v;
+                },
+                enabled: _bookedBy != 'Company Booked',
+              ),
+            const SizedBox(height: 24),
+            _buildIncidentalSection(),
+          ],
+        ),
+
+        // 8. UPLOAD
+        _buildWebCard(
+          title: 'Upload',
+          icon: Icons.upload_file_rounded,
+          color: const Color(0xFF64748B),
+          children: [_buildAttachmentSection()],
+        ),
       ],
     );
   }
@@ -2026,42 +3811,19 @@ class _TripExpenseFormDetailedScreenState
                 border: Border.all(color: Colors.grey.withOpacity(0.1)),
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        flex: 2,
-                        child: _buildDropdownMini(
-                          'CATEGORY',
-                          inc['category'],
-                          (() {
-                            if (widget.category == 'Local Travel') {
-                              return _masterLocalIncidentalTypes.isNotEmpty
-                                  ? _masterLocalIncidentalTypes
-                                  : _masterIncidentalTypes;
-                            }
-                            if (widget.category == 'Travel' ||
-                                widget.category == 'Outstation Travel') {
-                              return _masterTravelIncidentalTypes.isNotEmpty
-                                  ? _masterTravelIncidentalTypes
-                                  : _masterIncidentalTypes;
-                            }
-                            return _masterGeneralIncidentalTypes.isNotEmpty
-                                ? _masterGeneralIncidentalTypes
-                                : _masterIncidentalTypes;
-                          })(),
-                          (v) => setState(
-                            () => _incidentals[index]['category'] = v,
-                          ),
+                      Text(
+                        'Item #${index + 1}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.deepOrange,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 1,
-                        child: _buildIncidentalValueField('COST', index),
-                      ),
-                      const SizedBox(width: 4),
-                      _buildIncidentalBillButton(index),
                       IconButton(
                         onPressed: () =>
                             setState(() => _incidentals.removeAt(index)),
@@ -2070,6 +3832,98 @@ class _TripExpenseFormDetailedScreenState
                           color: Colors.red,
                           size: 18,
                         ),
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildDropdownMini(
+                    'CATEGORY',
+                    inc['category'],
+                    (() {
+                      List<String> rawTypes;
+                      if (widget.category == 'Local Travel') {
+                        rawTypes = _masterLocalIncidentalTypes.isNotEmpty
+                            ? _masterLocalIncidentalTypes
+                            : _masterIncidentalTypes;
+                      } else if (widget.category == 'Travel' ||
+                          widget.category == 'Outstation Travel') {
+                        rawTypes = _masterTravelIncidentalTypes.isNotEmpty
+                            ? _masterTravelIncidentalTypes
+                            : _masterIncidentalTypes;
+                      } else {
+                        rawTypes = _masterGeneralIncidentalTypes.isNotEmpty
+                            ? _masterGeneralIncidentalTypes
+                            : _masterIncidentalTypes;
+                      }
+                      final currentVal = inc['category']?.toString();
+                      List<String> filteredList = List<String>.from(rawTypes);
+                      if (!widget.hasAdditionalLuggage) {
+                        filteredList = filteredList.where((t) {
+                          final tl = t.toLowerCase();
+                          return tl != 'porter charges' && tl != 'porter';
+                        }).toList();
+                        if (currentVal != null &&
+                            (currentVal.toLowerCase() == 'porter charges' ||
+                                currentVal.toLowerCase() == 'porter') &&
+                            !filteredList.contains(currentVal)) {
+                          filteredList.add(currentVal);
+                        }
+                      }
+                      if (!_isLaundryApplicable()) {
+                        filteredList = filteredList.where((t) {
+                          final tl = t.toLowerCase();
+                          return !tl.contains('laundry');
+                        }).toList();
+                        if (currentVal != null &&
+                            currentVal.toLowerCase().contains('laundry') &&
+                            !filteredList.contains(currentVal)) {
+                          filteredList.add(currentVal);
+                        }
+                      }
+                      return filteredList;
+                    })(),
+                    (v) => setState(() {
+                      _incidentals[index]['category'] = v;
+                      if (v != null &&
+                          v.toString().toLowerCase() != 'others' &&
+                          v.toString().toLowerCase() != 'other') {
+                        _incidentals[index]['otherDescription'] = '';
+                      }
+                    }),
+                  ),
+                  if (inc['category'] != null &&
+                      (inc['category'].toString().toLowerCase() == 'others' ||
+                          inc['category'].toString().toLowerCase() ==
+                              'other')) ...[
+                    const SizedBox(height: 8),
+                    _buildIncidentalDescriptionField(
+                      'SPECIFY INCIDENTAL TYPE *',
+                      index,
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildIncidentalValueField('COST', index),
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ATTACHMENT',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF64748B),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _buildIncidentalBillButton(index),
+                        ],
                       ),
                     ],
                   ),
@@ -2111,7 +3965,8 @@ class _TripExpenseFormDetailedScreenState
 
   Widget _buildTripLocalTravelForm() {
     final isOwnVehicle =
-        _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+        _travelSubType?.toUpperCase() == 'OWN CAR' ||
+        _travelSubType?.toUpperCase() == 'OWN BIKE';
     final showOdoCard = isOwnVehicle;
 
     final start =
@@ -2150,7 +4005,7 @@ class _TripExpenseFormDetailedScreenState
           color: const Color(0xFF4F46E5),
           children: [
             _buildDropdownMini(
-              'MODE',
+              'MODE *',
               _travelMode,
               _masterLocalTravelModes,
               (v) => setState(() {
@@ -2166,7 +4021,12 @@ class _TripExpenseFormDetailedScreenState
                 children: [
                   Expanded(
                     child: _buildDropdownMini(
-                      'SUB-TYPE',
+                      _travelMode != null &&
+                              (_travelMode!.toLowerCase().contains('car') ||
+                                  _travelMode!.toLowerCase().contains('bike') ||
+                                  _travelMode!.toLowerCase() == 'auto')
+                          ? 'SUB-TYPE *'
+                          : 'SUB-TYPE',
                       _travelSubType,
                       (() {
                         final mode = _travelMode?.toLowerCase() ?? '';
@@ -2238,6 +4098,51 @@ class _TripExpenseFormDetailedScreenState
                 ),
               ],
             ],
+            if (!_isPublicTransport &&
+                (_travelMode?.toUpperCase() != 'BIKE' ||
+                    _travelSubType?.toUpperCase() != 'OWN BIKE') &&
+                _travelMode != null &&
+                _travelMode!.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'REASON FOR NON-DEFAULT TRAVEL MODE/SUBTYPE *',
+                _reasonController,
+                maxLines: 2,
+                icon: Icons.edit_note_rounded,
+                onChanged: (v) => setState(() {}),
+              ),
+            ],
+            if (_getPolicyWarning() != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: Colors.red[700],
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _getPolicyWarning()!,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.red[800],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 20),
@@ -2248,24 +4153,26 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.map_rounded,
           color: const Color(0xFF0EA5E9),
           children: [
-            SearchableDropdown(
-              label: 'FROM LOCATION',
-              value: _originController.text,
+            _buildTextFieldMini(
+              _travelSubType?.toLowerCase() == 'ride hailing' ||
+                      _travelMode?.toLowerCase() == 'walk'
+                  ? 'FROM LOCATION *'
+                  : 'FROM LOCATION',
+              _originController,
               icon: Icons.location_on_rounded,
-              isLocation: true,
-              initialOptions: _masterLocations,
-              onChanged: (v) => setState(() => _originController.text = v),
               enabled: !_fromBulkUpload,
+              onChanged: (v) => setState(() {}),
             ),
             const SizedBox(height: 20),
-            SearchableDropdown(
-              label: 'TO LOCATION',
-              value: _destController.text,
+            _buildTextFieldMini(
+              _travelSubType?.toLowerCase() == 'ride hailing' ||
+                      _travelMode?.toLowerCase() == 'walk'
+                  ? 'TO LOCATION *'
+                  : 'TO LOCATION',
+              _destController,
               icon: Icons.flag_rounded,
-              isLocation: true,
-              initialOptions: _masterLocations,
-              onChanged: (v) => setState(() => _destController.text = v),
               enabled: !_fromBulkUpload,
+              onChanged: (v) => setState(() {}),
             ),
           ],
         ),
@@ -2280,7 +4187,7 @@ class _TripExpenseFormDetailedScreenState
               children: [
                 Expanded(
                   child: _buildDatePickerMini(
-                    'START DATE',
+                    'START DATE *',
                     _startDate,
                     (d) => setState(() => _startDate = d),
                   ),
@@ -2288,7 +4195,7 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildDatePickerMini(
-                    'END DATE',
+                    'END DATE *',
                     _endDate,
                     (d) => setState(() => _endDate = d),
                   ),
@@ -2300,7 +4207,7 @@ class _TripExpenseFormDetailedScreenState
               children: [
                 Expanded(
                   child: _buildTimePickerMini(
-                    'START TIME',
+                    'START TIME *',
                     _startTime,
                     (t) => setState(() => _startTime = t),
                   ),
@@ -2308,7 +4215,7 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTimePickerMini(
-                    'END TIME',
+                    'END TIME *',
                     _endTime,
                     (t) => setState(() => _endTime = t),
                   ),
@@ -2328,7 +4235,7 @@ class _TripExpenseFormDetailedScreenState
             color: const Color(0xFF10B981),
             children: [
               _buildOdoSegment(
-                label: 'START ODOMETER',
+                label: 'START ODOMETER *',
                 color: const Color(0xFF4F46E5),
                 date: _startDate,
                 time: _startTime,
@@ -2345,7 +4252,7 @@ class _TripExpenseFormDetailedScreenState
               const SizedBox(height: 16),
               const Divider(height: 32),
               _buildOdoSegment(
-                label: 'END ODOMETER',
+                label: 'END ODOMETER *',
                 color: const Color(0xFF10B981),
                 date: _endDate,
                 time: _endTime,
@@ -2465,7 +4372,7 @@ class _TripExpenseFormDetailedScreenState
                     SizedBox(
                       width: 120,
                       child: _buildTextFieldMini(
-                        'EDIT FARE',
+                        'FARE AMOUNT *',
                         _amountController,
                         prefix: '₹',
                         keyboardType: TextInputType.number,
@@ -2573,7 +4480,11 @@ class _TripExpenseFormDetailedScreenState
                       ClipRRect(
                         borderRadius: BorderRadius.circular(12),
                         child: Image.memory(
-                          base64Decode(_selfieImages[index]),
+                          base64Decode(
+                            _selfieImages[index].contains(',')
+                                ? _selfieImages[index].split(',').last
+                                : _selfieImages[index],
+                          ),
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
@@ -2841,6 +4752,89 @@ class _TripExpenseFormDetailedScreenState
               ),
               const SizedBox(height: 24),
             ],
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDropdownMini(
+                    'TRAVEL MODE *',
+                    _travelMode,
+                    _masterLocalTravelModes,
+                    (v) => setState(() {
+                      _travelMode = v ?? '';
+                      _travelSubType = null;
+                      _fetchRates();
+                      if (_travelMode?.toUpperCase() == 'PUBLIC TRANSPORT') {
+                        _isPublicTransport = true;
+                      } else {
+                        _isPublicTransport = false;
+                      }
+                      _updateFormTotal();
+                    }),
+                    icon: Icons.commute_rounded,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDropdownMini(
+                    _travelMode != null &&
+                            (_travelMode!.toLowerCase().contains('car') ||
+                                _travelMode!.toLowerCase().contains('bike') ||
+                                _travelMode!.toLowerCase() == 'auto')
+                        ? 'SUB-TYPE *'
+                        : 'SUB-TYPE',
+                    _travelSubType,
+                    (() {
+                      final mode = _travelMode?.toLowerCase() ?? '';
+                      if (mode == 'public transport') {
+                        return _masterLocalProvidersRaw
+                            .where(
+                              (p) =>
+                                  p['is_metro'] == true || p['is_bus'] == true,
+                            )
+                            .map((p) => p['provider_name']?.toString() ?? '')
+                            .toList();
+                      }
+                      return _masterLocalSubTypesRaw
+                          .where((m) {
+                            if (mode == 'bike') return m['is_bike'] == true;
+                            if (mode == 'car') return m['is_car'] == true;
+                            if (mode == 'auto') return m['is_auto'] == true;
+                            return true;
+                          })
+                          .map(
+                            (m) =>
+                                m['sub_type']?.toString() ??
+                                m['sub_type_name']?.toString() ??
+                                '',
+                          )
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                    })(),
+                    (v) => setState(() {
+                      _travelSubType = v;
+                      _updateRateForSubType(v ?? '');
+                      _updateFormTotal();
+                    }),
+                    icon: Icons.merge_type_rounded,
+                  ),
+                ),
+              ],
+            ),
+            if (!_isPublicTransport &&
+                (_travelMode?.toUpperCase() != 'BIKE' ||
+                    _travelSubType?.toUpperCase() != 'OWN BIKE') &&
+                _travelMode != null &&
+                _travelMode!.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              _buildTextFieldMini(
+                'REASON FOR NON-DEFAULT TRAVEL MODE/SUBTYPE *',
+                _reasonController,
+                maxLines: 2,
+                icon: Icons.edit_note_rounded,
+                onChanged: (v) => setState(() {}),
+              ),
+            ],
+            const SizedBox(height: 20),
             // CATEGORY SELECTOR (Vehicle vs Public Transport)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
@@ -2854,10 +4848,10 @@ class _TripExpenseFormDetailedScreenState
                     child: InkWell(
                       onTap: () => setState(() {
                         _isPublicTransport = false;
-                        if (_travelMode == 'Public Transport' ||
+                        if (_travelMode?.toUpperCase() == 'PUBLIC TRANSPORT' ||
                             _travelMode == null) {
-                          _travelMode = 'Bike';
-                          _travelSubType = 'Own Bike';
+                          _travelMode = 'BIKE';
+                          _travelSubType = 'OWN BIKE';
                           _updateRateForSubType(_travelSubType);
                         }
                         _updateFormTotal();
@@ -2976,11 +4970,11 @@ class _TripExpenseFormDetailedScreenState
 
             if (!_isPublicTransport) ...[
               if ([
-                'Own Car',
-                'Company Car',
-                'Own Bike',
-                'Self Drive Rental',
-              ].contains(_travelSubType)) ...[
+                'OWN CAR',
+                'COMPANY CAR',
+                'OWN BIKE',
+                'SELF DRIVE RENTAL',
+              ].contains(_travelSubType?.toUpperCase())) ...[
                 // START SECTION
                 _buildOdoSegment(
                   label: 'START JOURNEY DETAILS',
@@ -3155,11 +5149,11 @@ class _TripExpenseFormDetailedScreenState
         // Web parity: Incidental section only for vehicle owners
         if (!_isPublicTransport &&
             [
-              'Own Car',
-              'Company Car',
-              'Own Bike',
-              'Company Bike',
-            ].contains(_travelSubType))
+              'OWN CAR',
+              'COMPANY CAR',
+              'OWN BIKE',
+              'COMPANY BIKE',
+            ].contains(_travelSubType?.toUpperCase()))
           _buildIncidentalSection(),
 
         const SizedBox(height: 24),
@@ -3167,7 +5161,8 @@ class _TripExpenseFormDetailedScreenState
         Builder(
           builder: (context) {
             final isOwnVehicle =
-                _travelSubType == 'Own Car' || _travelSubType == 'Own Bike';
+                _travelSubType?.toUpperCase() == 'OWN CAR' ||
+                _travelSubType?.toUpperCase() == 'OWN BIKE';
             return Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -3486,36 +5481,19 @@ class _TripExpenseFormDetailedScreenState
                     ],
                   ),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Expanded(
-                            flex: 2,
-                            child: _buildDropdownMini(
-                              'CATEGORY',
-                              inc['category'],
-                              _masterIncidentalTypes.isNotEmpty
-                                  ? _masterIncidentalTypes
-                                  : [
-                                      'Toll',
-                                      'Parking',
-                                      'Repairs',
-                                      'Cleaning',
-                                      'Other',
-                                    ],
-                              (v) => setState(
-                                () => _incidentals[index]['category'] = v,
-                              ),
+                          Text(
+                            'Item #${index + 1}',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.deepOrange,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            flex: 1,
-                            child: _buildIncidentalValueField('COST', index),
-                          ),
-                          const SizedBox(width: 8),
-                          _buildIncidentalBillButton(index),
-                          const SizedBox(width: 4),
                           IconButton(
                             onPressed: () {
                               setState(() => _incidentals.removeAt(index));
@@ -3526,6 +5504,95 @@ class _TripExpenseFormDetailedScreenState
                               color: Colors.redAccent,
                               size: 18,
                             ),
+                            constraints: const BoxConstraints(),
+                            padding: EdgeInsets.zero,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDropdownMini(
+                        'CATEGORY',
+                        inc['category'],
+                        (() {
+                          final rawTypes = _masterIncidentalTypes.isNotEmpty
+                              ? _masterIncidentalTypes
+                              : [
+                                  'Toll',
+                                  'Parking',
+                                  'Repairs',
+                                  'Cleaning',
+                                  'Other',
+                                ];
+                          final currentVal = inc['category']?.toString();
+                          List<String> filteredList = List<String>.from(
+                            rawTypes,
+                          );
+                          if (!widget.hasAdditionalLuggage) {
+                            filteredList = filteredList.where((t) {
+                              final tl = t.toLowerCase();
+                              return tl != 'porter charges' && tl != 'porter';
+                            }).toList();
+                            if (currentVal != null &&
+                                (currentVal.toLowerCase() == 'porter charges' ||
+                                    currentVal.toLowerCase() == 'porter') &&
+                                !filteredList.contains(currentVal)) {
+                              filteredList.add(currentVal);
+                            }
+                          }
+                          if (!_isLaundryApplicable()) {
+                            filteredList = filteredList.where((t) {
+                              final tl = t.toLowerCase();
+                              return !tl.contains('laundry');
+                            }).toList();
+                            if (currentVal != null &&
+                                currentVal.toLowerCase().contains('laundry') &&
+                                !filteredList.contains(currentVal)) {
+                              filteredList.add(currentVal);
+                            }
+                          }
+                          return filteredList;
+                        })(),
+                        (v) => setState(() {
+                          _incidentals[index]['category'] = v;
+                          if (v != null &&
+                              v.toString().toLowerCase() != 'others' &&
+                              v.toString().toLowerCase() != 'other') {
+                            _incidentals[index]['otherDescription'] = '';
+                          }
+                        }),
+                      ),
+                      if (inc['category'] != null &&
+                          (inc['category'].toString().toLowerCase() ==
+                                  'others' ||
+                              inc['category'].toString().toLowerCase() ==
+                                  'other')) ...[
+                        const SizedBox(height: 8),
+                        _buildIncidentalDescriptionField(
+                          'SPECIFY INCIDENTAL TYPE *',
+                          index,
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildIncidentalValueField('COST', index),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'ATTACHMENT',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF64748B),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              _buildIncidentalBillButton(index),
+                            ],
                           ),
                         ],
                       ),
@@ -3566,6 +5633,48 @@ class _TripExpenseFormDetailedScreenState
           },
           decoration: InputDecoration(
             prefixText: '₹',
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIncidentalDescriptionField(String label, int index) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF64748B),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          initialValue:
+              _incidentals[index]['otherDescription']?.toString() ?? '',
+          keyboardType: TextInputType.text,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+          onChanged: (v) {
+            _incidentals[index]['otherDescription'] = v;
+          },
+          decoration: InputDecoration(
+            hintText: 'Specify incidental type (mandatory)',
             filled: true,
             fillColor: const Color(0xFFF8FAFC),
             border: OutlineInputBorder(
@@ -4071,6 +6180,9 @@ class _TripExpenseFormDetailedScreenState
     final now = DateTime.now();
     final bool isDateToday =
         date.year == now.year && date.month == now.month && date.day == now.day;
+    // ODO reading and photo are only valid on the actual travel date.
+    // Bulk upload rows must follow the same rule — past-date rows are blocked.
+    final bool canEditOdo = isDateToday;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4102,12 +6214,22 @@ class _TripExpenseFormDetailedScreenState
           children: [
             Expanded(
               flex: 3,
-              child: _buildDatePickerMini('DATE', date, onDate),
+              child: _buildDatePickerMini(
+                'DATE',
+                date,
+                onDate,
+                enabled: isEnabled,
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(
               flex: 2,
-              child: _buildTimePickerMini('TIME', time, onTime),
+              child: _buildTimePickerMini(
+                'TIME',
+                time,
+                onTime,
+                enabled: isEnabled,
+              ),
             ),
           ],
         ),
@@ -4131,12 +6253,25 @@ class _TripExpenseFormDetailedScreenState
             const SizedBox(width: 8),
             Expanded(
               flex: 2,
-              child: _buildTextFieldMini(
-                'ODO READING',
-                odoController,
-                keyboardType: TextInputType.number,
-                hint: 'e.g. 12345',
-                enabled: isDateToday,
+              child: Builder(
+                builder: (context) {
+                  final double maxMileage =
+                      double.tryParse(
+                        (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+                      ) ??
+                      0.0;
+                  // Show limit badge on END odo field only
+                  final String labelWithLimit = (!isStart && maxMileage > 0.0)
+                      ? 'ODO READING  ·  Limit ${maxMileage.toStringAsFixed(0)} km'
+                      : 'ODO READING';
+                  return _buildTextFieldMini(
+                    labelWithLimit,
+                    odoController,
+                    keyboardType: TextInputType.number,
+                    hint: 'e.g. 12345',
+                    enabled: canEditOdo,
+                  );
+                },
               ),
             ),
             const SizedBox(width: 8),
@@ -4153,9 +6288,9 @@ class _TripExpenseFormDetailedScreenState
                 ),
                 const SizedBox(height: 8),
                 AbsorbPointer(
-                  absorbing: odoImg != null || !isDateToday,
+                  absorbing: odoImg != null || !canEditOdo,
                   child: InkWell(
-                    onTap: (odoImg != null || !isDateToday)
+                    onTap: (odoImg != null || !canEditOdo)
                         ? null
                         : () async {
                             final result = await Navigator.push(
@@ -4188,14 +6323,14 @@ class _TripExpenseFormDetailedScreenState
                       decoration: BoxDecoration(
                         color: odoImg != null
                             ? const Color(0xFFDCFCE7)
-                            : !isDateToday
+                            : !canEditOdo
                             ? const Color(0xFFF1F5F9)
                             : const Color(0xFFF8FAFC),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: odoImg != null
                               ? const Color(0xFF10B981)
-                              : !isDateToday
+                              : !canEditOdo
                               ? const Color(0xFFCBD5E1)
                               : const Color(0xFFE2E8F0),
                         ),
@@ -4247,6 +6382,93 @@ class _TripExpenseFormDetailedScreenState
         isSelfMeal && (sourceLower == 'hotel' || sourceLower == 'online');
     final showRestaurant = isSelfMeal && sourceLower == 'restaurant';
 
+    final mealDateOnly = DateTime(
+      _startDate.year,
+      _startDate.month,
+      _startDate.day,
+    );
+    final bool isMealIncludedInTravel = _existingExpenses.any((r2) {
+      final category = (r2['category'] ?? '').toString().toLowerCase();
+      final bool isTravel =
+          category == 'travel' ||
+          category == 'outstation travel' ||
+          (category == 'others' &&
+              (r2['travel_mode'] ?? '').toString().trim().isNotEmpty);
+
+      if (!isTravel) return false;
+
+      var details = r2['details'] ?? {};
+      if (details.isEmpty &&
+          r2['description'] is String &&
+          r2['description'].toString().startsWith('{')) {
+        try {
+          details = jsonDecode(r2['description']);
+        } catch (_) {}
+      }
+
+      final bool mealIncludedFlag =
+          details['meal_included_flag'] == true ||
+          details['mealIncluded'] == true ||
+          details['mealIncluded'] == 'Yes';
+
+      if (!mealIncludedFlag) return false;
+
+      final String? depDateStr = details['depDate'] ?? r2['date'];
+      final String? arrDateStr = details['arrDate'] ?? depDateStr;
+
+      if (depDateStr == null) return false;
+
+      try {
+        final depDate = DateTime.parse(depDateStr);
+        final arrDate = arrDateStr != null
+            ? DateTime.parse(arrDateStr)
+            : depDate;
+
+        final depDateOnly = DateTime(depDate.year, depDate.month, depDate.day);
+        final arrDateOnly = DateTime(arrDate.year, arrDate.month, arrDate.day);
+
+        return !mealDateOnly.isBefore(depDateOnly) &&
+            !mealDateOnly.isAfter(arrDateOnly);
+      } catch (_) {
+        return false;
+      }
+    });
+
+    final Map<String, bool> mealTypeEnabled = {};
+    for (var type in _masterMealTypes) {
+      final isStandard = ['Breakfast', 'Lunch', 'Dinner'].contains(type);
+      mealTypeEnabled[type] = !(isMealIncludedInTravel && isStandard);
+    }
+
+    final bool showMealTime = _mealType != null && _mealType!.isNotEmpty;
+
+    final String currentDateStr = DateFormat('yyyy-MM-dd').format(_startDate);
+    double otherFoodTotal = 0.0;
+    for (var exp in _existingExpenses) {
+      if (widget.expenseData != null &&
+          exp['id']?.toString() == widget.expenseData['id']?.toString()) {
+        continue;
+      }
+      final category = (exp['category'] ?? '').toString().toLowerCase();
+      if (category == 'food' || category == 'food & refreshments') {
+        final expDate = exp['date'] ?? '';
+        if (expDate == currentDateStr) {
+          otherFoodTotal +=
+              double.tryParse((exp['amount'] ?? 0.0).toString()) ?? 0.0;
+        }
+      }
+    }
+    final double currentClaimed =
+        double.tryParse(_amountController.text) ?? 0.0;
+    final double dailyFoodTotal = currentClaimed + otherFoodTotal;
+    final double foodLimit =
+        (_eligibility != null && _eligibility!['error'] == null)
+        ? (double.tryParse(
+                (_eligibility!['daily_allowance'] ?? 0.0).toString(),
+              ) ??
+              0.0)
+        : 0.0;
+
     return Column(
       children: [
         _buildWebCard(
@@ -4257,16 +6479,17 @@ class _TripExpenseFormDetailedScreenState
             Row(
               children: [
                 Expanded(
-                  child: _buildDatePickerMini(
-                    'DATE',
-                    _startDate,
-                    (d) => setState(() => _startDate = d),
-                  ),
+                  child: _buildDatePickerMini('DATE *', _startDate, (d) {
+                    setState(() {
+                      _startDate = d;
+                    });
+                    _updateFoodPolicyWarning();
+                  }),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTimePickerMini(
-                    'TIME',
+                    'TIME *',
                     _startTime,
                     (t) => setState(() => _startTime = t),
                   ),
@@ -4281,27 +6504,49 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.coffee_rounded,
           color: const Color(0xFF0EA5E9),
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _buildDropdownMini(
-                    'MEAL TYPE',
-                    _mealType,
-                    _masterMealTypes,
-                    (v) => setState(() => _mealType = v ?? ''),
-                    icon: Icons.restaurant_menu_rounded,
+            if (showMealTime)
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildDropdownMini(
+                      'MEAL TYPE *',
+                      _mealType,
+                      _masterMealTypes,
+                      (v) => setState(() => _mealType = v ?? ''),
+                      icon: Icons.restaurant_menu_rounded,
+                      optionEnabled: mealTypeEnabled,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildTimePickerMini(
-                    'MEAL TIME',
-                    _startTime,
-                    (t) => setState(() => _startTime = t),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildTimePickerMini(
+                      'MEAL TIME *',
+                      _startTime,
+                      (t) => setState(() => _startTime = t),
+                    ),
                   ),
+                ],
+              )
+            else
+              _buildDropdownMini(
+                'MEAL TYPE *',
+                _mealType,
+                _masterMealTypes,
+                (v) => setState(() => _mealType = v ?? ''),
+                icon: Icons.restaurant_menu_rounded,
+                optionEnabled: mealTypeEnabled,
+              ),
+            if (isMealIncludedInTravel) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Note: Standard meals are covered by your travel booking for this date.',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange[800],
                 ),
-              ],
-            ),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 20),
@@ -4311,7 +6556,7 @@ class _TripExpenseFormDetailedScreenState
           color: const Color(0xFF0284C7),
           children: [
             _buildDropdownMini(
-              'CATEGORY',
+              'CATEGORY *',
               _mealCategory,
               _masterMealCategories,
               (v) => setState(() {
@@ -4319,6 +6564,7 @@ class _TripExpenseFormDetailedScreenState
                 if (v != 'Self Meal') {
                   _amountController.text = '0.00';
                 }
+                _updateFoodPolicyWarning();
               }),
               icon: Icons.category_rounded,
             ),
@@ -4328,10 +6574,13 @@ class _TripExpenseFormDetailedScreenState
                 children: [
                   Expanded(
                     child: _buildDropdownMini(
-                      'SOURCE',
+                      'SOURCE *',
                       _mealSource,
                       _masterMealSources,
-                      (v) => setState(() => _mealSource = v ?? ''),
+                      (v) => setState(() {
+                        _mealSource = v ?? '';
+                        _updateFoodPolicyWarning();
+                      }),
                       icon: Icons.source_rounded,
                     ),
                   ),
@@ -4339,7 +6588,7 @@ class _TripExpenseFormDetailedScreenState
                     const SizedBox(width: 12),
                     Expanded(
                       child: _buildDropdownMini(
-                        'PROVIDER',
+                        'PROVIDER *',
                         _mealProvider,
                         _masterMealProviders,
                         (v) => setState(() => _mealProvider = v ?? ''),
@@ -4353,7 +6602,9 @@ class _TripExpenseFormDetailedScreenState
             if (showHotel) ...[
               const SizedBox(height: 20),
               _buildTextFieldMini(
-                sourceLower == 'online' ? 'HOTEL / OUTLET NAME' : 'HOTEL NAME',
+                sourceLower == 'online'
+                    ? 'HOTEL / OUTLET NAME *'
+                    : 'HOTEL NAME *',
                 _hotelNameController,
                 icon: Icons.storefront_rounded,
                 hint: 'Enter name...',
@@ -4362,7 +6613,7 @@ class _TripExpenseFormDetailedScreenState
             if (showRestaurant) ...[
               const SizedBox(height: 20),
               _buildTextFieldMini(
-                'RESTAURANT NAME',
+                'RESTAURANT NAME *',
                 _restaurantController,
                 icon: Icons.restaurant_rounded,
                 hint: 'Enter restaurant name...',
@@ -4399,7 +6650,7 @@ class _TripExpenseFormDetailedScreenState
                 const SizedBox(width: 12),
                 Expanded(
                   child: _buildTextFieldMini(
-                    'AMOUNT',
+                    'AMOUNT *',
                     _amountController,
                     prefix: '₹',
                     keyboardType: TextInputType.number,
@@ -4409,6 +6660,66 @@ class _TripExpenseFormDetailedScreenState
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  Text(
+                    'Daily Food Claimed: ₹${dailyFoodTotal.toStringAsFixed(2)}',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFF0369A1),
+                    ),
+                  ),
+                  if (foodLimit > 0)
+                    Text(
+                      'Daily Limit: ₹${foodLimit.toStringAsFixed(2)}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_foodPolicyWarning != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: Colors.red[700],
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _foodPolicyWarning!,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.red[800],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ],
@@ -4417,7 +6728,14 @@ class _TripExpenseFormDetailedScreenState
 
   Widget _buildAccommodationForm() {
     final showBookingId = _bookingType == 'Online Booking';
-    final showBookingSource = _bookingType != 'Walkin' && _bookingType != null;
+    final showBookingSource =
+        _bookingType != 'Walkin' &&
+        _bookingType != null &&
+        _bookingType!.isNotEmpty;
+    final bool isGuestHouse =
+        _accomType != null &&
+        (_accomType!.toLowerCase().contains('guest house') ||
+            _accomType!.toLowerCase().contains('guesthouse'));
 
     return Column(
       children: [
@@ -4442,7 +6760,10 @@ class _TripExpenseFormDetailedScreenState
                   child: _buildDatePickerMini(
                     'CHECK-IN DATE',
                     _scheduledStartDate,
-                    (d) => setState(() => _scheduledStartDate = d),
+                    (d) => setState(() {
+                      _scheduledStartDate = d;
+                      _calculateNights();
+                    }),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -4462,7 +6783,10 @@ class _TripExpenseFormDetailedScreenState
                   child: _buildDatePickerMini(
                     'CHECK-OUT DATE',
                     _scheduledEndDate,
-                    (d) => setState(() => _scheduledEndDate = d),
+                    (d) => setState(() {
+                      _scheduledEndDate = d;
+                      _calculateNights();
+                    }),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -4576,27 +6900,38 @@ class _TripExpenseFormDetailedScreenState
           icon: Icons.hotel_rounded,
           color: const Color(0xFF0EA5E9),
           children: [
-            _buildDropdownMini(
-              'STAY TYPE',
-              _accomType,
-              _masterStayTypes,
-              (v) => setState(() => _accomType = v ?? ''),
-              icon: Icons.hotel_rounded,
-            ),
+            _buildDropdownMini('STAY TYPE *', _accomType, _masterStayTypes, (
+              v,
+            ) {
+              setState(() => _accomType = v ?? '');
+              _updateAccommodationPolicyWarning();
+            }, icon: Icons.hotel_rounded),
             const SizedBox(height: 20),
-            if (['Hotel Stay', 'Guest House'].contains(_accomType)) ...[
-              _buildTextFieldMini(
-                _accomType == 'Guest House' ? 'GUEST HOUSE INFO' : 'HOTEL NAME',
-                _hotelNameController,
-                icon: Icons.store_mall_directory_rounded,
-                hint: 'Enter name...',
-              ),
-              const SizedBox(height: 20),
-              _buildTextFieldMini(
-                'CITY',
-                _cityController,
-                icon: Icons.location_city_rounded,
-                hint: 'Enter city',
+            if (_accomType != null &&
+                _accomType!.isNotEmpty &&
+                _accomType != 'No Stay') ...[
+              if (['Hotel Stay', 'Guest House'].contains(_accomType)) ...[
+                _buildTextFieldMini(
+                  _accomType == 'Guest House'
+                      ? 'GUEST HOUSE INFO *'
+                      : 'HOTEL NAME *',
+                  _hotelNameController,
+                  icon: Icons.store_mall_directory_rounded,
+                  hint: 'Enter name...',
+                ),
+                const SizedBox(height: 20),
+              ],
+              SearchableDropdown(
+                label: 'LOCATION *',
+                value: _cityController.text,
+                icon: Icons.location_on_outlined,
+                isLocation: true,
+                initialOptions: _masterLocations,
+                hint: 'Search location...',
+                onChanged: (v) {
+                  setState(() => _cityController.text = v);
+                  _updateAccommodationPolicyWarning();
+                },
               ),
               const SizedBox(height: 20),
             ],
@@ -4619,18 +6954,21 @@ class _TripExpenseFormDetailedScreenState
               children: [
                 Expanded(
                   child: _buildDropdownMini(
-                    'BOOKING TYPE',
+                    isGuestHouse ? 'BOOKING TYPE' : 'BOOKING TYPE *',
                     _bookingType,
                     _masterStayBookingTypes,
-                    (v) => setState(() {
-                      _bookingType = v ?? '';
-                      if (v == 'Company Booking') {
-                        _baseFareController.text = '0.00';
-                        _earlyCheckInController.text = '0.00';
-                        _lateCheckOutController.text = '0.00';
-                        _updateFormTotal();
-                      }
-                    }),
+                    (v) {
+                      setState(() {
+                        _bookingType = v ?? '';
+                        if (v == 'Company Booking') {
+                          _baseFareController.text = '0.00';
+                          _earlyCheckInController.text = '0.00';
+                          _lateCheckOutController.text = '0.00';
+                          _updateFormTotal();
+                        }
+                      });
+                      _updateAccommodationPolicyWarning();
+                    },
                     icon: Icons.book_online_rounded,
                   ),
                 ),
@@ -4638,10 +6976,15 @@ class _TripExpenseFormDetailedScreenState
                   const SizedBox(width: 12),
                   Expanded(
                     child: _buildDropdownMini(
-                      'BOOKING SOURCE',
+                      (isGuestHouse || _bookingType == 'Walkin')
+                          ? 'BOOKING SOURCE'
+                          : 'BOOKING SOURCE *',
                       _bookingSource,
                       _masterStayBookingSources,
-                      (v) => setState(() => _bookingSource = v ?? ''),
+                      (v) {
+                        setState(() => _bookingSource = v ?? '');
+                        _updateAccommodationPolicyWarning();
+                      },
                       icon: Icons.source_outlined,
                     ),
                   ),
@@ -4666,7 +7009,7 @@ class _TripExpenseFormDetailedScreenState
           color: const Color(0xFF0369A1),
           children: [
             _buildTextFieldMini(
-              'BASE AMOUNT',
+              isGuestHouse ? 'BASE AMOUNT' : 'BASE AMOUNT *',
               _baseFareController,
               prefix: '₹',
               keyboardType: TextInputType.number,
@@ -4730,6 +7073,37 @@ class _TripExpenseFormDetailedScreenState
                 ],
               ),
             ),
+            if (_accommodationPolicyWarning != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: Colors.red[700],
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _accommodationPolicyWarning!,
+                        style: GoogleFonts.plusJakartaSans(
+                          color: Colors.red[800],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ],
@@ -4758,6 +7132,35 @@ class _TripExpenseFormDetailedScreenState
       incidentalOptions = _masterGeneralIncidentalTypes.isNotEmpty
           ? _masterGeneralIncidentalTypes
           : _masterIncidentalTypes;
+    }
+
+    if (!widget.hasAdditionalLuggage) {
+      final currentVal = _incidentalType;
+      final filtered = incidentalOptions.where((t) {
+        final tl = t.toLowerCase();
+        return tl != 'porter charges' && tl != 'porter';
+      }).toList();
+      if (currentVal != null &&
+          (currentVal.toLowerCase() == 'porter charges' ||
+              currentVal.toLowerCase() == 'porter') &&
+          !filtered.contains(currentVal)) {
+        filtered.add(currentVal);
+      }
+      incidentalOptions = filtered;
+    }
+
+    if (!_isLaundryApplicable()) {
+      final currentVal = _incidentalType;
+      final filtered = incidentalOptions.where((t) {
+        final tl = t.toLowerCase();
+        return !tl.contains('laundry');
+      }).toList();
+      if (currentVal != null &&
+          currentVal.toLowerCase().contains('laundry') &&
+          !filtered.contains(currentVal)) {
+        filtered.add(currentVal);
+      }
+      incidentalOptions = filtered;
     }
 
     return _buildWebCard(
@@ -5058,6 +7461,8 @@ class _TripExpenseFormDetailedScreenState
     List<String> options,
     Function(String?) onChanged, {
     IconData? icon,
+    Map<String, bool>? optionEnabled,
+    bool enabled = true,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5076,17 +7481,27 @@ class _TripExpenseFormDetailedScreenState
           height: 48,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: const Color(0xFFF0FDFA),
+            color: enabled ? const Color(0xFFF0FDFA) : const Color(0xFFF1F5F9),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFCCFBF1)),
+            border: Border.all(
+              color: enabled
+                  ? const Color(0xFFCCFBF1)
+                  : const Color(0xFFCBD5E1),
+            ),
           ),
           child: InkWell(
-            onTap: () {}, // Handled by PopupMenuButton
+            onTap: enabled ? () {} : null, // Handled by PopupMenuButton
             borderRadius: BorderRadius.circular(16),
             child: Row(
               children: [
                 if (icon != null) ...[
-                  Icon(icon, size: 16, color: const Color(0xFF0D9488)),
+                  Icon(
+                    icon,
+                    size: 16,
+                    color: enabled
+                        ? const Color(0xFF0D9488)
+                        : const Color(0xFF64748B),
+                  ),
                   const SizedBox(width: 8),
                 ],
                 Expanded(
@@ -5097,6 +7512,7 @@ class _TripExpenseFormDetailedScreenState
                       highlightColor: Colors.transparent,
                     ),
                     child: PopupMenuButton<String>(
+                      enabled: enabled,
                       initialValue: value,
                       tooltip: 'Select $label',
                       onSelected: onChanged,
@@ -5114,15 +7530,15 @@ class _TripExpenseFormDetailedScreenState
                         children: [
                           Expanded(
                             child: Text(
-                              (value == null || value!.isEmpty)
+                              (value == null || value.isEmpty)
                                   ? 'Select'
-                                  : value!,
+                                  : value,
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 14,
-                                fontWeight: (value == null || value!.isEmpty)
+                                fontWeight: (value == null || value.isEmpty)
                                     ? FontWeight.w500
                                     : FontWeight.w700,
-                                color: (value == null || value!.isEmpty)
+                                color: (value == null || value.isEmpty)
                                     ? const Color(0xFF94A3B8)
                                     : const Color(0xFF134E4A),
                               ),
@@ -5137,21 +7553,23 @@ class _TripExpenseFormDetailedScreenState
                           ),
                         ],
                       ),
-                      itemBuilder: (context) => options
-                          .map(
-                            (String val) => PopupMenuItem(
-                              value: val,
-                              child: Text(
-                                val,
-                                style: GoogleFonts.plusJakartaSans(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: const Color(0xFF134E4A),
-                                ),
-                              ),
+                      itemBuilder: (context) => options.map((String val) {
+                        final bool isEnabled = optionEnabled?[val] ?? true;
+                        return PopupMenuItem(
+                          value: val,
+                          enabled: isEnabled,
+                          child: Text(
+                            isEnabled ? val : '$val (Included in Travel)',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: isEnabled
+                                  ? const Color(0xFF134E4A)
+                                  : Colors.grey,
                             ),
-                          )
-                          .toList(),
+                          ),
+                        );
+                      }).toList(),
                     ),
                   ),
                 ),
@@ -5166,8 +7584,10 @@ class _TripExpenseFormDetailedScreenState
   Widget _buildDatePickerMini(
     String label,
     DateTime value,
-    Function(DateTime) onType,
-  ) {
+    Function(DateTime) onType, {
+    bool enabled = true,
+  }) {
+    final bool isPickerEnabled = enabled && !_fromBulkUpload;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5182,33 +7602,62 @@ class _TripExpenseFormDetailedScreenState
         ),
         const SizedBox(height: 6),
         InkWell(
-          onTap: () async {
-            final d = await showDatePicker(
-              context: context,
-              initialDate: value,
-              firstDate: DateTime(2023),
-              lastDate: DateTime(2030),
-              builder: (context, child) {
-                return Theme(
-                  data: Theme.of(context).copyWith(
-                    colorScheme: const ColorScheme.light(
-                      primary: Color(0xFF0D9488),
-                      onPrimary: Colors.white,
-                      onSurface: Color(0xFF134E4A),
-                    ),
-                  ),
-                  child: child!,
-                );
-              },
-            );
-            if (d != null) onType(d);
-          },
+          onTap: !isPickerEnabled
+              ? null
+              : () async {
+                  DateTime firstDt = DateTime(2023);
+                  DateTime lastDt = DateTime(2030);
+                  if (_trip != null &&
+                      _trip!.startDate.isNotEmpty &&
+                      _trip!.endDate.isNotEmpty) {
+                    try {
+                      firstDt = DateTime.parse(
+                        _trip!.startDate,
+                      ).subtract(const Duration(days: 1));
+                      lastDt = DateTime.parse(
+                        _trip!.endDate,
+                      ).add(const Duration(days: 1));
+                    } catch (_) {}
+                  }
+                  DateTime initialDt = value;
+                  if (initialDt.isBefore(firstDt)) {
+                    initialDt = firstDt;
+                  } else if (initialDt.isAfter(lastDt)) {
+                    initialDt = lastDt;
+                  }
+
+                  final d = await showDatePicker(
+                    context: context,
+                    initialDate: initialDt,
+                    firstDate: firstDt,
+                    lastDate: lastDt,
+                    builder: (context, child) {
+                      return Theme(
+                        data: Theme.of(context).copyWith(
+                          colorScheme: const ColorScheme.light(
+                            primary: Color(0xFF0D9488),
+                            onPrimary: Colors.white,
+                            onSurface: Color(0xFF134E4A),
+                          ),
+                        ),
+                        child: child!,
+                      );
+                    },
+                  );
+                  if (d != null) onType(d);
+                },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FDFA),
+              color: isPickerEnabled
+                  ? const Color(0xFFF0FDFA)
+                  : const Color(0xFFF1F5F9),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFCCFBF1)),
+              border: Border.all(
+                color: isPickerEnabled
+                    ? const Color(0xFFCCFBF1)
+                    : const Color(0xFFE2E8F0),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -5219,17 +7668,21 @@ class _TripExpenseFormDetailedScreenState
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF134E4A),
+                      color: isPickerEnabled
+                          ? const Color(0xFF134E4A)
+                          : const Color(0xFF94A3B8),
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(
+                Icon(
                   Icons.calendar_today_rounded,
                   size: 18,
-                  color: Color(0xFF0D9488),
+                  color: isPickerEnabled
+                      ? const Color(0xFF0D9488)
+                      : const Color(0xFF94A3B8),
                 ),
               ],
             ),
@@ -5242,8 +7695,10 @@ class _TripExpenseFormDetailedScreenState
   Widget _buildTimePickerMini(
     String label,
     TimeOfDay value,
-    Function(TimeOfDay) onType,
-  ) {
+    Function(TimeOfDay) onType, {
+    bool enabled = true,
+  }) {
+    final bool isPickerEnabled = enabled || _fromBulkUpload;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -5258,19 +7713,27 @@ class _TripExpenseFormDetailedScreenState
         ),
         const SizedBox(height: 6),
         InkWell(
-          onTap: () async {
-            final t = await showTimePicker(
-              context: context,
-              initialTime: value,
-            );
-            if (t != null) onType(t);
-          },
+          onTap: !isPickerEnabled
+              ? null
+              : () async {
+                  final t = await showTimePicker(
+                    context: context,
+                    initialTime: value,
+                  );
+                  if (t != null) onType(t);
+                },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0FDFA),
+              color: isPickerEnabled
+                  ? const Color(0xFFF0FDFA)
+                  : const Color(0xFFF1F5F9),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFCCFBF1)),
+              border: Border.all(
+                color: isPickerEnabled
+                    ? const Color(0xFFCCFBF1)
+                    : const Color(0xFFE2E8F0),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -5281,17 +7744,21 @@ class _TripExpenseFormDetailedScreenState
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF134E4A),
+                      color: isPickerEnabled
+                          ? const Color(0xFF134E4A)
+                          : const Color(0xFF94A3B8),
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
                   ),
                 ),
                 const SizedBox(width: 4),
-                const Icon(
+                Icon(
                   Icons.access_time_filled_rounded,
                   size: 18,
-                  color: Color(0xFF0D9488),
+                  color: isPickerEnabled
+                      ? const Color(0xFF0D9488)
+                      : const Color(0xFF94A3B8),
                 ),
               ],
             ),
@@ -5432,13 +7899,15 @@ class _TripExpenseFormDetailedScreenState
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'EXPENSE BILLS / RECEIPTS',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                color: const Color(0xFF94A3B8),
-                letterSpacing: 1,
+            Expanded(
+              child: Text(
+                'EXPENSE BILLS / RECEIPTS',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF94A3B8),
+                  letterSpacing: 1,
+                ),
               ),
             ),
             TextButton.icon(
@@ -5545,13 +8014,15 @@ class _TripExpenseFormDetailedScreenState
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'ACTIVITY PROOFS (JOB REPORT)',
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-                color: const Color(0xFF94A3B8),
-                letterSpacing: 1,
+            Expanded(
+              child: Text(
+                'ACTIVITY PROOFS (JOB REPORT)',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF94A3B8),
+                  letterSpacing: 1,
+                ),
               ),
             ),
             TextButton.icon(

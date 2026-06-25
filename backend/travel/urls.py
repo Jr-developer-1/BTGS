@@ -12,7 +12,9 @@ from .views import (
     StayTypeMasterViewSet, RoomTypeMasterViewSet, StayBookingTypeMasterViewSet, StayBookingSourceMasterViewSet,
     MealCategoryMasterViewSet, MealTypeMasterViewSet, MealSourceMasterViewSet, MealProviderMasterViewSet,
     IncidentalTypeMasterViewSet, CustomMasterDefinitionViewSet, CustomMasterValueViewSet, MasterModuleViewSet,
-    FinanceExportExcelView, FinanceBulkImportView
+    FinanceExportExcelView, FinanceBulkImportView,
+    MasterBulkExportView, MasterBulkImportView,
+    ClaimReportView, ClaimReportExportExcelView
 )
 from .views_finance_config import FinanceWorkflowConfigViewSet, HRPositionConfigViewSet
 from .views_export import ExpenseStatementPDFView, ExpenseStatementExcelView
@@ -77,6 +79,8 @@ urlpatterns = [
     path('team/live-tracking/', TeamLiveTrackingView.as_view(), name='team-live-tracking'),
     path('trips/<str:trip_id>/export/pdf/',   ExpenseStatementPDFView.as_view(),   name='trip-export-pdf'),
     path('trips/<str:trip_id>/export/excel/', ExpenseStatementExcelView.as_view(), name='trip-export-excel'),
+    path('travels/<str:trip_id>/export/pdf/',   ExpenseStatementPDFView.as_view(),   name='travel-export-pdf'),
+    path('travels/<str:trip_id>/export/excel/', ExpenseStatementExcelView.as_view(), name='travel-export-excel'),
     path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     path('historical_stops/', HistoricalTripStopsView.as_view(), name='historical-stops'),
     path('approvals/', ApprovalsView.as_view(), name='approvals'),
@@ -85,5 +89,9 @@ urlpatterns = [
     path('war-room/', CFOWarRoomView.as_view(), name='war-room'),
     path('finance/export/', FinanceExportExcelView.as_view(), name='finance-export-excel'),
     path('finance/import/', FinanceBulkImportView.as_view(), name='finance-bulk-import'),
+    path('masters/bulk-export/', MasterBulkExportView.as_view(), name='masters-bulk-export'),
+    path('masters/bulk-import/', MasterBulkImportView.as_view(), name='masters-bulk-import'),
+    path('reports/claims/', ClaimReportView.as_view(), name='claim-report'),
+    path('reports/claims/export/', ClaimReportExportExcelView.as_view(), name='claim-report-export'),
     path('', include(router.urls)),
 ]

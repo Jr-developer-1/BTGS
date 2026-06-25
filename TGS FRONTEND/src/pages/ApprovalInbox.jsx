@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { encodeId } from '../utils/idEncoder';
 import {
@@ -7,6 +7,7 @@ import {
     HelpCircle,
     PauseCircle,
     AlertTriangle,
+    ShieldAlert,
     FileText,
     User,
     ArrowRight,
@@ -14,6 +15,8 @@ import {
     IndianRupee,
     ChevronDown,
     ChevronUp,
+    ChevronLeft,
+    ChevronRight,
     Filter,
     ExternalLink,
     Upload,
@@ -29,7 +32,9 @@ import {
     X,
     ClipboardList,
     RotateCcw,
-    Calendar
+    Calendar,
+    Utensils,
+    Hotel
 } from 'lucide-react';
 import api from '../api/api';
 import { useToast } from '../context/ToastContext';
@@ -55,6 +60,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
     const [showBreakdown, setShowBreakdown] = useState(false);
     const [itemRemarks, setItemRemarks] = useState({});
     const [expandedExpenseId, setExpandedExpenseId] = useState(null);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [execAmount, setExecAmount] = useState('');
     const [paymentMode, setPaymentMode] = useState('');
     const [transactionId, setTransactionId] = useState('');
@@ -90,9 +96,242 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
     const isFinance = dept.includes('finance') || desig.includes('finance') || rawRole === 'finance' || isFinanceHead;
     const isFinanceExec = isFinance && !isFinanceHead;
-    const isHR = dept.includes('hr') || desig.includes('hr') || rawRole === 'hr' || 
-                 dept.includes('human resources') || desig.includes('human resources') || rawRole === 'human resources' ||
-                 dept.includes('human resource') || desig.includes('human resource') || rawRole === 'human resource';
+    const isHR = dept.includes('hr') || desig.includes('hr') || rawRole === 'hr' ||
+        dept.includes('human resources') || desig.includes('human resources') || rawRole === 'human resources' ||
+        dept.includes('human resource') || desig.includes('human resource') || rawRole === 'human resource';
+
+    const [allowanceData, setAllowanceData] = useState(null);
+    const [allowanceLoading, setAllowanceLoading] = useState(false);
+    const [hrDecisions, setHrDecisions] = useState({});
+
+    const getTaskApprovedAmount = (task) => {
+        if (!task) return '';
+        const details = task.details;
+        if (!details) return task.cost?.replace(/[₹,]/g, '') || '';
+
+        if (task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') {
+            if (details.executive_approved_amount && parseFloat(details.executive_approved_amount) > 0) {
+                return details.executive_approved_amount.toString();
+            }
+            if (details.approved_amount && parseFloat(details.approved_amount) > 0) {
+                return details.approved_amount.toString();
+            }
+            return (details.total_amount || '').toString();
+        } else {
+            if (details.executive_approved_amount && parseFloat(details.executive_approved_amount) > 0) {
+                return details.executive_approved_amount.toString();
+            }
+            if (details.hr_approved_amount && parseFloat(details.hr_approved_amount) > 0) {
+                return details.hr_approved_amount.toString();
+            }
+            return (details.requested_amount || '').toString();
+        }
+    };
+
+    useEffect(() => {
+        const fetchAllowance = async () => {
+            if (selectedTask && selectedTask.type === 'Expense Claim' && (isHR || isFinance) && selectedTask.db_id) {
+                setAllowanceLoading(true);
+                try {
+                    const resp = await api.get(`/api/claims/${selectedTask.db_id}/compute-allowance/`);
+                    setAllowanceData(resp.data);
+
+                    if (selectedTask.details?.expenses && resp.data.expense_allowances) {
+                        selectedTask.details.expenses = selectedTask.details.expenses.map(e => {
+                            const ea = resp.data.expense_allowances.find(item => item.expense_id === e.id);
+                            if (ea) {
+                                return {
+                                    ...e,
+                                    allowed_amount: ea.allowed_amount,
+                                    policy_note: (e.hr_amount_source || e.finance_amount_source) ? e.policy_note : ea.policy_note,
+                                    city_type_resolved: ea.city_type
+                                };
+                            }
+                            return e;
+                        });
+                    }
+
+                    const initialDecisions = {};
+                    if (resp.data.expense_allowances) {
+                        resp.data.expense_allowances.forEach(ea => {
+                            const exp = selectedTask.details?.expenses?.find(e => e.id === ea.expense_id);
+                            let savedAmt = null;
+                            let savedSource = null;
+                            if (isFinance) {
+                                if (exp?.finance_selected_amount !== undefined && exp?.finance_selected_amount !== null) {
+                                    savedAmt = parseFloat(exp.finance_selected_amount);
+                                    savedSource = exp.finance_amount_source || 'manual';
+                                } else if (exp?.hr_selected_amount !== undefined && exp?.hr_selected_amount !== null) {
+                                    savedAmt = parseFloat(exp.hr_selected_amount);
+                                    savedSource = 'allowed';
+                                }
+                            } else {
+                                if (exp?.hr_selected_amount !== undefined && exp?.hr_selected_amount !== null) {
+                                    savedAmt = parseFloat(exp.hr_selected_amount);
+                                    savedSource = exp.hr_amount_source || 'allowed';
+                                }
+                            }
+                            const savedNote = isFinance ? (exp?.finance_remarks || exp?.policy_note || ea.policy_note || '') : (exp?.policy_note || ea.policy_note || '');
+
+                            initialDecisions[ea.expense_id] = {
+                                amount: savedAmt !== null ? savedAmt : (ea.exceeds_limit ? ea.allowed_amount : ea.claimed_amount),
+                                source: savedSource || (ea.exceeds_limit ? 'allowed' : 'claimed'),
+                                note: savedNote,
+                                error: ''
+                            };
+                        });
+                    }
+                    setHrDecisions(initialDecisions);
+                } catch (err) {
+                    console.error("Failed to fetch claim allowance:", err);
+                    showToast("Failed to compute travel entitlements", "error");
+                } finally {
+                    setAllowanceLoading(false);
+                }
+            } else {
+                setAllowanceData(null);
+                setHrDecisions({});
+            }
+        };
+        fetchAllowance();
+    }, [selectedTask?.id, isHR, isFinance]);
+
+    const handleDecisionChange = (expenseId, field, value) => {
+        setHrDecisions(prev => {
+            const current = prev[expenseId] ? { ...prev[expenseId] } : { amount: 0, source: 'claimed', note: '', error: '' };
+            current[field] = value;
+
+            if (field === 'amount') {
+                const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === expenseId);
+                const claimed = ea ? ea.claimed_amount : 0;
+                const allowed = ea ? ea.allowed_amount : null;
+                const valFloat = parseFloat(value);
+                if (isNaN(valFloat)) {
+                    current.error = 'Please enter a valid number';
+                } else if (valFloat > claimed) {
+                    current.error = `Cannot exceed claimed amount (₹${claimed})`;
+                } else if (valFloat < 0) {
+                    current.error = `Amount cannot be negative`;
+                } else if (allowed !== null && claimed > allowed && valFloat < allowed) {
+                    current.error = `Amount cannot be less than the policy limit (₹${allowed})`;
+                } else {
+                    current.error = '';
+                }
+            } else if (field === 'source') {
+                const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === expenseId);
+                const claimed = ea ? ea.claimed_amount : 0;
+                const allowed = ea ? ea.allowed_amount : null;
+                const amt = value === 'claimed' ? claimed : (value === 'allowed' ? (allowed !== null ? allowed : claimed) : current.amount);
+
+                // Re-evaluate error for new source/amount
+                if (value === 'manual') {
+                    const valFloat = parseFloat(amt);
+                    if (isNaN(valFloat)) {
+                        current.error = 'Please enter a valid number';
+                    } else if (valFloat > claimed) {
+                        current.error = `Cannot exceed claimed amount (₹${claimed})`;
+                    } else if (valFloat < 0) {
+                        current.error = `Amount cannot be negative`;
+                    } else if (allowed !== null && claimed > allowed && valFloat < allowed) {
+                        current.error = `Amount cannot be less than the policy limit (₹${allowed})`;
+                    } else {
+                        current.error = '';
+                    }
+                } else {
+                    current.error = '';
+                }
+            }
+
+            return {
+                ...prev,
+                [expenseId]: current
+            };
+        });
+    };
+
+    const saveExpenseDecision = async (expenseId) => {
+        const dec = hrDecisions[expenseId];
+        if (!dec) return;
+
+        if (dec.error) {
+            showToast(dec.error, "error");
+            return;
+        }
+
+        if (dec.source !== 'claimed' && (!dec.note || !dec.note.trim())) {
+            showToast("Policy deviation note is mandatory for adjustments", "error");
+            return;
+        }
+
+        try {
+            const payload = {
+                expense_decisions: [
+                    {
+                        expense_id: expenseId,
+                        [isFinance ? 'finance_selected_amount' : 'hr_selected_amount']: parseFloat(dec.amount),
+                        source: dec.source,
+                        note: dec.note,
+                        policy_note: dec.note
+                    }
+                ]
+            };
+
+            const endpoint = isFinance
+                ? `/api/claims/${selectedTask.db_id}/finance-decide/`
+                : `/api/claims/${selectedTask.db_id}/hr-decide/`;
+
+            const resp = await api.patch(endpoint, payload);
+            if (resp.data.errors && resp.data.errors.length > 0) {
+                showToast(resp.data.errors[0].error || "Failed to save decision", "error");
+            } else {
+                showToast(isFinance ? "Finance decision saved successfully" : "HR decision saved successfully", "success");
+
+                const newApprovedTotal = resp.data.final_approved_total;
+                if (newApprovedTotal !== undefined && newApprovedTotal !== null) {
+                    setExecAmount(newApprovedTotal.toString());
+                }
+
+                if (selectedTask && selectedTask.details && selectedTask.details.expenses) {
+                    const updatedExpenses = selectedTask.details.expenses.map(e => {
+                        if (e.id === expenseId) {
+                            return {
+                                ...e,
+                                hr_selected_amount: isFinance ? e.hr_selected_amount : dec.amount,
+                                hr_amount_source: isFinance ? e.hr_amount_source : dec.source,
+                                finance_selected_amount: isFinance ? dec.amount : e.finance_selected_amount,
+                                finance_amount_source: isFinance ? dec.source : e.finance_amount_source,
+                                policy_note: dec.note
+                            };
+                        }
+                        return e;
+                    });
+
+                    const totalAdv = parseFloat(selectedTask.details?.total_advance_taken || 0);
+                    const walletBal = parseFloat(selectedTask.details?.wallet_balance_used || 0);
+                    const finalApproved = parseFloat(newApprovedTotal !== undefined && newApprovedTotal !== null ? newApprovedTotal : selectedTask.details.approved_amount || 0);
+                    const netPayout = Math.max(0, finalApproved - totalAdv - walletBal);
+
+                    const updatedTask = {
+                        ...selectedTask,
+                        cost: `₹${netPayout.toFixed(2)}`,
+                        details: {
+                            ...selectedTask.details,
+                            approved_amount: finalApproved,
+                            executive_approved_amount: finalApproved.toFixed(2),
+                            net_payout: netPayout.toFixed(2),
+                            expenses: updatedExpenses
+                        }
+                    };
+
+                    setSelectedTask(updatedTask);
+                    setTasks(prev => prev.map(t => t.id === selectedTask.id ? updatedTask : t));
+                }
+            }
+        } catch (err) {
+            console.error("Failed to save HR decision:", err);
+            showToast(err.response?.data?.error || "Error saving decision", "error");
+        }
+    };
 
     useEffect(() => {
         console.log("Current User Role:", rawRole, "Dept:", dept, "Desig:", desig);
@@ -128,12 +367,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             if (data.length > 0) {
                 const firstTask = data[0];
                 setSelectedTask(firstTask);
-                // Pre-fill amount for editing if exec
-                if (firstTask.details?.executive_approved_amount && parseFloat(firstTask.details.executive_approved_amount) > 0) {
-                    setExecAmount(firstTask.details.executive_approved_amount);
-                } else {
-                    setExecAmount(firstTask.details?.requested_amount || firstTask.cost?.replace('₹', '') || '');
-                }
+                setExecAmount(getTaskApprovedAmount(firstTask));
             } else {
                 setSelectedTask(null);
             }
@@ -166,19 +400,19 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             // Filter to show ONLY batches where the current user is the approver
             // OR if the user is HR/Admin, show batches at Manager Approved stage
             const pendingForMe = all.filter(b => {
-                const isAssignedToMe = String(b.current_approver) === String(user?.id) && 
-                                     String(b.approver_position) === String(user?.active_position_id);
+                const isAssignedToMe = String(b.current_approver) === String(user?.id) &&
+                    String(b.approver_position) === String(user?.active_position_id);
                 const isRelevantStatus = [
-                    'Submitted', 'Manager Approved', 'Resubmitted', 
+                    'Submitted', 'Manager Approved', 'Resubmitted',
                     'HR Approved', 'Under Process', 'Forwarded',
                     'PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE'
                 ].includes(b.status);
-                
+
                 if (isFinance || isHR || rawRole === 'admin') {
                     // Privileged users see what is assigned to them OR what is in a status they can act on
                     return isAssignedToMe || (isRelevantStatus && (b.status === 'Manager Approved' || isFinance));
                 }
-                
+
                 return isAssignedToMe && isRelevantStatus;
             });
             setBatches(pendingForMe);
@@ -228,12 +462,12 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                 data_json: dataJsonToSave
             });
             showToast(`Batch ${action}d successfully!`, 'success');
-            
+
             // Refresh data automatically
             fetchTasks(activeTab);
             fetchCounts();
             fetchBatches();
-            
+
             if (expandedBatch === batchId) setExpandedBatch(null);
         } catch (error) {
             showToast(error.response?.data?.error || 'Action failed', 'error');
@@ -295,7 +529,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
         try {
             const remark = itemRemarks[itemId] || '';
-            await api.post('/api/approvals/', {
+            const resp = await api.post('/api/approvals/', {
                 id: selectedTask.id,
                 action: 'UpdateItem',
                 item_id: itemId,
@@ -303,12 +537,35 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                 remarks: remark
             });
 
+            const newTotal = resp.data.total_amount;
+            // Use executive_approved_amount (signal-recalculated sum of non-rejected expenses)
+            const newApproved = resp.data.executive_approved_amount ?? resp.data.approved_amount;
+            if (newApproved !== undefined && newApproved !== null) {
+                setExecAmount(newApproved.toString());
+            }
+
+            const totalAdv = parseFloat(selectedTask.details?.total_advance_taken || 0);
+            const walletBal = parseFloat(selectedTask.details?.wallet_balance_used || 0);
+            const finalApproved = parseFloat(newApproved !== undefined && newApproved !== null ? newApproved : selectedTask.details.executive_approved_amount || selectedTask.details.approved_amount || 0);
+            const netPayout = Math.max(0, finalApproved - totalAdv - walletBal);
+
             const updatedTasks = tasks.map(t => {
                 if (t.id === selectedTask.id) {
                     const updatedExpenses = t.details.expenses.map(e =>
                         e.id === itemId ? { ...e, status: itemStatus, finance_remarks: isFinance ? remark : (e.finance_remarks || ""), hr_remarks: isHR ? remark : (e.hr_remarks || ""), rm_remarks: (!isFinance && !isHR) ? remark : (e.rm_remarks || "") } : e
                     );
-                    return { ...t, details: { ...t.details, expenses: updatedExpenses } };
+                    return {
+                        ...t,
+                        cost: `₹${netPayout.toFixed(2)}`,
+                        details: {
+                            ...t.details,
+                            total_amount: newTotal !== undefined ? newTotal : t.details.total_amount,
+                            approved_amount: finalApproved,
+                            executive_approved_amount: finalApproved.toFixed(2),
+                            net_payout: netPayout.toFixed(2),
+                            expenses: updatedExpenses
+                        }
+                    };
                 }
                 return t;
             });
@@ -328,13 +585,25 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         }
 
         try {
-            await api.post('/api/approvals/', {
+            const resp = await api.post('/api/approvals/', {
                 id: selectedTask.id,
                 action: 'UpdateItem',
                 item_id: rejectItemId,
                 item_status: 'Rejected',
                 remarks: rejectionItemRemarks
             });
+
+            const newTotal = resp.data.total_amount;
+            // Use executive_approved_amount (signal-recalculated sum of non-rejected expenses)
+            const newApproved = resp.data.executive_approved_amount ?? resp.data.approved_amount;
+            if (newApproved !== undefined && newApproved !== null) {
+                setExecAmount(newApproved.toString());
+            }
+
+            const totalAdv = parseFloat(selectedTask.details?.total_advance_taken || 0);
+            const walletBal = parseFloat(selectedTask.details?.wallet_balance_used || 0);
+            const finalApproved = parseFloat(newApproved !== undefined && newApproved !== null ? newApproved : selectedTask.details.executive_approved_amount || selectedTask.details.approved_amount || 0);
+            const netPayout = Math.max(0, finalApproved - totalAdv - walletBal);
 
             const updatedTasks = tasks.map(t => {
                 if (t.id === selectedTask.id) {
@@ -347,7 +616,18 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             rm_remarks: (!isFinance && !isHR) ? rejectionItemRemarks : (e.rm_remarks || "")
                         } : e
                     );
-                    return { ...t, details: { ...t.details, expenses: updatedExpenses } };
+                    return {
+                        ...t,
+                        cost: `₹${netPayout.toFixed(2)}`,
+                        details: {
+                            ...t.details,
+                            total_amount: newTotal !== undefined ? newTotal : t.details.total_amount,
+                            approved_amount: finalApproved,
+                            executive_approved_amount: finalApproved.toFixed(2),
+                            net_payout: netPayout.toFixed(2),
+                            expenses: updatedExpenses
+                        }
+                    };
                 }
                 return t;
             });
@@ -380,11 +660,11 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                     data_json: pendingBatchData
                 });
                 showToast(`Batch rejected successfully!`, 'success');
-                
+
                 fetchTasks(activeTab);
                 fetchCounts();
                 fetchBatches();
-                
+
                 if (expandedBatch === rejectId) setExpandedBatch(null);
             } else {
                 const payload = {
@@ -439,14 +719,65 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
     const renderTaskDetail = (task) => {
         if (!task) return null;
+
+        const hasRowWiseEditing = (() => {
+            if (!task || task.type === 'Money Top-up / Advance') return false;
+            if (task.details?.is_local_travel || task.details?.is_bulk_upload || task.type === 'Monthly Tour Plan' || task.is_local) {
+                return false;
+            }
+            const expenses = task.details?.expenses || [];
+            if (expenses.length === 0) return false;
+            return expenses.some(exp => {
+                const cat = (exp.category || '').toLowerCase();
+                const isLocal = cat.includes('local') || cat === 'fuel';
+                let isBulk = false;
+                if (exp.description && exp.description.startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(exp.description);
+                        isBulk = !!parsed.from_bulk_upload;
+                    } catch (e) { }
+                }
+                const isStandard = ['food', 'accommodation', 'travel', 'incidental', 'others'].includes(cat) && !isLocal && !isBulk;
+                if (!isStandard) return false;
+
+                const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
+                if (!ea) return false;
+                return true;
+            });
+        })();
+
         return (
             <div className="task-detail premium-card shadow-lg" style={{ border: '1px solid #e2e8f0' }}>
                 <div className="detail-header">
-                    <div className="requester-profile">
-                        <div className="avatar"> {task.requester?.charAt(0) || '?'} </div>
-                        <div>
-                            <h3>{task.requester || 'Unknown'}</h3>
-                            <p>{task.type} Request</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        {viewType === 'special' && (
+                            <button
+                                type="button"
+                                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    width: '36px',
+                                    height: '36px',
+                                    borderRadius: '10px',
+                                    backgroundColor: '#f1f5f9',
+                                    border: '1px solid #cbd5e1',
+                                    color: '#475569',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s'
+                                }}
+                                title={isSidebarOpen ? "Hide Claims List" : "Show Claims List"}
+                            >
+                                {isSidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
+                            </button>
+                        )}
+                        <div className="requester-profile">
+                            <div className="avatar"> {task.requester?.charAt(0) || '?'} </div>
+                            <div>
+                                <h3>{task.requester || 'Unknown'}</h3>
+                                <p>{task.type} Request</p>
+                            </div>
                         </div>
                     </div>
                     <div className={`risk-badge ${activeTab === 'history' ? (task.status?.toLowerCase() || 'pending') : (task.risk?.toLowerCase() || 'low')}`}>
@@ -462,7 +793,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                         {!isFinanceHead && (
                             <div className="info-block">
-                                <span>Estimated Cost</span>
+                                <span>{task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan' ? 'Net Payout' : 'Estimated Cost'}</span>
                                 <p>{task.cost}</p>
                             </div>
                         )}
@@ -470,7 +801,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             <span>Submitted Date</span>
                             <p>{task.date}</p>
                         </div>
-                        {isFinance && (
+                        {isFinance && task.type !== 'Trip' && task.type !== 'Monthly Tour Plan' && (
                             <div className="info-block highlight" style={{ minWidth: '220px' }}>
                                 <span>{task.details?.workflow_label || (task.details?.previous_approver_name ? `${task.details.previous_approver_name} Recommendation` : 'Executive Recommendation')}</span>
                                 <p className="text-blue-600 font-bold">₹{task.details?.executive_approved_amount || '0.00'}</p>
@@ -561,7 +892,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                     <span>Requested Amount</span>
                                     <h2>₹{task.details.requested_amount}</h2>
                                 </div>
-                                {task.details?.permissions?.can_edit_amount && (['PENDING_EXECUTIVE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
+                                {task.details?.permissions?.can_edit_amount && (['PENDING', 'PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED', 'RESUBMITTED', 'FORWARDED', 'PENDING_EXECUTIVE', 'HR APPROVED', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status?.toUpperCase())) && (
                                     <div className="exec-amount-editor animate-fade-in">
                                         <label>Set Approved Amount</label>
                                         <div className="amount-input-wrapper">
@@ -591,7 +922,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         </div>
                     )}
 
-                    {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && task.details?.permissions?.can_edit_amount && (['HR Approved', 'REJECTED_BY_HEAD', 'PENDING_EXECUTIVE', 'PENDING_FINAL_RELEASE'].includes(task.status)) && (
+                    {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && task.details?.permissions?.can_edit_amount && (['PENDING', 'PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED', 'RESUBMITTED', 'FORWARDED', 'PENDING_EXECUTIVE', 'HR APPROVED', 'REJECTED_BY_HEAD', 'PENDING_FINAL_RELEASE'].includes(task.status?.toUpperCase())) && (
                         <div className="detail-section animate-fade-in" style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
                             <h4 style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1e293b' }}>
                                 < IndianRupee size={18} className="text-indigo-600" /> Audit Finalization
@@ -603,11 +934,21 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                 </div>
                                 <div className="exec-amount-editor" style={{ background: '#ffffff', padding: '12px', borderRadius: '8px', border: '1px solid #f1f5f9' }}>
                                     <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.025em' }}>Total Valid Expense (Gross)</label>
-                                    <div className="amount-input-wrapper" style={{ marginTop: '8px', display: 'flex', alignItems: 'center', background: '#f8fafc', border: '2px solid #e2e8f0', borderRadius: '8px', padding: '0 12px' }}>
+                                    <div className="amount-input-wrapper" style={{
+                                        marginTop: '8px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        background: hasRowWiseEditing ? '#e2e8f0' : '#f8fafc',
+                                        border: '2px solid #e2e8f0',
+                                        borderRadius: '8px',
+                                        padding: '0 12px',
+                                        cursor: hasRowWiseEditing ? 'not-allowed' : 'text'
+                                    }}>
                                         <span className="currency-prefix" style={{ fontWeight: 700, color: '#64748b', marginRight: '4px' }}>₹</span>
                                         <input
                                             type="number"
                                             value={execAmount}
+                                            disabled={hasRowWiseEditing}
                                             onChange={(e) => {
                                                 const val = parseFloat(e.target.value);
                                                 const req = parseFloat(task.details?.requested_amount || task.cost?.replace(/[₹,]/g, '') || task.details?.total_amount || 0);
@@ -619,7 +960,17 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                 }
                                             }}
                                             placeholder="0.00"
-                                            style={{ background: 'transparent', border: 'none', padding: '8px 0', width: '100%', fontWeight: 700, fontSize: '1.1rem', color: '#10b981', outline: 'none' }}
+                                            style={{
+                                                background: 'transparent',
+                                                border: 'none',
+                                                padding: '8px 0',
+                                                width: '100%',
+                                                fontWeight: 700,
+                                                fontSize: '1.1rem',
+                                                color: hasRowWiseEditing ? '#64748b' : '#10b981',
+                                                outline: 'none',
+                                                cursor: hasRowWiseEditing ? 'not-allowed' : 'text'
+                                            }}
                                         />
                                     </div>
                                     <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
@@ -632,7 +983,11 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                             <span style={{ color: '#ef4444' }}>₹{Math.max(0, parseFloat(execAmount || 0) - parseFloat(task.details?.total_advance_taken || 0) - parseFloat(task.details?.wallet_balance_used || 0)).toFixed(2)}</span>
                                         </div>
                                     </div>
-                                    <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '6px' }}>* Enter the total approved expenses. Deductions are handled automatically.</p>
+                                    <p style={{ fontSize: '0.65rem', color: '#94a3b8', marginTop: '6px' }}>
+                                        {hasRowWiseEditing
+                                            ? "* This field is auto-calculated from row-wise approvals/adjustments below."
+                                            : "* Enter the total approved expenses. Deductions are handled automatically."}
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -665,6 +1020,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                             </thead>
                                             <tbody>
                                                 {task.details.expenses.map((exp, index) => {
+                                                    const expCategory = (exp.category || '').toLowerCase();
                                                     let displayDesc = exp.description || "";
                                                     let parsedDetails = {};
                                                     if (displayDesc.startsWith('{')) {
@@ -745,9 +1101,188 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                 </td>
                                                                 <td style={{ fontWeight: 600 }}>{exp.category}</td>
                                                                 <td style={{ fontSize: '0.85rem', color: '#475569' }}>
-                                                                    {displayDesc || <span className="italic text-slate-400">No details</span>}
+                                                                    {(() => {
+                                                                        if (!parsedDetails || Object.keys(parsedDetails).length === 0) {
+                                                                            return displayDesc || <span className="italic text-slate-400">No details</span>;
+                                                                        }
+                                                                        const category = (exp.category || '').toLowerCase();
+                                                                        if (category.includes('travel') || category === 'fuel' || category === 'others' || exp.travel_mode || parsedDetails.mode) {
+                                                                            const mode = exp.travel_mode || parsedDetails.mode || exp.category || 'Travel';
+                                                                            const subType = exp.vehicle_type || parsedDetails.subType || parsedDetails.vehicle_type || '';
+                                                                            const classType = exp.class_type || parsedDetails.classType || parsedDetails.class_type || '';
+                                                                            const travelClassAndSub = [subType, classType].filter(Boolean).join(' - ');
+                                                                            const displayHeader = travelClassAndSub ? `${mode} - ${travelClassAndSub}` : mode;
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{displayHeader}</strong>
+                                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{displayDesc}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        if (category.includes('food')) {
+                                                                            const mealType = parsedDetails.mealType || 'Meal';
+                                                                            const mealDetails = [parsedDetails.mealCategory, parsedDetails.restaurant, parsedDetails.remarks || exp.remarks].filter(Boolean).join(' · ');
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{mealType}</strong>
+                                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{mealDetails || 'Food Details'}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        if (category.includes('accommodation') || category.includes('stay') || category.includes('hotel')) {
+                                                                            const hotelName = parsedDetails.hotelName || parsedDetails.hotel_name || 'Stay';
+                                                                            const stayDetails = [
+                                                                                parsedDetails.bookingMode,
+                                                                                parsedDetails.bookingSource,
+                                                                                parsedDetails.city,
+                                                                                parsedDetails.nights ? `${parsedDetails.nights} Nights` : null,
+                                                                                parsedDetails.remarks || exp.remarks
+                                                                            ].filter(Boolean).join(' · ');
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{hotelName}</strong>
+                                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{stayDetails || 'Accommodation Details'}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        if (category.includes('incidental') || category.includes('misc')) {
+                                                                            const incType = parsedDetails.incidentalType || parsedDetails.incidentalCategory || 'Incidental';
+                                                                            const incDetails = [parsedDetails.notes, parsedDetails.remarks || exp.remarks].filter(Boolean).join(' · ');
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{incType}</strong>
+                                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{incDetails || 'Incidental Details'}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        return (
+                                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{exp.category}</strong>
+                                                                                <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{displayDesc || 'No details'}</span>
+                                                                            </div>
+                                                                        );
+                                                                    })()}
                                                                 </td>
-                                                                <td className="text-right mono" style={{ fontWeight: 700 }}>₹{parseFloat(exp.amount).toLocaleString()}</td>
+                                                                <td className="text-right mono" style={{ fontWeight: 700 }}>
+                                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                                                        <span>₹{parseFloat(exp.amount).toLocaleString()}</span>
+                                                                        {(isHR || isFinance) && selectedTask.type === 'Expense Claim' && (() => {
+                                                                            const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
+                                                                            if (!ea) return null;
+
+                                                                            const hasFinanceSelected = exp.finance_selected_amount !== null && exp.finance_selected_amount !== undefined;
+                                                                            const hasHrSelected = exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined;
+                                                                            const isOverLimit = ea.allowed_amount !== null && parseFloat(exp.amount || 0) > parseFloat(ea.allowed_amount);
+
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', fontFamily: 'sans-serif' }}>
+                                                                                    {isOverLimit && (
+                                                                                        <span style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600 }}>
+                                                                                            ⚠️ Limit: ₹{parseFloat(ea.allowed_amount).toLocaleString()}
+                                                                                        </span>
+                                                                                    )}
+                                                                                    {isFinance ? (
+                                                                                        hasFinanceSelected ? (
+                                                                                            <span style={{
+                                                                                                fontSize: '0.7rem',
+                                                                                                color: '#10b981',
+                                                                                                backgroundColor: '#ecfdf5',
+                                                                                                padding: '2px 6px',
+                                                                                                borderRadius: '4px',
+                                                                                                border: '1px solid #a7f3d0',
+                                                                                                fontWeight: 700,
+                                                                                                marginTop: '2px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '3px',
+                                                                                                whiteSpace: 'nowrap'
+                                                                                            }}>
+                                                                                                {isFinanceHead ? 'Finance Exec Rec' : 'Approved'}: ₹{parseFloat(exp.finance_selected_amount).toLocaleString()}
+                                                                                            </span>
+                                                                                        ) : hasHrSelected ? (
+                                                                                            <span style={{
+                                                                                                fontSize: '0.65rem',
+                                                                                                color: '#b45309',
+                                                                                                backgroundColor: '#fef3c7',
+                                                                                                padding: '2px 6px',
+                                                                                                borderRadius: '4px',
+                                                                                                border: '1px solid #fde68a',
+                                                                                                fontWeight: 700,
+                                                                                                marginTop: '2px',
+                                                                                                cursor: 'pointer',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '3px',
+                                                                                                whiteSpace: 'nowrap'
+                                                                                            }}
+                                                                                                title="HR recommended this amount — click row to confirm or adjust"
+                                                                                            >
+                                                                                                ✏️ HR Rec: ₹{parseFloat(exp.hr_selected_amount).toLocaleString()}
+                                                                                            </span>
+                                                                                        ) : (
+                                                                                            <span style={{
+                                                                                                fontSize: '0.65rem',
+                                                                                                color: '#6366f1',
+                                                                                                backgroundColor: '#e0e7ff',
+                                                                                                padding: '2px 6px',
+                                                                                                borderRadius: '4px',
+                                                                                                border: '1px solid #c7d2fe',
+                                                                                                fontWeight: 600,
+                                                                                                marginTop: '2px',
+                                                                                                cursor: 'pointer',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '3px',
+                                                                                                whiteSpace: 'nowrap'
+                                                                                            }}
+                                                                                                title="Click row to edit/verify this amount"
+                                                                                            >
+                                                                                                ✏️ Click to Edit
+                                                                                            </span>
+                                                                                        )
+                                                                                    ) : (
+                                                                                        hasHrSelected ? (
+                                                                                            <span style={{
+                                                                                                fontSize: '0.7rem',
+                                                                                                color: '#10b981',
+                                                                                                backgroundColor: '#ecfdf5',
+                                                                                                padding: '2px 6px',
+                                                                                                borderRadius: '4px',
+                                                                                                border: '1px solid #a7f3d0',
+                                                                                                fontWeight: 700,
+                                                                                                marginTop: '2px',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '3px'
+                                                                                            }}>
+                                                                                                Approved: ₹{parseFloat(exp.hr_selected_amount).toLocaleString()}
+                                                                                            </span>
+                                                                                        ) : (
+                                                                                            <span style={{
+                                                                                                fontSize: '0.65rem',
+                                                                                                color: '#6366f1',
+                                                                                                backgroundColor: '#e0e7ff',
+                                                                                                padding: '2px 6px',
+                                                                                                borderRadius: '4px',
+                                                                                                border: '1px solid #c7d2fe',
+                                                                                                fontWeight: 600,
+                                                                                                marginTop: '2px',
+                                                                                                cursor: 'pointer',
+                                                                                                display: 'inline-flex',
+                                                                                                alignItems: 'center',
+                                                                                                gap: '3px'
+                                                                                            }}
+                                                                                                title="Click row to edit/verify this amount"
+                                                                                            >
+                                                                                                ✏️ Click to Edit
+                                                                                            </span>
+                                                                                        )
+                                                                                    )}
+                                                                                </div>
+                                                                            );
+                                                                        })()}
+                                                                    </div>
+                                                                </td>
                                                                 <td className="text-center">
                                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
                                                                         {/* Regular Receipts */}
@@ -926,50 +1461,126 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                     </div>
                                                                                 )}
 
-                                                                                {/* Trip Context Section */}
-                                                                                <div className="exp-section">
-                                                                                    <h5 className="exp-section-header">
-                                                                                        <Navigation size={14} className="text-indigo-600" /> Trip Context
-                                                                                    </h5>
-                                                                                    <div className="exp-card-white">
-                                                                                        <div className="context-row">
-                                                                                            <div className="context-block">
-                                                                                                <span className="context-label">Route / Location</span>
-                                                                                                <div className="context-value">
-                                                                                                    <MapPin size={14} className="text-red-500" />
-                                                                                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                                                                        <span>{parsedDetails.origin || 'N/A'}</span>
-                                                                                                        {parsedDetails.destination && (
-                                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
-                                                                                                                <ArrowRight size={10} /> {parsedDetails.destination}
-                                                                                                            </div>
-                                                                                                        )}
+                                                                                {/* Category-specific Context Card */}
+                                                                                {expCategory.includes('food') ? (
+                                                                                    <div className="exp-section">
+                                                                                        <h5 className="exp-section-header">
+                                                                                            <Utensils size={14} className="text-orange-500" /> Food Details
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white">
+                                                                                            <div className="context-row">
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Meal Type</span>
+                                                                                                    <div className="context-value">
+                                                                                                        <span>{parsedDetails.mealType || 'Meal'}</span>
                                                                                                     </div>
                                                                                                 </div>
-                                                                                            </div>
-                                                                                            <div className="context-block">
-                                                                                                <span className="context-label">Travel Mode</span>
-                                                                                                <div className="context-value">
-                                                                                                    {parsedDetails.mode || 'N/A'} {parsedDetails.subType ? `(${parsedDetails.subType})` : ''}
-                                                                                                </div>
-                                                                                            </div>
-                                                                                            <div style={{ display: 'flex', gap: '16px' }}>
-                                                                                                <div className="context-block" style={{ flex: 1 }}>
-                                                                                                    <span className="context-label">Start Time</span>
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Meal Category</span>
                                                                                                     <div className="context-value">
-                                                                                                        <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.boardingTime || 'N/A'}
+                                                                                                        <span>{parsedDetails.mealCategory || 'N/A'}</span>
                                                                                                     </div>
                                                                                                 </div>
-                                                                                                <div className="context-block" style={{ flex: 1 }}>
-                                                                                                    <span className="context-label">End Time</span>
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Restaurant</span>
                                                                                                     <div className="context-value">
-                                                                                                        <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.actualTime || 'N/A'}
+                                                                                                        <MapPin size={14} className="text-orange-500" />
+                                                                                                        <span>{parsedDetails.restaurant || 'N/A'}</span>
                                                                                                     </div>
                                                                                                 </div>
                                                                                             </div>
                                                                                         </div>
                                                                                     </div>
-                                                                                </div>
+                                                                                ) : expCategory.includes('accommodation') || expCategory.includes('stay') || expCategory.includes('hotel') ? (
+                                                                                    <div className="exp-section">
+                                                                                        <h5 className="exp-section-header">
+                                                                                            <Hotel size={14} className="text-teal-600" /> Accommodation Details
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white">
+                                                                                            <div className="context-row">
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Hotel Name</span>
+                                                                                                    <div className="context-value">
+                                                                                                        <span>{parsedDetails.hotelName || parsedDetails.hotel_name || 'N/A'}</span>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">City / Location</span>
+                                                                                                    <div className="context-value">
+                                                                                                        <MapPin size={14} className="text-teal-600" />
+                                                                                                        <span>{parsedDetails.city || parsedDetails.location || 'N/A'}</span>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div style={{ display: 'flex', gap: '16px' }}>
+                                                                                                    <div className="context-block" style={{ flex: 1 }}>
+                                                                                                        <span className="context-label">Booking Source</span>
+                                                                                                        <div className="context-value" style={{ fontSize: '0.85rem' }}>
+                                                                                                            {[parsedDetails.bookingMode, parsedDetails.bookingSource].filter(Boolean).join(' · ') || 'N/A'}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                    <div className="context-block" style={{ flex: 1 }}>
+                                                                                                        <span className="context-label">Nights / Duration</span>
+                                                                                                        <div className="context-value" style={{ fontSize: '0.85rem' }}>
+                                                                                                            {parsedDetails.nights ? `${parsedDetails.nights} Nights` : 'N/A'}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="exp-section">
+                                                                                        <h5 className="exp-section-header">
+                                                                                            <Navigation size={14} className="text-indigo-600" /> Trip Context
+                                                                                        </h5>
+                                                                                        <div className="exp-card-white">
+                                                                                            <div className="context-row">
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Route / Location</span>
+                                                                                                    <div className="context-value">
+                                                                                                        <MapPin size={14} className="text-red-500" />
+                                                                                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                                                            <span>{parsedDetails.origin || 'N/A'}</span>
+                                                                                                            {parsedDetails.destination && (
+                                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#64748b', marginTop: '2px' }}>
+                                                                                                                    <ArrowRight size={10} /> {parsedDetails.destination}
+                                                                                                                </div>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div className="context-block">
+                                                                                                    <span className="context-label">Travel Mode</span>
+                                                                                                    <div className="context-value">
+                                                                                                        {exp.travel_mode || parsedDetails.mode || 'N/A'} {(exp.vehicle_type || exp.class_type || parsedDetails.subType || parsedDetails.vehicle_type) ? `(${exp.vehicle_type || exp.class_type || parsedDetails.subType || parsedDetails.vehicle_type})` : ''}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                {parsedDetails.otherReason && (
+                                                                                                    <div className="context-block" style={{ gridColumn: '1 / -1' }}>
+                                                                                                        <span className="context-label" style={{ color: '#b45309' }}>Reason for Mode Selection</span>
+                                                                                                        <div className="context-value" style={{ fontStyle: 'italic', color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', padding: '6px 10px' }}>
+                                                                                                            "{parsedDetails.otherReason}"
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                <div style={{ display: 'flex', gap: '16px' }}>
+                                                                                                    <div className="context-block" style={{ flex: 1 }}>
+                                                                                                        <span className="context-label">Start Time</span>
+                                                                                                        <div className="context-value">
+                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.boardingTime || 'N/A'}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                    <div className="context-block" style={{ flex: 1 }}>
+                                                                                                        <span className="context-label">End Time</span>
+                                                                                                        <div className="context-value">
+                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.actualTime || 'N/A'}
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
 
                                                                                 {/* Deviation Information Section */}
                                                                                 {isNotVisited ? (
@@ -1080,6 +1691,312 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                         </div>
                                                                                     </div>
                                                                                 )}
+
+                                                                                {/* HR / Finance Policy Decision Panel */}
+                                                                                {(isHR || isFinance) && selectedTask.type === 'Expense Claim' && (() => {
+                                                                                    const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
+                                                                                    const dec = hrDecisions[exp.id];
+                                                                                    if (!ea || !dec) return null;
+
+                                                                                    const isWithinLimit = (ea.allowed_amount === null || ea.claimed_amount <= ea.allowed_amount) && !ea.exceeds_limit;
+                                                                                    const hasError = !!dec.error;
+
+                                                                                    return (
+                                                                                        <div className="hr-policy-decision-panel" style={{
+                                                                                            width: '100%',
+                                                                                            marginTop: '20px',
+                                                                                            padding: '16px',
+                                                                                            backgroundColor: '#f8fafc',
+                                                                                            borderRadius: '12px',
+                                                                                            border: '1px solid #e2e8f0',
+                                                                                            boxSizing: 'border-box'
+                                                                                        }}>
+                                                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #e2e8f0', paddingBottom: '8px' }}>
+                                                                                                <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#1e293b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                                    <ShieldAlert size={16} className={isWithinLimit ? "text-emerald-500" : "text-amber-500"} />
+                                                                                                    {isFinance ? "Finance Policy Compliance & Approval" : "HR Policy Compliance & Approval"}
+                                                                                                </h4>
+                                                                                                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b' }}>
+                                                                                                    City Type Resolved: <strong style={{ color: '#475569' }}>{ea.city_type || 'Others'}</strong>
+                                                                                                </span>
+                                                                                            </div>
+                                                                                            {ea.exceeds_limit && (
+                                                                                                <div style={{
+                                                                                                    backgroundColor: '#fef2f2',
+                                                                                                    border: '1px solid #fee2e2',
+                                                                                                    borderLeft: '4px solid #ef4444',
+                                                                                                    padding: '12px 16px',
+                                                                                                    borderRadius: '8px',
+                                                                                                    color: '#991b1b',
+                                                                                                    fontSize: '0.82rem',
+                                                                                                    fontWeight: 600,
+                                                                                                    marginBottom: '16px',
+                                                                                                    display: 'flex',
+                                                                                                    alignItems: 'center',
+                                                                                                    gap: '8px'
+                                                                                                }}>
+                                                                                                    <AlertTriangle size={16} className="text-red-600" />
+                                                                                                    <span><strong>Policy Violation:</strong> {ea.policy_note || 'Restricted travel mode, class, or vehicle type selected.'}</span>
+                                                                                                </div>
+                                                                                            )}
+
+                                                                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                                                                                                <div style={{ backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Claimed Amount</div>
+                                                                                                    <div style={{ fontSize: '1rem', fontWeight: 700, color: '#334155' }}>₹{parseFloat(ea.claimed_amount || 0).toLocaleString()}</div>
+                                                                                                </div>
+                                                                                                {(() => {
+                                                                                                    const allowedCard = (() => {
+                                                                                                        if (isFinance) {
+                                                                                                            if (exp.finance_selected_amount !== null && exp.finance_selected_amount !== undefined) {
+                                                                                                                return {
+                                                                                                                    label: isFinanceHead ? 'Finance Exec Rec' : 'Finance Approved',
+                                                                                                                    value: `₹${parseFloat(exp.finance_selected_amount).toLocaleString()}`,
+                                                                                                                    color: '#10b981'
+                                                                                                                };
+                                                                                                            } else if (exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined) {
+                                                                                                                return {
+                                                                                                                    label: 'HR Recommended',
+                                                                                                                    value: `₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
+                                                                                                                    color: '#f59e0b'
+                                                                                                                };
+                                                                                                            }
+                                                                                                        } else if (isHR) {
+                                                                                                            if (exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined) {
+                                                                                                                return {
+                                                                                                                    label: 'HR Approved',
+                                                                                                                    value: `₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
+                                                                                                                    color: '#10b981'
+                                                                                                                };
+                                                                                                            }
+                                                                                                        }
+                                                                                                        return {
+                                                                                                            label: 'Allowed Amount',
+                                                                                                            value: ea.allowed_amount !== null ? `₹${parseFloat(ea.allowed_amount).toLocaleString()}` : 'No Cap',
+                                                                                                            color: ea.exceeds_limit ? '#f59e0b' : '#10b981'
+                                                                                                        };
+                                                                                                    })();
+                                                                                                    return (
+                                                                                                        <div style={{ backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                                                                            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>{allowedCard.label}</div>
+                                                                                                            <div style={{ fontSize: '1rem', fontWeight: 700, color: allowedCard.color }}>
+                                                                                                                {allowedCard.value}
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                })()}
+                                                                                                <div style={{ backgroundColor: '#ffffff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                                                                    <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 600 }}>Policy Details</div>
+                                                                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569', marginTop: '2px' }}>{ea.policy_note || 'No policy note.'}</div>
+                                                                                                </div>
+                                                                                            </div>
+
+                                                                                            {(
+                                                                                                <div>
+                                                                                                    <div style={{ marginBottom: '12px' }}>
+                                                                                                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Select Claim Approval Option:</span>
+                                                                                                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                onClick={() => {
+                                                                                                                    handleDecisionChange(exp.id, 'source', 'claimed');
+                                                                                                                    handleDecisionChange(exp.id, 'amount', ea.claimed_amount);
+                                                                                                                }}
+                                                                                                                style={{
+                                                                                                                    padding: '6px 12px',
+                                                                                                                    fontSize: '0.75rem',
+                                                                                                                    fontWeight: 600,
+                                                                                                                    borderRadius: '6px',
+                                                                                                                    border: dec.source === 'claimed' ? '2px solid #ef4444' : '1px solid #cbd5e1',
+                                                                                                                    backgroundColor: dec.source === 'claimed' ? '#fef2f2' : '#ffffff',
+                                                                                                                    color: dec.source === 'claimed' ? '#ef4444' : '#475569',
+                                                                                                                    cursor: 'pointer',
+                                                                                                                    transition: 'all 0.2s'
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                Use Claimed (₹{ea.claimed_amount})
+                                                                                                            </button>
+                                                                                                            {isFinance ? (
+                                                                                                                exp.finance_selected_amount !== null && exp.finance_selected_amount !== undefined ? (
+                                                                                                                    <button
+                                                                                                                        type="button"
+                                                                                                                        onClick={() => {
+                                                                                                                            handleDecisionChange(exp.id, 'source', 'allowed');
+                                                                                                                            handleDecisionChange(exp.id, 'amount', exp.finance_selected_amount);
+                                                                                                                        }}
+                                                                                                                        style={{
+                                                                                                                            padding: '6px 12px',
+                                                                                                                            fontSize: '0.75rem',
+                                                                                                                            fontWeight: 600,
+                                                                                                                            borderRadius: '6px',
+                                                                                                                            border: dec.source === 'allowed' ? '2px solid #10b981' : '1px solid #cbd5e1',
+                                                                                                                            backgroundColor: dec.source === 'allowed' ? '#ecfdf5' : '#ffffff',
+                                                                                                                            color: dec.source === 'allowed' ? '#10b981' : '#475569',
+                                                                                                                            cursor: 'pointer',
+                                                                                                                            transition: 'all 0.2s'
+                                                                                                                        }}
+                                                                                                                        title={`Use the amount previously approved by Finance: ₹${parseFloat(exp.finance_selected_amount).toLocaleString()}`}
+                                                                                                                    >
+                                                                                                                        Use {isFinanceHead ? 'Finance Exec Rec' : 'Finance Approved'} (₹{parseFloat(exp.finance_selected_amount).toLocaleString()})
+                                                                                                                    </button>
+                                                                                                                ) : exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined ? (
+                                                                                                                    <button
+                                                                                                                        type="button"
+                                                                                                                        onClick={() => {
+                                                                                                                            handleDecisionChange(exp.id, 'source', 'allowed');
+                                                                                                                            handleDecisionChange(exp.id, 'amount', exp.hr_selected_amount);
+                                                                                                                        }}
+                                                                                                                        style={{
+                                                                                                                            padding: '6px 12px',
+                                                                                                                            fontSize: '0.75rem',
+                                                                                                                            fontWeight: 600,
+                                                                                                                            borderRadius: '6px',
+                                                                                                                            border: dec.source === 'allowed' ? '2px solid #f59e0b' : '1px solid #cbd5e1',
+                                                                                                                            backgroundColor: dec.source === 'allowed' ? '#fef3c7' : '#ffffff',
+                                                                                                                            color: dec.source === 'allowed' ? '#b45309' : '#475569',
+                                                                                                                            cursor: 'pointer',
+                                                                                                                            transition: 'all 0.2s'
+                                                                                                                        }}
+                                                                                                                        title={`Use the amount previously recommended by HR: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`}
+                                                                                                                    >
+                                                                                                                        Use HR Approved (₹{parseFloat(exp.hr_selected_amount).toLocaleString()})
+                                                                                                                    </button>
+                                                                                                                ) : (
+                                                                                                                    <button
+                                                                                                                        type="button"
+                                                                                                                        onClick={() => {
+                                                                                                                            handleDecisionChange(exp.id, 'source', 'allowed');
+                                                                                                                            handleDecisionChange(exp.id, 'amount', ea.allowed_amount);
+                                                                                                                        }}
+                                                                                                                        style={{
+                                                                                                                            padding: '6px 12px',
+                                                                                                                            fontSize: '0.75rem',
+                                                                                                                            fontWeight: 600,
+                                                                                                                            borderRadius: '6px',
+                                                                                                                            border: dec.source === 'allowed' ? '2px solid #10b981' : '1px solid #cbd5e1',
+                                                                                                                            backgroundColor: dec.source === 'allowed' ? '#ecfdf5' : '#ffffff',
+                                                                                                                            color: dec.source === 'allowed' ? '#10b981' : '#475569',
+                                                                                                                            cursor: 'pointer',
+                                                                                                                            transition: 'all 0.2s'
+                                                                                                                        }}
+                                                                                                                    >
+                                                                                                                        Use Allowed (₹{ea.allowed_amount})
+                                                                                                                    </button>
+                                                                                                                )
+                                                                                                            ) : (
+                                                                                                                <button
+                                                                                                                    type="button"
+                                                                                                                    onClick={() => {
+                                                                                                                        handleDecisionChange(exp.id, 'source', 'allowed');
+                                                                                                                        handleDecisionChange(exp.id, 'amount', ea.allowed_amount);
+                                                                                                                    }}
+                                                                                                                    style={{
+                                                                                                                        padding: '6px 12px',
+                                                                                                                        fontSize: '0.75rem',
+                                                                                                                        fontWeight: 600,
+                                                                                                                        borderRadius: '6px',
+                                                                                                                        border: dec.source === 'allowed' ? '2px solid #10b981' : '1px solid #cbd5e1',
+                                                                                                                        backgroundColor: dec.source === 'allowed' ? '#ecfdf5' : '#ffffff',
+                                                                                                                        color: dec.source === 'allowed' ? '#10b981' : '#475569',
+                                                                                                                        cursor: 'pointer',
+                                                                                                                        transition: 'all 0.2s'
+                                                                                                                    }}
+                                                                                                                >
+                                                                                                                    Use Allowed (₹{ea.allowed_amount})
+                                                                                                                </button>
+                                                                                                            )}
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                onClick={() => {
+                                                                                                                    handleDecisionChange(exp.id, 'source', 'manual');
+                                                                                                                }}
+                                                                                                                style={{
+                                                                                                                    padding: '6px 12px',
+                                                                                                                    fontSize: '0.75rem',
+                                                                                                                    fontWeight: 600,
+                                                                                                                    borderRadius: '6px',
+                                                                                                                    border: dec.source === 'manual' ? '2px solid #6366f1' : '1px solid #cbd5e1',
+                                                                                                                    backgroundColor: dec.source === 'manual' ? '#e0e7ff' : '#ffffff',
+                                                                                                                    color: dec.source === 'manual' ? '#6366f1' : '#475569',
+                                                                                                                    cursor: 'pointer',
+                                                                                                                    transition: 'all 0.2s'
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                Manual Adjust
+                                                                                                            </button>
+                                                                                                        </div>
+                                                                                                    </div>
+
+                                                                                                    {dec.source === 'manual' && (
+                                                                                                        <div style={{ marginBottom: '12px' }}>
+                                                                                                            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>Approved Amount (Max ₹{ea.claimed_amount}):</label>
+                                                                                                            <input
+                                                                                                                type="number"
+                                                                                                                value={dec.amount}
+                                                                                                                onChange={(e) => handleDecisionChange(exp.id, 'amount', e.target.value)}
+                                                                                                                style={{
+                                                                                                                    width: '100%',
+                                                                                                                    maxWidth: '200px',
+                                                                                                                    padding: '6px 10px',
+                                                                                                                    fontSize: '0.8rem',
+                                                                                                                    border: hasError ? '1px solid #ef4444' : '1px solid #cbd5e1',
+                                                                                                                    borderRadius: '6px',
+                                                                                                                    outline: 'none'
+                                                                                                                }}
+                                                                                                            />
+                                                                                                            {hasError && (
+                                                                                                                <span style={{ display: 'block', fontSize: '0.7rem', color: '#ef4444', marginTop: '4px', fontWeight: 600 }}>{dec.error}</span>
+                                                                                                            )}
+                                                                                                        </div>
+                                                                                                    )}
+
+                                                                                                    <div style={{ marginBottom: '12px' }}>
+                                                                                                        <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
+                                                                                                            Policy Deviation Note / Remarks <span style={{ color: '#ef4444' }}>*</span>:
+                                                                                                        </label>
+                                                                                                        <textarea
+                                                                                                            value={dec.note}
+                                                                                                            onChange={(e) => handleDecisionChange(exp.id, 'note', e.target.value)}
+                                                                                                            placeholder="Provide justification or note for the selected amount"
+                                                                                                            rows={2}
+                                                                                                            style={{
+                                                                                                                width: '100%',
+                                                                                                                padding: '8px 10px',
+                                                                                                                fontSize: '0.8rem',
+                                                                                                                border: '1px solid #cbd5e1',
+                                                                                                                borderRadius: '6px',
+                                                                                                                outline: 'none',
+                                                                                                                resize: 'none'
+                                                                                                            }}
+                                                                                                        />
+                                                                                                    </div>
+
+                                                                                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            onClick={() => saveExpenseDecision(exp.id)}
+                                                                                                            disabled={hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))}
+                                                                                                            style={{
+                                                                                                                padding: '6px 16px',
+                                                                                                                fontSize: '0.75rem',
+                                                                                                                fontWeight: 700,
+                                                                                                                backgroundColor: '#4f46e5',
+                                                                                                                color: '#ffffff',
+                                                                                                                border: 'none',
+                                                                                                                borderRadius: '6px',
+                                                                                                                cursor: (hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))) ? 'not-allowed' : 'pointer',
+                                                                                                                opacity: (hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))) ? 0.6 : 1,
+                                                                                                                transition: 'opacity 0.2s'
+                                                                                                            }}
+                                                                                                        >
+                                                                                                            Save Decision
+                                                                                                        </button>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                })()}
                                                                             </div>
                                                                         </div>
                                                                     </td>
@@ -1162,9 +2079,9 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                         {task.is_intimation ? (
                             <div className="detail-actions" style={{ justifyContent: 'center' }}>
                                 {task.can_mark_read ? (
-                                    <button 
-                                        className="action-btn approve" 
-                                        style={{ width: '100%', maxWidth: '300px', backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' }} 
+                                    <button
+                                        className="action-btn approve"
+                                        style={{ width: '100%', maxWidth: '300px', backgroundColor: '#8b5cf6', borderColor: '#8b5cf6' }}
                                         onClick={() => handleAction('MarkRead')}
                                     >
                                         <CheckCircle size={18} /> <span>Mark as Read</span>
@@ -1282,7 +2199,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                         boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
                                         border: '1px solid #e2e8f0',
                                         marginBottom: '16px',
-                                                                        display: 'flex',
+                                        display: 'flex',
                                         justifyContent: 'space-between',
                                         alignItems: 'center',
                                         transition: 'all 0.3s ease'
@@ -1543,10 +2460,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                         key={claim.id}
                                                         onClick={() => {
                                                             setSelectedTask(claim);
-                                                            const amt = claim.details?.executive_approved_amount && parseFloat(claim.details.executive_approved_amount) > 0
-                                                                ? claim.details.executive_approved_amount
-                                                                : (claim.details?.requested_amount || claim.cost?.replace(/[₹,]/g, '') || '');
-                                                            setExecAmount(amt);
+                                                            setExecAmount(getTaskApprovedAmount(claim));
                                                         }}
                                                         style={{
                                                             background: selectedTask?.id === claim.id ? '#e0f2fe' : '#f0f9ff',
@@ -1631,47 +2545,69 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                 </div>
                                             </div>
                                         ) : (
-                                            <div className="approvals-container">
+                                            <div className="approvals-container" style={{ gridTemplateColumns: (isSidebarOpen || !selectedTask) ? '380px 1fr' : '1fr', gap: (isSidebarOpen || !selectedTask) ? '2.5rem' : '0' }}>
                                                 {/* Task List */}
-                                                <div className="task-list premium-card">
-                                                    <div className="list-search" style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                                        <input type="text" placeholder="Search requests..." style={{ border: 'none', background: 'transparent' }} />
-                                                    </div>
-                                                    <div className="task-items">
-                                                        {specialRequestTasks.map(task => (
-                                                            <div
-                                                                key={task.id}
-                                                                className={`task-item ${selectedTask?.id === task.id ? 'active' : ''}`}
-                                                                onClick={() => {
-                                                                    setSelectedTask(task);
-                                                                    const amt = task.details?.executive_approved_amount && parseFloat(task.details.executive_approved_amount) > 0
-                                                                        ? task.details.executive_approved_amount
-                                                                        : (task.details?.requested_amount || task.cost?.replace(/[₹,]/g, '') || '');
-                                                                    setExecAmount(amt);
-                                                                }}
-                                                            >
-                                                                <div className="task-icon">
-                                                                    <FileText size={20} />
-                                                                </div>
-                                                                <div className="task-info">
-                                                                    <h4>{task.purpose}</h4>
-                                                                    <div className="task-meta">
-                                                                        <span className="task-requester">{task.requester}</span>
-                                                                        <span className="task-date">• {task.date}</span>
+                                                {(isSidebarOpen || !selectedTask) && (
+                                                    <div className="task-list premium-card">
+                                                        <div className="list-search" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                            <input type="text" placeholder="Search requests..." style={{ border: 'none', background: 'transparent' }} />
+                                                        </div>
+                                                        <div className="task-items">
+                                                            {specialRequestTasks.map(task => (
+                                                                <div
+                                                                    key={task.id}
+                                                                    className={`task-item ${selectedTask?.id === task.id ? 'active' : ''}`}
+                                                                    onClick={() => {
+                                                                        setSelectedTask(task);
+                                                                        setExecAmount(getTaskApprovedAmount(task));
+                                                                    }}
+                                                                >
+                                                                    <div className="task-icon" style={{
+                                                                        backgroundColor: task.type?.toLowerCase().includes('claim') ? '#fef2f2' : task.type?.toLowerCase().includes('advance') ? '#fef9c3' : '#eff6ff',
+                                                                        color: task.type?.toLowerCase().includes('claim') ? '#ef4444' : task.type?.toLowerCase().includes('advance') ? '#d97706' : '#3b82f6',
+                                                                        padding: '8px',
+                                                                        borderRadius: '8px',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        justifyContent: 'center'
+                                                                    }}>
+                                                                        {task.type?.toLowerCase().includes('claim') ? (
+                                                                            <IndianRupee size={20} />
+                                                                        ) : task.type?.toLowerCase().includes('advance') ? (
+                                                                            <ClipboardList size={20} />
+                                                                        ) : (
+                                                                            <MapPin size={20} />
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="task-info">
+                                                                        <h4>{task.purpose}</h4>
+                                                                        <div className="task-meta" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                                                                            <span style={{
+                                                                                fontSize: '0.65rem',
+                                                                                fontWeight: '800',
+                                                                                padding: '2px 6px',
+                                                                                borderRadius: '4px',
+                                                                                textTransform: 'uppercase',
+                                                                                backgroundColor: task.type?.toLowerCase().includes('claim') ? '#fee2e2' : task.type?.toLowerCase().includes('advance') ? '#fef08a' : '#dbeafe',
+                                                                                color: task.type?.toLowerCase().includes('claim') ? '#dc2626' : task.type?.toLowerCase().includes('advance') ? '#a16207' : '#1d4ed8'
+                                                                            }}>{task.type?.toLowerCase().includes('claim') ? 'Claim' : task.type?.toLowerCase().includes('advance') ? 'Advance' : 'Trip'}</span>
+                                                                            <span className="task-requester">{task.requester}</span>
+                                                                            <span className="task-date">• {task.date}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="task-amount">
+                                                                        {task.cost}
+                                                                        {task.type === 'Expense Claim' && parseFloat(task.details?.total_amount || 0) > parseFloat(task.details?.net_payout || 0) && (
+                                                                            <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'normal', marginTop: '2px' }}>
+                                                                                (Adjusted)
+                                                                            </div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
-                                                                <div className="task-amount">
-                                                                    {task.cost}
-                                                                    {task.type === 'Expense Claim' && parseFloat(task.details?.total_amount || 0) > parseFloat(task.details?.net_payout || 0) && (
-                                                                        <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'normal', marginTop: '2px' }}>
-                                                                            (Adjusted)
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        ))}
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                )}
 
                                                 {/* Detailed View */}
                                                 {selectedTask && (
@@ -1807,22 +2743,22 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                 <div className="jr-attachments-list">
                                     {selectedJobReport.attachments.map((file, fIdx) => {
                                         const fileUrl = getFullUrl(file.data);
-                                        const isImage = fileUrl.startsWith('data:image') || 
-                                                       fileUrl.match(/\.(jpeg|jpg|gif|png)$/i);
-                                        
+                                        const isImage = fileUrl.startsWith('data:image') ||
+                                            fileUrl.match(/\.(jpeg|jpg|gif|png)$/i);
+
                                         return (
-                                            <div 
-                                                key={fIdx} 
+                                            <div
+                                                key={fIdx}
                                                 className="jr-attachment-item"
                                                 onClick={() => isImage && setPreviewImageUrl(fileUrl)}
                                                 style={{ cursor: isImage ? 'pointer' : 'default' }}
                                             >
                                                 <div className="jr-file-icon">
                                                     {isImage ? (
-                                                        <img 
-                                                            src={fileUrl} 
-                                                            alt="Preview" 
-                                                            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} 
+                                                        <img
+                                                            src={fileUrl}
+                                                            alt="Preview"
+                                                            style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }}
                                                         />
                                                     ) : (
                                                         <FileText size={18} />

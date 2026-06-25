@@ -43,6 +43,66 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
   late Trip _tripData;
   final TripService _tripService = TripService();
   final MasterDataService _masterDataService = MasterDataService();
+
+  Map<String, dynamic> _parseDescription(dynamic exp) {
+    Map<String, dynamic> details = {};
+    try {
+      final descRaw = exp['description'];
+      if (descRaw is String && descRaw.startsWith('{')) {
+        details = Map<String, dynamic>.from(jsonDecode(descRaw));
+      } else if (descRaw is Map) {
+        details = Map<String, dynamic>.from(descRaw);
+      }
+    } catch (_) {}
+
+    // Restore stripped fields from top-level database columns
+    if (details['mode'] == null && exp['travel_mode'] != null) {
+      details['mode'] = exp['travel_mode'];
+    }
+    if (details['class'] == null && exp['class_type'] != null) {
+      details['class'] = exp['class_type'];
+    }
+    if (details['classType'] == null && exp['class_type'] != null) {
+      details['classType'] = exp['class_type'];
+    }
+    if (details['pnr'] == null && exp['booking_reference'] != null) {
+      details['pnr'] = exp['booking_reference'];
+    }
+    if (details['bookingRef'] == null && exp['booking_reference'] != null) {
+      details['bookingRef'] = exp['booking_reference'];
+    }
+    if (details['subType'] == null && exp['vehicle_type'] != null) {
+      details['subType'] = exp['vehicle_type'];
+    }
+    if (details['vehicleType'] == null && exp['vehicle_type'] != null) {
+      details['vehicleType'] = exp['vehicle_type'];
+    }
+    if (details['bookedBy'] == null && exp['booked_by'] != null) {
+      details['bookedBy'] = exp['booked_by'];
+    }
+    if (details['travelStatus'] == null && exp['cancellation_status'] != null) {
+      details['travelStatus'] = exp['cancellation_status'];
+    }
+    if (details['cancellationDate'] == null && exp['cancellation_date'] != null) {
+      details['cancellationDate'] = exp['cancellation_date'];
+    }
+    if (details['refundAmount'] == null && exp['refund_amount'] != null) {
+      details['refundAmount'] = exp['refund_amount'].toString();
+    }
+    if (details['cancellationReason'] == null && exp['cancellation_reason'] != null) {
+      details['cancellationReason'] = exp['cancellation_reason'];
+    }
+    if (details['odoStart'] == null && exp['odo_start'] != null) {
+      details['odoStart'] = exp['odo_start'].toString();
+    }
+    if (details['odoEnd'] == null && exp['odo_end'] != null) {
+      details['odoEnd'] = exp['odo_end'].toString();
+    }
+    if (details['totalKm'] == null && exp['distance'] != null) {
+      details['totalKm'] = exp['distance'].toString();
+    }
+    return details;
+  }
   Map<String, dynamic> _masters = {};
 
   // Edit Mode State
@@ -1299,10 +1359,7 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
     }
     if (_tripData.expenses != null) {
       for (var e in _tripData.expenses!) {
-        Map<String, dynamic> detail = {};
-        try {
-          if (e['description'] != null) detail = jsonDecode(e['description']);
-        } catch (_) {}
+        Map<String, dynamic> detail = _parseDescription(e);
 
         final displayCategory = e['category'] ?? 'Expense';
         bool isFinalized = detail['isFinalized'] ?? false;
@@ -1557,11 +1614,7 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
   }
 
   void _editExpense(Map<String, dynamic> expense) {
-    Map<String, dynamic> detail = {};
-    try {
-      if (expense['description'] != null)
-        detail = jsonDecode(expense['description']);
-    } catch (_) {}
+    Map<String, dynamic> detail = _parseDescription(expense);
 
     setState(() {
       _view = 'add_expense';
@@ -1712,7 +1765,7 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
     setState(() => _isSubmitting = true);
     try {
       await _tripService.requestAdvance(
-        widget.tripId,
+        widget.trip.id,
         double.parse(_advanceAmountController.text),
         _advancePurposeController.text,
       );
@@ -2074,30 +2127,6 @@ class _TripWalletSheetState extends State<TripWalletSheet> {
           const SizedBox(height: 20),
         ],
       ),
-    );
-  }
-
-  Widget _capacityRow(String label, String value, {bool isTotal = false}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.inter(
-            fontSize: 13,
-            fontWeight: isTotal ? FontWeight.w800 : FontWeight.w600,
-            color: isTotal ? const Color(0xFF1E293B) : const Color(0xFF64748B),
-          ),
-        ),
-        Text(
-          value,
-          style: GoogleFonts.inter(
-            fontSize: isTotal ? 16 : 14,
-            fontWeight: FontWeight.w900,
-            color: isTotal ? const Color(0xFF0F172A) : const Color(0xFF334155),
-          ),
-        ),
-      ],
     );
   }
 

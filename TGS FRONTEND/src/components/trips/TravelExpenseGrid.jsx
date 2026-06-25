@@ -31,6 +31,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { useToast } from '../../context/ToastContext';
+import { useEligibility } from '../../utils/useEligibility';
 
 
 const NATURE_OPTIONS = [
@@ -46,9 +47,9 @@ const NATURE_OPTIONS = [
 const FALLBACK_TRAVEL_MODES = ['Flight', 'Train', 'Intercity Bus', 'Intercity Cab'];
 const FALLBACK_BOOKED_BY_OPTIONS = ['Self Booked', 'Company Booked'];
 const FALLBACK_LOCAL_TRAVEL_MODES = ['Car / Cab', 'Bike', 'Public Transport'];
-const FALLBACK_LOCAL_CAR_SUBTYPES = ['Own Car', 'Company Car', 'Rented Car (With Driver)', 'Self Drive Rental', 'Ride Hailing', 'Pool Vehicle'];
-const FALLBACK_LOCAL_BIKE_SUBTYPES = ['Own Bike', 'Rental Bike', 'Ride Bike'];
-const FALLBACK_LOCAL_PT_SUBTYPES = ['Auto', 'Metro', 'Local Bus'];
+const FALLBACK_LOCAL_CAR_SUBTYPES = ['OWN CAR', 'COMPANY CAR', 'RENTED CAR (WITH DRIVER)', 'SELF DRIVE RENTAL', 'RIDE HAILING', 'POOL VEHICLE'];
+const FALLBACK_LOCAL_BIKE_SUBTYPES = ['OWN BIKE', 'RENTAL BIKE', 'RIDE BIKE'];
+const FALLBACK_LOCAL_PT_SUBTYPES = ['AUTO', 'METRO', 'LOCAL BUS'];
 const FALLBACK_ACCOM_TYPES = ['Hotel Stay', 'Bavya Guest House', 'Client Provided', 'Self Stay', 'No Stay'];
 const FALLBACK_ROOM_TYPES = ['Standard', 'Deluxe', 'Executive', 'Suite', 'Guest House'];
 const FALLBACK_FLIGHT_CLASSES = ['Economy', 'Premium Economy', 'Business', 'First'];
@@ -202,6 +203,8 @@ const TravelExpenseGrid = ({
     const [bulkHistory, setBulkHistory] = useState([]);
     const [resubmitModal, setResubmitModal] = useState({ visible: false, batchId: null, rows: [], submitting: false });
 
+    const { eligibility, checkMileage } = useEligibility();
+
     const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
     useEffect(() => {
@@ -245,9 +248,13 @@ const TravelExpenseGrid = ({
             }
 
             if (needsLocal) {
-                tasks.push(safeFetch('/api/local-travel-mode-masters/', setLocalTravelModes, m => m.status ? m.mode_name : null));
-                tasks.push(safeFetch('/api/local-car-subtype-masters/', setLocalCarSubTypes, m => m.status ? m.sub_type : null));
-                tasks.push(safeFetch('/api/local-bike-subtype-masters/', setLocalBikeSubTypes, m => m.status ? m.sub_type : null));
+                tasks.push(safeFetch('/api/local-travel-mode-masters/', setLocalTravelModes, m => m.status ? m.mode_name.toUpperCase() : null));
+                tasks.push(safeFetch('/api/local-sub-type-masters/', data => {
+                    const carTypes = data.filter(m => m.status && m.is_car).map(m => m.sub_type.toUpperCase());
+                    const bikeTypes = data.filter(m => m.status && m.is_bike).map(m => m.sub_type.toUpperCase());
+                    if (carTypes.length > 0) setLocalCarSubTypes(carTypes);
+                    if (bikeTypes.length > 0) setLocalBikeSubTypes(bikeTypes);
+                }, null));
                 tasks.push(safeFetch('/api/local-provider-masters/', setLocalProviders, m => m.status ? m.provider_name : null));
             }
 
@@ -427,11 +434,12 @@ const TravelExpenseGrid = ({
                     actualTime: details.endTime || details.reach_time || ''
                 };
 
-                // enforce fixed fields for non-TRP trip ids and local travel entries
-                if (isFixedLocal && natureVal === 'Local Travel') {
-                    details.mode = 'Bike';
-                    details.subType = 'Own Bike';
-                    details.bookedBy = 'Self Booked';
+                // For isFixedLocal trips, apply defaults ONLY when not already set in description.
+                // Never force-overwrite a mode/subType the user explicitly chose.
+                if (natureVal === 'Local Travel') {
+                    if (!details.mode) details.mode = 'BIKE';
+                    if (!details.subType) details.subType = 'OWN BIKE';
+                    if (!details.bookedBy) details.bookedBy = 'Self Booked';
                 }
                 return {
                     id: exp.id || Math.random().toString(36).substr(2, 9),
@@ -573,7 +581,10 @@ const TravelExpenseGrid = ({
                 return false;
             }
             // require bill if any charge present (Exempt Odometer-based Local Travel as they use Odo photos)
-            const isOdoLocal = row.nature === 'Local Travel' && (row.details.subType === 'Own Car' || row.details.subType === 'Own Bike');
+            const isOdoLocal = row.nature === 'Local Travel' && (
+                (row.details.subType || '').toUpperCase() === 'OWN CAR' ||
+                (row.details.subType || '').toUpperCase() === 'OWN BIKE'
+            );
             const isIncidental = row.nature === 'Incidental';
             if (parseFloat(row.amount) > 0 && !isOdoLocal && !isIncidental && (!row.bills || row.bills.length === 0)) {
                 showToast(`Item #${rowNum}: Please upload a bill as amount is entered.`, "error");
@@ -774,13 +785,22 @@ const TravelExpenseGrid = ({
                     }
                 }
 
-                if (!mode) {
+                const modeVal = row.details.isPublicTransport ? 'Public Transport' : (mode || 'BIKE');
+                const subTypeVal = row.details.isPublicTransport ? (row.details.remainingRoute || 'AUTO') : (subType || 'OWN BIKE');
+
+                if (!row.details.isPublicTransport && !modeVal) {
                     showToast(`Item #${rowNum}: Please select a Mode for Local Travel.`, "error");
                     return false;
                 }
 
-                if (mode !== 'Walk' && !subType) {
-                    showToast(`Item #${rowNum}: Please select a Sub-Type for ${mode}.`, "error");
+                if (!row.details.isPublicTransport && modeVal.toUpperCase() !== 'WALK' && !subTypeVal) {
+                    showToast(`Item #${rowNum}: Please select a Sub-Type for ${modeVal}.`, "error");
+                    return false;
+                }
+
+                const isNonDefault = !row.details.isPublicTransport && (modeVal.toUpperCase() !== 'BIKE' || subTypeVal.toUpperCase() !== 'OWN BIKE');
+                if (isNonDefault && (!row.details.otherReason || !row.details.otherReason.trim())) {
+                    showToast(`Item #${rowNum}: Please enter a reason for selecting non-default travel mode or subtype.`, "error");
                     return false;
                 }
 
@@ -833,8 +853,8 @@ const TravelExpenseGrid = ({
                     }
                 }
 
-                const odoDrivenSubtypes = ['Own Car', 'Own Bike', 'Self Drive Rental', 'Company Car'];
-                if (odoDrivenSubtypes.includes(subType)) {
+                const odoDrivenSubtypes = ['OWN CAR', 'OWN BIKE', 'SELF DRIVE RENTAL', 'COMPANY CAR'];
+                if (odoDrivenSubtypes.includes((subType || '').toUpperCase())) {
                     // Conditional Validation: If reading exists, photo MUST exist
                     if (odoStart && !row.details.odoStartImg) {
                         showToast(`Item #${rowNum}: Start Odometer photo is required since reading is entered.`, "error");
@@ -862,6 +882,18 @@ const TravelExpenseGrid = ({
                         showToast(`Item #${rowNum}: End Odometer must be greater than Start Odometer.`, "error");
                         setRowError(row.id, 'odoEnd', 'Must be > Start');
                         return false;
+                    }
+
+                    // Entitlement validation for distance
+                    if (odoStart && odoEnd) {
+                        const distance = parseFloat(odoEnd) - parseFloat(odoStart);
+                        const mileageCheck = checkMileage(distance);
+                        if (mileageCheck.exceeds) {
+                            const confirmMileage = await confirm(
+                                `Warning (Item #${rowNum}): ${mileageCheck.warnMessage}\n\nDo you want to proceed with saving anyway?`
+                            );
+                            if (!confirmMileage) return false;
+                        }
                     }
                 }
             }
@@ -990,8 +1022,8 @@ const TravelExpenseGrid = ({
                 const filteredDetails = { ...row.details };
                 if (row.details.isPublicTransport) {
                     filteredDetails.mode = 'Public Transport';
-                    filteredDetails.vehicleType = row.details.remainingRoute;
-                    filteredDetails.subType = row.details.remainingRoute;
+                    filteredDetails.vehicleType = row.details.remainingRoute || 'Auto';
+                    filteredDetails.subType = row.details.remainingRoute || 'Auto';
                 }
                 if (row.nature === 'Local Travel') {
                     const { mode, subType } = row.details;
@@ -1011,7 +1043,7 @@ const TravelExpenseGrid = ({
                         delete filteredDetails.toll;
                         delete filteredDetails.parking;
                     }
-                    if (!['Own Car', 'Self Drive Rental', 'Own Bike'].includes(subType)) {
+                    if (!['OWN CAR', 'SELF DRIVE RENTAL', 'OWN BIKE'].includes((subType || '').toUpperCase())) {
                         delete filteredDetails.odoStart;
                         delete filteredDetails.odoEnd;
                     }
@@ -1038,12 +1070,12 @@ const TravelExpenseGrid = ({
                     category: categoryMap[row.nature] || 'Others',
                     amount: parseFloat(row.amount || 0),
                     // New Database Fields
-                    travel_mode: row.details.isPublicTransport ? 'Public Transport' : (row.nature === 'Travel' ? row.details.mode : (row.nature === 'Local Travel' ? row.details.mode : null)),
+                    travel_mode: row.details.isPublicTransport ? 'Public Transport' : (row.nature === 'Travel' ? row.details.mode : (row.nature === 'Local Travel' ? (row.details.mode || 'Bike') : null)),
                     class_type: row.nature === 'Travel' ? row.details.classType : null,
                     booking_reference: row.nature === 'Travel' ? (row.details.pnr || row.details.bookingRef) : null,
                     refundable_flag: row.nature === 'Travel' ? row.details.refundable === 'Yes' : false,
                     meal_included_flag: row.nature === 'Travel' ? row.details.mealIncluded === true : false,
-                    vehicle_type: row.details.isPublicTransport ? row.details.remainingRoute : ((row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.subType || row.details.vehicleType) : null),
+                    vehicle_type: row.details.isPublicTransport ? (row.details.remainingRoute || 'Auto') : ((row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.subType || row.details.vehicleType || 'Own Bike') : null),
                     odo_start: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoStart && !row.details.isPublicTransport) ? parseFloat(row.details.odoStart) : null,
                     odo_end: ((row.nature === 'Travel' || row.nature === 'Local Travel') && row.details.odoEnd && !row.details.isPublicTransport) ? parseFloat(row.details.odoEnd) : null,
                     distance: (row.nature === 'Travel' || row.nature === 'Local Travel') ? (row.details.isPublicTransport ? 0 : parseFloat(row.details.totalKm || 0)) : null,
@@ -1068,10 +1100,12 @@ const TravelExpenseGrid = ({
                     planned_destination: row.details.plannedDestination || null,
                 };
 
-                // enforce fixed values for local rows when trip id not starting with TRP
+                // For isFixedLocal trips, apply defaults ONLY when values are not already set.
+                // The payload lines above already read the correct mode/subType from row.details.
+                // Never force-overwrite a value the user explicitly chose.
                 if (isFixedLocal && row.nature === 'Local Travel') {
-                    payload.travel_mode = 'Bike';
-                    payload.vehicle_type = 'Own Bike';
+                    if (!payload.travel_mode) payload.travel_mode = 'Bike';
+                    if (!payload.vehicle_type) payload.vehicle_type = 'Own Bike';
                     payload.booked_by = 'Self Booked';
                     payload.reimbursement_eligible = true;
                 }
@@ -1220,9 +1254,9 @@ const TravelExpenseGrid = ({
             claim: true,
             isExpanded: true
         };
-        if (isFixedLocal && targetNature === 'Local Travel') {
-            newRow.details.mode = 'Bike';
-            newRow.details.subType = 'Own Bike';
+        if (targetNature === 'Local Travel') {
+            newRow.details.mode = 'BIKE';
+            newRow.details.subType = 'OWN BIKE';
             newRow.details.bookedBy = 'Self Booked';
         }
         setRows(prevRows => [...prevRows, newRow]);
@@ -1328,8 +1362,8 @@ const TravelExpenseGrid = ({
                     const isOther = newDetails.isPublicTransport || newDetails.mode === 'Public Transport';
 
                     // KM Reimbursement for Own vehicles based on state rates
-                    if (!isOther && row.nature === 'Local Travel' && ['Own Car', 'Own Bike'].includes(newDetails.subType)) {
-                        const is4W = newDetails.subType === 'Own Car';
+                    if (!isOther && row.nature === 'Local Travel' && ['OWN CAR', 'OWN BIKE'].includes((newDetails.subType || '').toUpperCase())) {
+                        const is4W = (newDetails.subType || '').toUpperCase() === 'OWN CAR';
                         const vehicleKey = is4W ? '4 Wheeler' : '2 Wheeler';
                         const rate = fuelRates[vehicleKey];
 
@@ -1888,19 +1922,101 @@ const TravelExpenseGrid = ({
                                                                         )}
                                                                     </div>
                                                                 </div>
+                                                                {/* TRAVEL MODE & SUB-TYPE */}
+                                                                {!row.details.isPublicTransport && (
+                                                                    <div style={{ padding: '0 14px', display: 'grid', gridTemplateColumns: (row.details.mode || 'BIKE').toUpperCase() !== 'WALK' ? '1fr 1fr' : '1fr', gap: '12px', marginBottom: '10px' }}>
+                                                                        <div className="input-with-label-mini">
+                                                                            <label>Travel Mode *</label>
+                                                                            <select
+                                                                                className="cat-input"
+                                                                                value={(row.details.mode || 'BIKE').toUpperCase()}
+                                                                                onChange={e => {
+                                                                                    const selectedMode = e.target.value;
+                                                                                    let defaultSubType = '';
+                                                                                    let isPT = false;
+                                                                                    const upperMode = selectedMode.toUpperCase();
+                                                                                    if (upperMode === 'BIKE') {
+                                                                                        defaultSubType = 'OWN BIKE';
+                                                                                    } else if (upperMode === 'CAR') {
+                                                                                        defaultSubType = 'OWN CAR';
+                                                                                    } else if (upperMode === 'PUBLIC TRANSPORT' || upperMode.includes('BUS') || upperMode.includes('TRAIN') || upperMode.includes('METRO') || upperMode.includes('AUTO')) {
+                                                                                        defaultSubType = 'AUTO';
+                                                                                        isPT = true;
+                                                                                    } else if (upperMode === 'WALK') {
+                                                                                        defaultSubType = 'WALK';
+                                                                                        isPT = true;
+                                                                                    }
+                                                                                    updateDetails(row.id, 'mode', selectedMode);
+                                                                                    updateDetails(row.id, 'subType', defaultSubType);
+                                                                                    updateDetails(row.id, 'isPublicTransport', isPT);
+                                                                                }}
+                                                                            >
+                                                                                <option value="">Select Mode</option>
+                                                                                {localTravelModes.map(m => <option key={m} value={m}>{m}</option>)}
+                                                                            </select>
+                                                                        </div>
+
+                                                                        {(row.details.mode || 'BIKE').toUpperCase() !== 'WALK' && (
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Sub-Type *</label>
+                                                                                <select
+                                                                                    className="cat-input"
+                                                                                    value={(row.details.subType || 'OWN BIKE').toUpperCase()}
+                                                                                    onChange={e => {
+                                                                                        updateDetails(row.id, 'subType', e.target.value);
+                                                                                    }}
+                                                                                >
+                                                                                    <option value="">Select Sub-Type</option>
+                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'CAR' && localCarSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'BIKE' && localBikeSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'PUBLIC TRANSPORT' && (localProviders.length > 0 ? localProviders : FALLBACK_LOCAL_PT_SUBTYPES).map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                </select>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+
+                                                                {/* REASON FOR NON-DEFAULT TRAVEL */}
+                                                                {!row.details.isPublicTransport &&
+                                                                    ((row.details.mode || 'BIKE').toUpperCase() !== 'BIKE' ||
+                                                                        (row.details.subType || 'OWN BIKE').toUpperCase() !== 'OWN BIKE') && (
+                                                                        <div style={{ padding: '0 14px', marginBottom: '10px' }}>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label style={{ color: '#f97316', fontWeight: 'bold' }}>Reason for non-default travel *</label>
+                                                                                <input
+                                                                                    type="text"
+                                                                                    className="cat-input"
+                                                                                    placeholder="Why did you deviate from Bike / Own Bike?"
+                                                                                    value={row.details.otherReason || ''}
+                                                                                    onChange={e => updateDetails(row.id, 'otherReason', e.target.value)}
+                                                                                    style={{ border: '1px solid #f97316' }}
+                                                                                    title="Reason is mandatory when deviating from Bike and Own Bike"
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+
                                                                 {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
                                                                 <div style={{ padding: '0 14px', marginBottom: '10px' }}>
                                                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px' }}>
                                                                         <button
                                                                             type="button"
-                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', false)}
+                                                                            onClick={() => {
+                                                                                updateDetails(row.id, 'isPublicTransport', false);
+                                                                                updateDetails(row.id, 'mode', 'BIKE');
+                                                                                updateDetails(row.id, 'subType', 'OWN BIKE');
+                                                                            }}
                                                                             style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
                                                                             VEHICLE (ODOMETER)
                                                                         </button>
                                                                         <button
                                                                             type="button"
-                                                                            onClick={() => updateDetails(row.id, 'isPublicTransport', true)}
+                                                                            onClick={() => {
+                                                                                updateDetails(row.id, 'isPublicTransport', true);
+                                                                                updateDetails(row.id, 'mode', 'PUBLIC TRANSPORT');
+                                                                                updateDetails(row.id, 'subType', 'AUTO');
+                                                                            }}
                                                                             style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
                                                                         >
                                                                             OTHERS (BUS/AUTO)
@@ -1977,8 +2093,30 @@ const TravelExpenseGrid = ({
                                                                         </div>
                                                                         {!row.details.isPublicTransport ? (
                                                                             <div className="input-with-label-mini">
-                                                                                <label>Odo Reading</label>
-                                                                                <input type="number" placeholder="0" value={row.details.odoEnd || ''} onChange={e => updateDetails(row.id, 'odoEnd', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
+                                                                                <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                                                    <span>Odo Reading</span>
+                                                                                    {eligibility?.max_mileage_km > 0 && (
+                                                                                        <span style={{ color: '#6366f1', fontSize: '0.6rem', fontWeight: 700, background: '#eef2ff', padding: '1px 5px', borderRadius: '4px' }}>Limit: {parseFloat(eligibility.max_mileage_km)} km/trip</span>
+                                                                                    )}
+                                                                                </label>
+                                                                                <input
+                                                                                    type="number"
+                                                                                    placeholder="0"
+                                                                                    value={row.details.odoEnd || ''}
+                                                                                    max={eligibility?.max_mileage_km > 0 && row.details.odoStart ? parseFloat(row.details.odoStart) + parseFloat(eligibility.max_mileage_km) : undefined}
+                                                                                    onChange={e => {
+                                                                                        const val = parseFloat(e.target.value);
+                                                                                        const start = parseFloat(row.details.odoStart || 0);
+                                                                                        const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null;
+                                                                                        if (maxKm !== null && !isNaN(val) && !isNaN(start) && (val - start) > maxKm) {
+                                                                                            showToast(`Odometer exceeds your cadre limit of ${maxKm} km/day. Max allowed end reading: ${start + maxKm}`, 'error');
+                                                                                            return;
+                                                                                        }
+                                                                                        updateDetails(row.id, 'odoEnd', e.target.value);
+                                                                                    }}
+                                                                                    className={`cat-input${(() => { const s = parseFloat(row.details.odoStart || 0); const end = parseFloat(row.details.odoEnd || 0); const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null; return maxKm !== null && (end - s) > maxKm ? ' error' : ''; })()}`}
+                                                                                    disabled={isLocked || row.date !== todayStr}
+                                                                                />
                                                                             </div>
                                                                         ) : (
                                                                             <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
@@ -2013,6 +2151,30 @@ const TravelExpenseGrid = ({
                                                                         )}
                                                                     </div>
                                                                 </div>
+
+                                                                {/* MILEAGE LIMIT WARNING — card layout */}
+                                                                {(() => {
+                                                                    if (!row.details.isPublicTransport && row.details.odoStart && row.details.odoEnd) {
+                                                                        const distance = parseFloat(row.details.odoEnd) - parseFloat(row.details.odoStart);
+                                                                        if (distance > 0) {
+                                                                            const mileageCheck = checkMileage(distance);
+                                                                            if (mileageCheck.exceeds) {
+                                                                                return (
+                                                                                    <div style={{
+                                                                                        display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                                                                        background: '#fef2f2', border: '1px solid #fca5a5',
+                                                                                        borderRadius: '8px', padding: '8px 12px', marginBottom: '8px',
+                                                                                        fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600, lineHeight: 1.4
+                                                                                    }}>
+                                                                                        <AlertTriangle size={14} style={{ marginTop: '2px', flexShrink: 0, color: '#ef4444' }} />
+                                                                                        <span>⛔ {mileageCheck.warnMessage} Please correct the end odometer reading.</span>
+                                                                                    </div>
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    return null;
+                                                                })()}
 
                                                                 {/* CALC + INLINE JOB REPORT */}
                                                                 <div style={{ background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
@@ -2593,6 +2755,21 @@ const TravelExpenseGrid = ({
                                                                 <select className="cat-input mt-1" value={row.details.bookedBy || 'Self Booked'} onChange={e => { if (!isFixedLocal) updateDetails(row.id, 'bookedBy', e.target.value); }} disabled={isFixedLocal}>
                                                                     {bookedByOptions.map(b => <option key={b} value={b}>{b}</option>)}
                                                                 </select>
+
+                                                                {row.details.mode && (row.details.mode !== 'Bike' || row.details.subType !== 'Own Bike') && (
+                                                                    <div className="mt-1" style={{ position: 'relative' }}>
+                                                                        <input
+                                                                            type="text"
+                                                                            className="cat-input"
+                                                                            placeholder="Reason for non-default travel *"
+                                                                            value={row.details.otherReason || ''}
+                                                                            onChange={e => updateDetails(row.id, 'otherReason', e.target.value)}
+                                                                            disabled={isFixedLocal}
+                                                                            style={{ border: '1px solid #f97316' }}
+                                                                            title="Reason is mandatory when deviating from Bike and Own Bike"
+                                                                        />
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </td>
                                                         <td>
@@ -2671,10 +2848,10 @@ const TravelExpenseGrid = ({
                                                                         </button>
                                                                     </div>
 
-                                                                    {!row.details.isPublicTransport && ['Own Car', 'Company Car', 'Own Bike', 'Self Drive Rental'].includes(row.details.subType) && (
+                                                                    {!row.details.isPublicTransport && ['OWN CAR', 'COMPANY CAR', 'OWN BIKE', 'SELF DRIVE RENTAL'].includes((row.details.subType || '').toUpperCase()) && (
                                                                         <>
                                                                             {(() => {
-                                                                                const is4W = row.details.subType.includes('Car');
+                                                                                const is4W = (row.details.subType || '').toUpperCase().includes('CAR');
                                                                                 const rate = fuelRates[is4W ? '4 Wheeler' : '2 Wheeler'];
                                                                                 return (
                                                                                     <div className="mb-1" style={{ fontSize: '0.6rem', display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.8 }}>
@@ -2708,7 +2885,17 @@ const TravelExpenseGrid = ({
                                                                                         type="number"
                                                                                         placeholder="0"
                                                                                         value={row.details.odoEnd || ''}
-                                                                                        onChange={e => updateDetails(row.id, 'odoEnd', e.target.value)}
+                                                                                        max={eligibility?.max_mileage_km > 0 && row.details.odoStart ? parseFloat(row.details.odoStart) + parseFloat(eligibility.max_mileage_km) : undefined}
+                                                                                        onChange={e => {
+                                                                                            const val = parseFloat(e.target.value);
+                                                                                            const start = parseFloat(row.details.odoStart || 0);
+                                                                                            const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null;
+                                                                                            if (maxKm !== null && !isNaN(val) && !isNaN(start) && (val - start) > maxKm) {
+                                                                                                showToast(`Odometer exceeds your cadre limit of ${maxKm} km/day. Max allowed end reading: ${start + maxKm}`, 'error');
+                                                                                                return;
+                                                                                            }
+                                                                                            updateDetails(row.id, 'odoEnd', e.target.value);
+                                                                                        }}
                                                                                         className={errors[row.id]?.odoEnd ? 'error' : ''}
                                                                                         style={{ paddingRight: '50px', width: '100%' }}
                                                                                         disabled={isLocked || row.date !== todayStr}
@@ -2718,6 +2905,22 @@ const TravelExpenseGrid = ({
                                                                                     </button>
                                                                                 </div>
                                                                             </div>
+                                                                            {(() => {
+                                                                                if (row.details.odoStart && row.details.odoEnd) {
+                                                                                    const distance = parseFloat(row.details.odoEnd) - parseFloat(row.details.odoStart);
+                                                                                    if (distance > 0) {
+                                                                                        const mileageCheck = checkMileage(distance);
+                                                                                        if (mileageCheck.exceeds) {
+                                                                                            return (
+                                                                                                <div className="text-warning mb-2" style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, color: '#d97706' }}>
+                                                                                                    <AlertTriangle size={12} /> {mileageCheck.warnMessage}
+                                                                                                </div>
+                                                                                            );
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                return null;
+                                                                            })()}
                                                                         </>
                                                                     )}
 
@@ -3328,7 +3531,7 @@ const TravelExpenseGrid = ({
                                                                     title={(r.nature === 'Travel' || r.nature === 'Local Travel') && r.details?.bookedBy === 'Company Booked' ? "This ticket is booked and paid by the company. Please contact the Travel Desk for any changes." : ""}
                                                                 >
                                                                     {availableStatuses.map(s => {
-                                                                        const isOwnVehicle = r.details?.subType === 'Own Car' || r.details?.subType === 'Own Bike';
+                                                                        const isOwnVehicle = (r.details?.subType || '').toUpperCase() === 'OWN CAR' || (r.details?.subType || '').toUpperCase() === 'OWN BIKE';
                                                                         const isDisabled = (isOwnVehicle && (s === 'Cancelled' || s === 'No-Show')) || ((r.nature === 'Travel' || r.nature === 'Local Travel') && r.details?.bookedBy === 'Company Booked' && s !== 'Completed');
                                                                         return <option key={s} value={s} disabled={isDisabled}>{s}</option>;
                                                                     })}

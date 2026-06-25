@@ -99,10 +99,18 @@ def _build_statement_data(trip: Trip) -> dict:
     other_misc   = 0.0
     food_total   = 0.0
 
-    expenses = list(trip.expenses.all().order_by('date'))
+    expenses = list(trip.expenses.filter(is_deleted=False).order_by('date'))
 
     for exp in expenses:
-        amt  = float(exp.amount or 0)
+        if exp.status == 'Rejected':
+            amt = 0.0
+        else:
+            if exp.finance_selected_amount is not None:
+                amt = float(exp.finance_selected_amount)
+            elif exp.hr_selected_amount is not None:
+                amt = float(exp.hr_selected_amount)
+            else:
+                amt = float(exp.amount or 0)
         desc = _parse_desc(exp.description or '')
 
         # Prefer JSON-embedded fields, fall back to model fields / trip fields
@@ -117,7 +125,7 @@ def _build_statement_data(trip: Trip) -> dict:
 
         cat = exp.category or ''
 
-        if cat in INTERCITY_CATEGORIES or (exp.travel_mode and exp.travel_mode.strip()):
+        if cat in INTERCITY_CATEGORIES or (exp.travel_mode and exp.travel_mode.strip() and cat not in ['Others', 'Food', 'Accommodation', 'Incidental']):
             # Long-distance / intercity → Section I
             travel_fare += amt
             travel_rows.append({
@@ -167,15 +175,23 @@ def _build_statement_data(trip: Trip) -> dict:
         ('Miscellaneous:', other_totals['Others']),
     ]
 
-    grand_total = travel_fare + lodging + incidental + local_conv + other_misc + food_total
+    calculated_total = travel_fare + lodging + incidental + local_conv + other_misc + food_total
+
+    has_claim = hasattr(trip, 'claim')
+    claim = trip.claim if has_claim else None
+
+    # Ensure the grand total matches the Finance Hub sum of individual audited expense items
+    grand_total = calculated_total
 
     # Advances that are actually released
     advances = float(sum(
         float(a.executive_approved_amount or a.requested_amount or 0)
         for a in trip.advances.filter(status__in=['COMPLETED', 'Paid', 'Transferred', 'PARTIALLY_COMPLETED'])
     ))
-    to_be_refunded   = max(0.0, advances - grand_total)
-    to_be_reimbursed = max(0.0, grand_total - advances)
+    wallet_balance = float(trip.user.carry_forward_balance or 0) if trip.user else 0.0
+    net_payout = grand_total - advances - wallet_balance
+    to_be_refunded   = max(0.0, -net_payout)
+    to_be_reimbursed = max(0.0, net_payout)
 
     return {
         'emp_name':   emp_name,
@@ -200,6 +216,7 @@ def _build_statement_data(trip: Trip) -> dict:
         },
         'grand_total':      grand_total,
         'advance_taken':    advances,
+        'wallet_balance':   wallet_balance,
         'to_be_refunded':   to_be_refunded,
         'to_be_reimbursed': to_be_reimbursed,
         'trip_id': trip.trip_id,
@@ -429,9 +446,10 @@ def generate_pdf(data: dict) -> bytes:
                    Paragraph(f"<b>{format_inr(data['grand_total'])}</b>", S_smBR)])
     # Extra rows
     for lbl, val in [
-        ('Advance Taken',    data['advance_taken']),
-        ('To be Refunded',   data['to_be_refunded']),
-        ('To be Reimbursed', data['to_be_reimbursed']),
+        ('Advance Taken',      data['advance_taken']),
+        ('Wallet Balance Used', data['wallet_balance']),
+        ('To be Refunded',     data['to_be_refunded']),
+        ('To be Reimbursed',   data['to_be_reimbursed']),
     ]:
         s_data.append([Paragraph(lbl, S_smLbl),
                         Paragraph(format_inr(val), S_smR)])
@@ -566,32 +584,148 @@ def generate_excel(data: dict) -> bytes:
         cell.number_format = '##,##,##0.00'
         return cell
 
-    # ── Row 1: Title ────────────────────────────────────────────────────────
-    # If using template, A1 might already have logo/title. 
-    # Let's ensure title is set correctly if it's merged.
-    ws['C1'] = f'Travel Expenses Statement for the month of {data["month_label"]}'
-    ws['C1'].font = Font(bold=True, size=13, color='1E3A5F')
-    ws['C1'].alignment = Alignment(horizontal='center', vertical='center')
+    has_tpl = os.path.exists(tpl_path)
+    if has_tpl:
+        # Template title is at A2 (merged A2:K2)
+        ws['A2'] = f'Travel Expenses Statement for the month of {data["month_label"]}'
+        ws['A2'].font = Font(bold=True, size=13, color='1E3A5F')
+        ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
 
-    # ── Rows 2-5: Employee / Bank info ───────────────────────────────────────
-    info = [
-        ('Employee Name:', data['emp_name'], 'Bank Name:',   data['bank_name']),
-        ('Employee Code:', data['emp_code'], 'Account No:',  data['account_no']),
-        ('Project Name:',  data['project'],  'IFS Code:',    data['ifsc_code']),
-        ('Trip Source:',   data['base_loc'], 'Team Members:', data['members']),
-    ]
-    for offset, (l1, v1, l2, v2) in enumerate(info, start=2):
-        ws.cell(row=offset, column=1, value=l1).font = bf()
-        ws.cell(row=offset, column=2, value=v1).font = nf()
-        # Merge if not already merged in template
-        try: ws.merge_cells(start_row=offset, start_column=2, end_row=offset, end_column=5)
-        except: pass
-        
-        ws.cell(row=offset, column=7, value=l2).font = bf()
-        ws.cell(row=offset, column=8, value=v2).font = nf()
-        try: ws.merge_cells(start_row=offset, start_column=8, end_row=offset, end_column=10)
-        except: pass
-        ws.row_dimensions[offset].height = 16
+        # Write data to top-left cells of template merged ranges
+        for r, c, val in [
+            (3, 3, data['emp_name']),
+            (3, 11, data['bank_name']),
+            (4, 3, data['emp_code']),
+            (4, 11, data['account_no']),
+            (5, 3, data['project']),
+            (5, 11, data['ifsc_code']),
+            (6, 3, data['base_loc']),
+            (6, 11, data['members']),
+        ]:
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font = nf()
+
+        # Group expenses by date for Section I (Travel Particulars)
+        from collections import defaultdict
+        daily_data = defaultdict(lambda: {
+            'travel_fare': 0.0, 'lodging': 0.0, 'food': 0.0, 'incidental': 0.0,
+            'from': '', 'to': '', 'mode': '', 'dep_time': '', 'arr_time': '', 'km': 0.0
+        })
+
+        from .models import Trip
+        trip = Trip.objects.filter(trip_id=data['trip_id']).first()
+        expenses = list(trip.expenses.filter(is_deleted=False).order_by('date')) if trip else []
+
+        for exp in expenses:
+            date_str = str(exp.date)
+            if exp.status == 'Rejected':
+                amt = 0.0
+            else:
+                if exp.finance_selected_amount is not None:
+                    amt = float(exp.finance_selected_amount)
+                elif exp.hr_selected_amount is not None:
+                    amt = float(exp.hr_selected_amount)
+                else:
+                    amt = float(exp.amount or 0)
+
+            cat = exp.category or ''
+            if cat in INTERCITY_CATEGORIES or (exp.travel_mode and exp.travel_mode.strip() and cat not in ['Others', 'Food', 'Accommodation', 'Incidental']):
+                daily_data[date_str]['travel_fare'] += amt
+                desc = _parse_desc(exp.description or '')
+                daily_data[date_str]['from'] = desc.get('origin', '') or desc.get('from', '') or (trip.source if trip else '') or ''
+                daily_data[date_str]['to'] = desc.get('destination', '') or desc.get('to', '') or (trip.destination if trip else '') or ''
+                daily_data[date_str]['mode'] = desc.get('mode', '') or exp.travel_mode or exp.category or ''
+                daily_data[date_str]['dep_time'] = desc.get('dep_time', '') or desc.get('departure_time', '') or ''
+                daily_data[date_str]['arr_time'] = desc.get('arr_time', '') or desc.get('arrival_time', '') or ''
+                daily_data[date_str]['km'] = float(exp.distance or desc.get('distance', 0) or 0)
+            elif cat == 'Accommodation':
+                daily_data[date_str]['lodging'] += amt
+            elif cat == 'Food':
+                daily_data[date_str]['food'] += amt
+            elif cat == 'Incidental':
+                daily_data[date_str]['incidental'] += amt
+
+        # Write to Rows 11 to 22 (Section I)
+        sorted_dates = sorted(daily_data.keys())
+        for idx, d_str in enumerate(sorted_dates[:12]):
+            r_idx = 11 + idx
+            info_day = daily_data[d_str]
+            ws.cell(row=r_idx, column=2, value=d_str).font = nf()
+            ws.cell(row=r_idx, column=3, value=info_day['dep_time']).font = nf()
+            ws.cell(row=r_idx, column=4, value=info_day['from']).font = nf()
+            ws.cell(row=r_idx, column=5, value=d_str).font = nf()
+            ws.cell(row=r_idx, column=6, value=info_day['arr_time']).font = nf()
+            ws.cell(row=r_idx, column=7, value=info_day['to']).font = nf()
+            ws.cell(row=r_idx, column=8, value=info_day['mode']).font = nf()
+
+            if info_day['km'] > 0:
+                ws.cell(row=r_idx, column=9, value=info_day['km']).font = nf()
+
+            if info_day['travel_fare'] > 0:
+                ws.cell(row=r_idx, column=10, value=None)
+                ws.cell(row=r_idx, column=11, value=info_day['travel_fare']).font = nf()
+
+            if info_day['lodging'] > 0:
+                ws.cell(row=r_idx, column=12, value=info_day['lodging']).font = nf()
+            if info_day['food'] > 0:
+                ws.cell(row=r_idx, column=13, value=info_day['food']).font = nf()
+            if info_day['incidental'] > 0:
+                ws.cell(row=r_idx, column=14, value=info_day['incidental']).font = nf()
+
+        # Write Local Conveyance (Section II Left) starts at Row 26, Columns B to H
+        for idx, r in enumerate(data['local_rows'][:9]):
+            r_idx = 26 + idx
+            ws.cell(row=r_idx, column=2, value=r['date']).font = nf()
+            ws.cell(row=r_idx, column=3, value=r['from']).font = nf()
+            ws.cell(row=r_idx, column=5, value=r['to']).font = nf()
+            ws.cell(row=r_idx, column=7, value=r['mode']).font = nf()
+            ws.cell(row=r_idx, column=8, value=r['amount']).font = nf()
+
+        # Write Other/Misc Expenses (Section II Right) starts at Row 26, Columns I to K
+        others_exps = [e for e in expenses if e.category == 'Others']
+        for idx, e in enumerate(others_exps[:9]):
+            r_idx = 26 + idx
+            if e.status == 'Rejected':
+                amt = 0.0
+            else:
+                amt = float(e.finance_selected_amount if e.finance_selected_amount is not None else (e.hr_selected_amount if e.hr_selected_amount is not None else e.amount))
+            ws.cell(row=r_idx, column=9, value=e.description or 'Others').font = nf()
+            ws.cell(row=r_idx, column=11, value=amt).font = nf()
+
+        # Write Summary Block (Row 32-35, Columns L and P)
+        ws['P32'] = data['grand_total']
+        ws['L33'] = "Advance Taken & Wallet Used"
+        ws['P33'] = data['advance_taken'] + data['wallet_balance']
+        ws['P34'] = data['to_be_refunded']
+        ws['P35'] = data['to_be_reimbursed']
+
+        # Save and return
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue()
+    else:
+        # Fallback/blank workbook title at A1
+        ws['A1'] = f'Travel Expenses Statement for the month of {data["month_label"]}'
+        ws['A1'].font = Font(bold=True, size=13, color='1E3A5F')
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+
+        info = [
+            ('Employee Name:', data['emp_name'], 'Bank Name:',   data['bank_name']),
+            ('Employee Code:', data['emp_code'], 'Account No:',  data['account_no']),
+            ('Project Name:',  data['project'],  'IFS Code:',    data['ifsc_code']),
+            ('Trip Source:',   data['base_loc'], 'Team Members:', data['members']),
+        ]
+        for offset, (l1, v1, l2, v2) in enumerate(info, start=2):
+            ws.cell(row=offset, column=1, value=l1).font = bf()
+            ws.cell(row=offset, column=2, value=v1).font = nf()
+            try: ws.merge_cells(start_row=offset, start_column=2, end_row=offset, end_column=5)
+            except: pass
+            
+            ws.cell(row=offset, column=7, value=l2).font = bf()
+            ws.cell(row=offset, column=8, value=v2).font = nf()
+            try: ws.merge_cells(start_row=offset, start_column=8, end_row=offset, end_column=10)
+            except: pass
+            ws.row_dimensions[offset].height = 16
 
     # ── Section I ────────────────────────────────────────────────────────────
     S1 = 7
@@ -679,9 +813,10 @@ def generate_excel(data: dict) -> bytes:
     ycell(ws, gt_r, SC + 1, data['grand_total'],   bold=True)
 
     for off, (lbl, val) in enumerate([
-        ('Advance Taken',    data['advance_taken']),
-        ('To be Refunded',   data['to_be_refunded']),
-        ('To be Reimbursed', data['to_be_reimbursed']),
+        ('Advance Taken',      data['advance_taken']),
+        ('Wallet Balance Used', data['wallet_balance']),
+        ('To be Refunded',     data['to_be_refunded']),
+        ('To be Reimbursed',   data['to_be_reimbursed']),
     ], 1):
         r = gt_r + off
         wcell(ws, r, SC,     lbl)
@@ -714,7 +849,9 @@ class ExpenseStatementPDFView(APIView):
         except Trip.DoesNotExist:
             return Response({'error': 'Trip not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        user = request.custom_user
+        user = getattr(request, 'custom_user', None)
+        if not user:
+            return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
         role_name = user.active_role.lower()
         if trip.user != user and role_name not in ['admin', 'finance', 'hr', 'cfo']:
             return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
@@ -740,7 +877,9 @@ class ExpenseStatementExcelView(APIView):
         except Trip.DoesNotExist:
             return Response({'error': 'Trip not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        user = request.custom_user
+        user = getattr(request, 'custom_user', None)
+        if not user:
+            return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
         role_name = user.active_role.lower()
         if trip.user != user and role_name not in ['admin', 'finance', 'hr', 'cfo']:
             return Response({'error': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)

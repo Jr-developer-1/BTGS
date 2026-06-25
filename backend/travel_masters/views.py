@@ -1,7 +1,7 @@
 from django.db import models
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from .models import (
     Location, Route, RoutePath, TollGate, TollRate, RoutePathToll, 
     FuelRateMaster, EligibilityRule, Cadre, Circle, Jurisdiction
@@ -602,6 +602,105 @@ class EligibilityRuleViewSet(viewsets.ModelViewSet):
     queryset = EligibilityRule.objects.all()
     serializer_class = EligibilityRuleSerializer
 
+    @action(detail=False, methods=['get'])
+    def designations(self, request):
+        import time
+        import urllib.parse
+        import requests
+        from django.core.cache import cache
+        from api_management.models import SystemConfig
+        from api_management.utils import decrypt_key
+        from travel_masters.models import Cadre
+
+        # 1. Try to read designations from cache
+        cache_key = 'EXTERNAL_ROLES_LIST'
+        cached_roles = cache.get(cache_key)
+        if cached_roles:
+            return Response(cached_roles)
+
+        unique_desigs = set()
+
+        # 2. Try to fetch from external API /api/roles/
+        try:
+            api_url = SystemConfig.objects.get(key='external_api_url').value
+            api_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
+            
+            # Transform /api/employees to /api/roles/
+            parts = list(urllib.parse.urlparse(api_url))
+            path_parts = parts[2].rstrip('/').split('/')
+            if path_parts:
+                path_parts[-1] = 'roles'
+            parts[2] = '/'.join(path_parts) + '/'
+            roles_url = urllib.parse.urlunparse(parts)
+            
+            headers = {'X-Api-Key': api_key, 'Accept': 'application/json'}
+            r = requests.get(roles_url, headers=headers, timeout=8)  # fast-fail
+            if r.status_code == 200:
+                data = r.json() or []
+                for item in data:
+                    if isinstance(item, dict):
+                        role_name = item.get('role_name')
+                        if role_name:
+                            unique_desigs.add(role_name)
+                        for job in item.get('jobs', []):
+                            if isinstance(job, dict) and job.get('role_name'):
+                                unique_desigs.add(job.get('role_name'))
+        except Exception as e:
+            print(f"Error fetching roles from external API: {e}")
+
+        # 3. Fallback 1: Extract unique designations from employee cache (if present)
+        if not unique_desigs:
+            try:
+                from api_management.services import safe_cache_get, GLOBAL_EMPLOYEE_CACHE
+                cached_data = GLOBAL_EMPLOYEE_CACHE.get('data') or safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+                if cached_data:
+                    for emp in cached_data:
+                        if isinstance(emp, dict):
+                            pos = emp.get('position') or {}
+                            role_name = pos.get('role_name')
+                            if role_name:
+                                unique_desigs.add(role_name)
+                            for p in emp.get('positions_details', []):
+                                if isinstance(p, dict) and p.get('role_name'):
+                                    unique_desigs.add(p.get('role_name'))
+            except Exception:
+                pass
+
+        # 4. Fallback 2: Fallback to existing Cadre keywords in DB
+        if not unique_desigs:
+            try:
+                for c in Cadre.objects.all():
+                    if c.designation_keywords:
+                        for kw in c.designation_keywords:
+                            if kw:
+                                unique_desigs.add(kw)
+            except Exception:
+                pass
+
+        sorted_roles = sorted(list(filter(None, unique_desigs)))
+
+        # Cache the result if we successfully retrieved roles from the API
+        if sorted_roles:
+            cache.set(cache_key, sorted_roles, 86400) # Cache for 24 hours
+
+        return Response(sorted_roles)
+
+
+    @action(detail=False, methods=['get', 'post'], url_path='global-policy')
+    def global_policy(self, request):
+        from api_management.models import SystemConfig
+        if request.method == 'POST':
+            enabled = request.data.get('enabled', True)
+            SystemConfig.objects.update_or_create(
+                key='global_policy_enabled',
+                defaults={'value': 'true' if enabled else 'false'}
+            )
+            return Response({"enabled": enabled})
+        else:
+            config = SystemConfig.objects.filter(key='global_policy_enabled').first()
+            enabled = config.value.lower() == 'true' if config else True
+            return Response({"enabled": enabled})
+
     @action(detail=False, methods=['post'], url_path='bulk-save')
     def bulk_save(self, request):
         rules_data = request.data
@@ -619,9 +718,7 @@ class EligibilityRuleViewSet(viewsets.ModelViewSet):
                 else:
                     # Check for duplicates before creation to avoid integrity errors
                     existing = EligibilityRule.objects.filter(
-                        cadre_id=data.get('cadre'),
-                        category=data.get('category'),
-                        city_type=data.get('city_type', 'N/A')
+                        cadre_id=data.get('cadre')
                     ).first()
                     
                     if existing:
@@ -644,21 +741,18 @@ class EligibilityRuleViewSet(viewsets.ModelViewSet):
         if results["errors"]:
             return Response(results, status=status.HTTP_207_MULTI_STATUS)
         return Response(results, status=status.HTTP_200_OK)
-
+ 
     def get_queryset(self):
         queryset = EligibilityRule.objects.all()
         cadre = self.request.query_params.get('cadre')
-        category = self.request.query_params.get('category')
-        city_type = self.request.query_params.get('city_type')
         
         if cadre:
-            queryset = queryset.filter(cadre__iexact=cadre)
-        if category:
-            queryset = queryset.filter(category__iexact=category)
-        if city_type:
-            queryset = queryset.filter(city_type__iexact=city_type)
+            if cadre.isdigit():
+                queryset = queryset.filter(cadre_id=cadre)
+            else:
+                queryset = queryset.filter(cadre__name__icontains=cadre)
             
-        return queryset.order_by('cadre__name', 'category', 'city_type')
+        return queryset.order_by('cadre__name')
 
 class CadreViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
@@ -695,6 +789,12 @@ class JurisdictionViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
     queryset = Jurisdiction.objects.all()
     serializer_class = JurisdictionSerializer
+
+    def get_permissions(self):
+        # The 'projects' action is used by HR users — allow any authenticated user
+        if self.action == 'projects':
+            return [IsCustomAuthenticated()]
+        return [IsAdmin()]
 
     def get_queryset(self):
         queryset = Jurisdiction.objects.all()
@@ -756,30 +856,296 @@ class JurisdictionViewSet(viewsets.ModelViewSet):
         if results["errors"]:
             return Response(results, status=status.HTTP_207_MULTI_STATUS)
         return Response(results, status=status.HTTP_200_OK)
-
     @action(detail=False, methods=['get'])
     def projects(self, request):
         """
         Custom endpoint to get unique projects from external API (Employees API)
+        with robust caching, background refresh, and database fallback.
         """
-        try:
-            # Fetch all employees to extract unique projects
-            data = fetch_employee_data(fetch_all_pages=True, page_size=100)
+        from django.core.cache import cache
+        import threading
+        
+        # 1. Try to read from cache first
+        cached_projects = cache.get('UNIQUE_PROJECTS_LIST')
+        
+        # Check if a refresh was explicitly requested
+        force_fresh = request.query_params.get('force_fresh', 'false').lower() == 'true'
+        
+        # 2. If cache is empty or force_fresh, trigger a background task to rebuild it
+        if not cached_projects or force_fresh:
+            # Rebuild in background
+            def bg_sync_task():
+                # Prevent parallel sync runs
+                if cache.get('UNIQUE_PROJECTS_SYNC_RUNNING'):
+                    return
+                cache.set('UNIQUE_PROJECTS_SYNC_RUNNING', True, 3600)
+                try:
+                    from api_management.models import SystemConfig
+                    from api_management.utils import decrypt_key
+                    import requests, math, time
+                    
+                    api_url = SystemConfig.objects.get(key='external_api_url').value
+                    api_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
+                    headers = {'X-Api-Key': api_key, 'Accept': 'application/json'}
+                    
+                    # Fetch page 1
+                    r = requests.get(api_url, params={'page': 1}, headers=headers, timeout=15)
+                    if r.status_code == 200:
+                        data = r.json()
+                        count = data.get('count', 0)
+                        results = data.get('results', [])
+                        
+                        unique_projects = {}
+                        for emp in results:
+                            proj = emp.get('project', {})
+                            if proj and isinstance(proj, dict):
+                                name = proj.get('name')
+                                code = proj.get('code')
+                                if name and code:
+                                    unique_projects[code] = {"name": name, "code": code}
+                                    
+                        total_pages = math.ceil(count / 10)
+                        
+                        # Store page 1 results to cache immediately so user gets something!
+                        existing = cache.get('UNIQUE_PROJECTS_LIST') or []
+                        for p in existing:
+                            if p['code'] not in unique_projects:
+                                unique_projects[p['code']] = p
+                        cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+                        
+                        # Scan remaining pages in background
+                        for p_num in range(2, total_pages + 1):
+                            if not cache.get('UNIQUE_PROJECTS_SYNC_RUNNING'):
+                                break
+                            try:
+                                # 20s timeout per parallel page — don't let slow pages stall the pool
+                                pr = requests.get(api_url, params={'page': p_num}, headers=headers, timeout=20)
+                                if pr.status_code == 200:
+                                    p_results = pr.json().get('results', [])
+                                    page_projects = {}
+                                    for emp in p_results:
+                                        proj = emp.get('project', {})
+                                        if proj and isinstance(proj, dict):
+                                            name = proj.get('name')
+                                            code = proj.get('code')
+                                            if name and code:
+                                                page_projects[code] = {"name": name, "code": code}
+                                    if page_projects:
+                                        # Merge and update cache
+                                        current = cache.get('UNIQUE_PROJECTS_LIST') or []
+                                        curr_dict = {p['code']: p for p in current}
+                                        updated = False
+                                        for code, p in page_projects.items():
+                                            if code not in curr_dict:
+                                                curr_dict[code] = p
+                                                updated = True
+                                        if updated:
+                                            cache.set('UNIQUE_PROJECTS_LIST', list(curr_dict.values()), 30 * 86400)
+                                elif pr.status_code == 429:
+                                    time.sleep(5)
+                            except Exception:
+                                pass
+                            time.sleep(0.5) # Sleep 0.5s to be gentle on external API
+                except Exception:
+                    pass
+                finally:
+                    cache.delete('UNIQUE_PROJECTS_SYNC_RUNNING')
+                    
+            t = threading.Thread(target=bg_sync_task)
+            t.daemon = True
+            t.start()
             
-            if not data or "error" in data:
-                return Response({"error": "Failed to fetch project data from Employee API"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Cache is cold — build a response instantly from LOCAL database sources only.
+            # The background thread above will populate the cache for next time.
+            if not cached_projects:
+                temp_projects = {}
 
-            results = data.get('results', [])
-            unique_projects = {} # Use code as key to ensure uniqueness
+                # Source 1: Jurisdiction DB records (instant, no external call)
+                try:
+                    db_projects = Jurisdiction.objects.all().values('project_code', 'project_name').distinct()
+                    for jp in db_projects:
+                        code = jp.get('project_code')
+                        name = jp.get('project_name')
+                        if code and name and code not in temp_projects:
+                            temp_projects[code] = {"name": name, "code": code}
+                except Exception:
+                    pass
+
+                # Source 2: HRPositionConfig project codes
+                try:
+                    from travel.models import HRPositionConfig
+                    configs = HRPositionConfig.objects.all().values('project_code').distinct()
+                    for c in configs:
+                        code = c.get('project_code')
+                        if code and code not in temp_projects:
+                            name = code.replace('-', ' ').replace('_', ' ').strip()
+                            temp_projects[code] = {"name": f"{name} (Local)", "code": code}
+                except Exception:
+                    pass
+
+                # Source 3: In-memory GLOBAL_EMPLOYEE_CACHE (warm if background sync ran)
+                try:
+                    from api_management.services import GLOBAL_EMPLOYEE_CACHE
+                    cached_emp = GLOBAL_EMPLOYEE_CACHE.get('data') or []
+                    for item in cached_emp:
+                        if isinstance(item, dict):
+                            proj = item.get('project', {})
+                            if proj and isinstance(proj, dict):
+                                code = proj.get('code')
+                                name = proj.get('name')
+                                if code and name and code not in temp_projects:
+                                    temp_projects[code] = {"name": name, "code": code}
+                except Exception:
+                    pass
+
+                # Always include General
+                if 'General' not in temp_projects:
+                    temp_projects['General'] = {"name": "General (Global Default)", "code": "General"}
+
+                cached_projects = list(temp_projects.values())
+
+        return Response(cached_projects)
+
+@api_view(['GET'])
+@permission_classes([IsCustomAuthenticated])
+def my_eligibility_view(request):
+    try:
+        user = getattr(request, 'custom_user', None)
+        if not user:
+            return Response({"error": "User not authenticated"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # 1. Resolve user cadre based on designation keywords
+        desig = (user.designation or '').strip().lower()
+        matched_cadre = None
+
+        if desig:
+            # Build list of (keyword, cadre) tuples
+            keyword_cadre_pairs = []
+            for cadre in Cadre.objects.all():
+                for kw in (cadre.designation_keywords or []):
+                    if kw:
+                        keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
             
-            for emp in results:
-                proj = emp.get('project', {})
-                if proj and isinstance(proj, dict):
-                    name = proj.get('name')
-                    code = proj.get('code')
-                    if name and code:
-                        unique_projects[code] = {"name": name, "code": code}
+            # Sort by keyword length descending (longer/more specific matches first)
+            keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
             
-            return Response(list(unique_projects.values()))
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            import re
+            desig_words = re.findall(r'[a-z0-9]+', desig)
+            desig_words_set = set(desig_words)
+            
+            for kw_clean, cadre in keyword_cadre_pairs:
+                kw_words = re.findall(r'[a-z0-9]+', kw_clean)
+                if not kw_words:
+                    continue
+                # Check word-based match
+                if all(word in desig_words_set for word in kw_words):
+                    matched_cadre = cadre
+                    break
+                # Fallback to direct substring
+                if kw_clean in desig:
+                    matched_cadre = cadre
+                    break
+
+        # Role fallbacks if no cadre matched
+        if not matched_cadre:
+            role = getattr(user, 'active_role', '').lower()
+            if role in ['admin', 'cfo']:
+                matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
+            elif role in ['hr', 'finance']:
+                matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
+
+        # Default fallback
+        if not matched_cadre:
+            matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
+        if not matched_cadre:
+            matched_cadre = Cadre.objects.first()
+
+        if not matched_cadre:
+            return Response({"error": "No cadres configured in the system"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get global policy status
+        from api_management.models import SystemConfig
+        config = SystemConfig.objects.filter(key='global_policy_enabled').first()
+        global_policy_enabled = config.value.lower() == 'true' if config else True
+
+        # Fetch latest eligibility rule (active or inactive) for the cadre
+        rule = EligibilityRule.objects.filter(cadre=matched_cadre).order_by('-id').first()
+        rule_active = rule.is_active if rule else False
+        policy_enforced = global_policy_enabled and rule_active
+
+        if not rule:
+            # Fallback if cadre exists but no rule configured
+            return Response({
+                "cadre": matched_cadre.name,
+                "global_policy_enabled": global_policy_enabled,
+                "rule_active": False,
+                "policy_enforced": False,
+                "travel": {
+                    "air": {"allowed": True, "class": "NA", "warn": False},
+                    "train": {"allowed": True, "class": "Sleeper or Equivalent", "warn": False},
+                    "bus": {"allowed": True, "class": "A/c. Bus or Equivalent", "warn": False},
+                    "car": {"allowed": True, "notes": "NA", "warn": False},
+                    "local_conveyance": {"allowed": True, "type": "Online 2 or 3 Wheeler", "warn": False}
+                },
+                "accommodation": {
+                    "state_hq": 999999.0,
+                    "districts": 999999.0,
+                    "others": 999999.0,
+                    "own_stay_state_hq_pct": 100.0,
+                    "own_stay_districts_pct": 100.0,
+                    "own_stay_others_pct": 100.0
+                },
+                "daily_allowance": 999999.0,
+                "max_mileage_km": 0.0,
+                "laundry_days_threshold": 0
+            })
+
+        # 3. Construct clean structured response matching frontend expectation
+        response_data = {
+            "cadre": matched_cadre.name,
+            "global_policy_enabled": global_policy_enabled,
+            "rule_active": rule_active,
+            "policy_enforced": policy_enforced,
+            "travel": {
+                "air": {
+                    "allowed": True if not policy_enforced else rule.air_allowed,
+                    "class": rule.air_class or "NA",
+                    "warn": False if not policy_enforced else not rule.air_allowed
+                },
+                "train": {
+                    "allowed": True if not policy_enforced else rule.train_allowed,
+                    "class": rule.train_class or "NA",
+                    "warn": False if not policy_enforced else not rule.train_allowed
+                },
+                "bus": {
+                    "allowed": True if not policy_enforced else rule.bus_allowed,
+                    "class": rule.bus_class or "NA",
+                    "warn": False if not policy_enforced else not rule.bus_allowed
+                },
+                "car": {
+                    "allowed": True if not policy_enforced else rule.car_allowed,
+                    "notes": rule.car_notes or "NA",
+                    "warn": False if not policy_enforced else not rule.car_allowed
+                },
+                "local_conveyance": {
+                    "allowed": True if not policy_enforced else rule.local_conveyance_allowed,
+                    "type": rule.local_conveyance_type or "NA",
+                    "warn": False if not policy_enforced else not rule.local_conveyance_allowed
+                }
+            },
+            "accommodation": {
+                "state_hq": float(rule.accommodation_state_hq),
+                "districts": float(rule.accommodation_districts),
+                "others": float(rule.accommodation_others),
+                "own_stay_state_hq_pct": float(rule.own_stay_state_hq_pct),
+                "own_stay_districts_pct": float(rule.own_stay_districts_pct),
+                "own_stay_others_pct": float(rule.own_stay_others_pct)
+            },
+            "daily_allowance": float(rule.daily_allowance_amount),
+            "max_mileage_km": float(rule.max_mileage_km),
+            "laundry_days_threshold": int(rule.laundry_days_threshold)
+        }
+        return Response(response_data)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

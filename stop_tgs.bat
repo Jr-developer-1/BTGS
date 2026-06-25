@@ -25,9 +25,14 @@ for %%P in (%ALL_PORTS%) do (
     )
 )
 
+echo [CHECK] Terminating Nginx frontend server...
+taskkill /F /IM nginx.exe >nul 2>&1
+
+echo [CHECK] Terminating Notification Scheduler...
+wmic process where "CommandLine like '%%run_scheduler%%'" call terminate >nul 2>&1
+
 echo.
 echo ============================================================================
 echo   SHUTDOWN COMPLETE
-echo   All backend instances have been terminated.
+echo   All frontend, backend, and scheduler instances have been terminated.
 echo ============================================================================
-pause

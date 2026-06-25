@@ -70,7 +70,7 @@ class _BulkResolveRejectionsScreenState
     super.dispose();
   }
 
-  Future<void> _resubmit() async {
+  Future<void> _resubmit(String status) async {
     setState(() => _isSubmitting = true);
     try {
       // Rebuild the full payload.
@@ -111,13 +111,19 @@ class _BulkResolveRejectionsScreenState
         tripId: widget.tripId,
         jsonData: finalPayload, // Send all rows
         parentBatchId: widget.batchId,
+        status: status,
       );
 
       if (mounted) {
+        final isDraft = status == 'Draft';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Bulk batch resubmitted successfully'),
-            backgroundColor: Color(0xFF10B981),
+          SnackBar(
+            content: Text(
+              isDraft
+                  ? 'Batch saved as Draft successfully'
+                  : 'Bulk batch resubmitted successfully',
+            ),
+            backgroundColor: const Color(0xFF10B981),
           ),
         );
         Navigator.pop(context, true);
@@ -602,34 +608,65 @@ class _BulkResolveRejectionsScreenState
           BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20),
         ],
       ),
-      child: ElevatedButton(
-        onPressed: _isSubmitting ? null : _resubmit,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF10B981),
-          foregroundColor: Colors.white,
-          minimumSize: const Size(double.infinity, 56),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 4,
-        ),
-        child: _isSubmitting
-            ? const CircularProgressIndicator(color: Colors.white)
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.send_rounded, size: 20),
-                  const SizedBox(width: 12),
-                  Text(
-                    'RESUBMIT CORRECTED BATCH',
-                    style: GoogleFonts.plusJakartaSans(
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _isSubmitting ? null : () => _resubmit('Draft'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF0284C7),
+                side: const BorderSide(color: Color(0xFF0284C7), width: 2),
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
+              child: Text(
+                'SAVE AS DRAFT',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: ElevatedButton(
+              onPressed: _isSubmitting ? null : () => _resubmit('Submitted'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+              ),
+              child: _isSubmitting
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.send_rounded, size: 20),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'RESUBMIT BATCH',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                              fontSize: 12,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
       ),
     );
   }

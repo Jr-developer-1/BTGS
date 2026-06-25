@@ -125,19 +125,38 @@ const TravelCreation = () => {
                     if (!derivedCode) derivedCode = 'GENERAL';
 
                     const positionName = me.position?.name || 'Employee';
+                    const jobName = me.positions_details?.[0]?.job_name || me.position?.role_name;
                     let derivedPosition = 'EMP';
-                    if (positionName) {
-                        // If the first word is short (like 'OE'), use it directly
-                        const words = positionName.split(' ').filter(w => w.length > 0);
+                    
+                    if (jobName) {
+                        const cleanJob = jobName.trim();
+                        if (cleanJob.length <= 4 && !cleanJob.includes(' ')) {
+                            derivedPosition = cleanJob.toUpperCase();
+                        } else {
+                            const words = cleanJob.split(/[\s-]+/).filter(w => w.length > 0);
+                            derivedPosition = words.map(w => w[0]).join('').toUpperCase();
+                        }
+                    } else if (positionName) {
+                        const words = positionName.split(/[\s-]+/).filter(w => w.length > 0);
                         if (words.length > 0) {
                             const firstWord = words[0];
-                            if (firstWord.length <= 3) {
+                            if (firstWord.length <= 3 && isNaN(firstWord)) {
                                 derivedPosition = firstWord.toUpperCase();
                             } else {
-                                // Fallback to acronym of first letter of each word
-                                derivedPosition = words.map(w => w[0]).join('').toUpperCase();
+                                derivedPosition = words
+                                    .filter(w => isNaN(w))
+                                    .map(w => w[0])
+                                    .join('')
+                                    .toUpperCase() || 'EMP';
                             }
                         }
+                    }
+
+                    // Append district if available
+                    const district = me.office?.geo_location?.district || me.position?.geo_location?.district;
+                    if (district) {
+                        const cleanDistrict = district.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                        derivedPosition = `${derivedPosition}${cleanDistrict}`;
                     }
 
                     setFormData(prev => ({
@@ -195,11 +214,34 @@ const TravelCreation = () => {
     const handleFileChange = (e) => {
         const selectedFile = e.target.files[0];
         if (selectedFile) {
-            if (selectedFile.name.endsWith('.xlsx') || selectedFile.name.endsWith('.xls')) {
-                setFile(selectedFile);
-            } else {
+            const isExcel = selectedFile.name.endsWith('.xlsx') || selectedFile.name.endsWith('.xls');
+            if (!isExcel) {
                 showToast("Please select a valid Excel file (.xlsx or .xls)", "error");
+                e.target.value = null;
+                return;
             }
+
+            let monthFormatted = 'MONTH';
+            if (formData.month) {
+                const date = new Date(formData.month + '-01');
+                const month = date.toLocaleString('default', { month: 'short' }).toUpperCase();
+                const year = date.getFullYear().toString().slice(-2);
+                monthFormatted = `${month}${year}`;
+            }
+            const expectedBaseName = `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}`.toLowerCase();
+            
+            const lastDotIndex = selectedFile.name.lastIndexOf('.');
+            const selectedBaseName = (lastDotIndex !== -1 ? selectedFile.name.substring(0, lastDotIndex) : selectedFile.name).toLowerCase();
+
+            if (selectedBaseName !== expectedBaseName) {
+                const expectedFullName = `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}.xlsx`;
+                showToast(`Invalid File Name! The uploaded file must be named exactly: ${expectedFullName}`, "error");
+                e.target.value = null;
+                setFile(null);
+                return;
+            }
+
+            setFile(selectedFile);
         }
     };
 
@@ -208,6 +250,24 @@ const TravelCreation = () => {
 
         if (!file) {
             showToast("Please upload the activities file", "error");
+            return;
+        }
+
+        let monthFormatted = 'MONTH';
+        if (formData.month) {
+            const date = new Date(formData.month + '-01');
+            const month = date.toLocaleString('default', { month: 'short' }).toUpperCase();
+            const year = date.getFullYear().toString().slice(-2);
+            monthFormatted = `${month}${year}`;
+        }
+        const expectedBaseName = `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}`.toLowerCase();
+        
+        const lastDotIndex = file.name.lastIndexOf('.');
+        const selectedBaseName = (lastDotIndex !== -1 ? file.name.substring(0, lastDotIndex) : file.name).toLowerCase();
+
+        if (selectedBaseName !== expectedBaseName) {
+            const expectedFullName = `ITS-${formData.project}-${formData.positionCode}-${monthFormatted}.xlsx`;
+            showToast(`File name must match the expected template name: ${expectedFullName}`, "error");
             return;
         }
 
@@ -239,6 +299,7 @@ const TravelCreation = () => {
                 purpose: formData.purpose,
                 travel_mode: 'Car / Jeep / Van',
                 project_code: formData.project,
+                is_tour_plan: true,
                 // reporting_manager is determined on the server from the logged-in user
             };
 

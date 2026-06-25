@@ -114,6 +114,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final userEmail = (userDetails['email'] ?? '').toString();
       final isFaceEnrolled = userDetails['is_face_enrolled'] == true;
       final bool requiresChange =
+          response['requires_password_change'] == true ||
           userDetails['requires_password_change'] == true;
 
       if (requiresChange) {

@@ -95,12 +95,77 @@ class User(models.Model):
         # 1. Guard for literal static system accounts by ID
         # Only skip the API for the specific local-only management identities
         lower_id = self.employee_id.lower()
-        static_system_ids = ['admin', 'admin001', 'hr', 'guesthousemanager', 'finance', 'cfo']
+        static_system_ids = ['admin', 'admin001', 'admino01', 'hr', 'guesthousemanager', 'finance', 'cfo']
         if lower_id in static_system_ids:
              return None
              
         from api_management.services import get_dynamic_employee_data
         return get_dynamic_employee_data(self.employee_id, force_fresh=force_fresh)
+
+    @property
+    def is_blocked_by_api(self):
+        # 1. System static users are never blocked
+        lower_id = self.employee_id.lower()
+        static_system_ids = ['admin', 'admin001', 'admino01', 'hr', 'guesthousemanager', 'finance', 'cfo']
+        if lower_id in static_system_ids:
+            return False
+            
+        data = self._get_api_data()
+        if not data:
+            return False # if API is down, fallback to local DB is_active
+            
+        from datetime import datetime, date
+        today = date.today()
+        
+        # A. Check all possible end/resignation/scheduled dates first
+        has_future_date = False
+        has_past_date = False
+        
+        # Check employee dates
+        emp = data.get('employee', {})
+        for field in ['resignation_date', 'end_date', 'scheduled_to_date', 'scheduled_to', 'leaving_date', 'last_working_day', 'last_working_date']:
+            val_str = emp.get(field)
+            if val_str:
+                try:
+                    limit_date = datetime.strptime(str(val_str).split('T')[0], '%Y-%m-%d').date()
+                    if limit_date >= today:
+                        has_future_date = True
+                    else:
+                        has_past_date = True
+                except:
+                    pass
+                    
+        # Check positions_details dates
+        for pos in data.get('positions_details', []):
+            for field in ['end_date', 'resignation_date', 'scheduled_to_date', 'scheduled_to']:
+                val_str = pos.get(field)
+                if val_str:
+                    try:
+                        limit_date = datetime.strptime(str(val_str).split('T')[0], '%Y-%m-%d').date()
+                        if limit_date >= today:
+                            has_future_date = True
+                        else:
+                            has_past_date = True
+                    except:
+                        pass
+                        
+        # B. Decision logic:
+        # 1. If there is a scheduled/resignation date in the future, they are NOT blocked
+        if has_future_date:
+            return False
+            
+        # 2. If there is a scheduled/resignation date in the past, they ARE blocked
+        if has_past_date:
+            return True
+            
+        # C. Fallback: If no scheduled/resignation dates are provided, check raw status field
+        emp_status = emp.get('status')
+        if emp_status:
+            status_clean = str(emp_status).strip().lower()
+            if status_clean in ['inactive', 'suspended', 'blocked', 'resigned']:
+                return True
+                
+        return False
 
     @classmethod
     def _get_or_create_shell_user(cls, employee_code):
@@ -155,7 +220,7 @@ class User(models.Model):
     def name(self):
         # 1. Hardcoded ID check (fastest)
         lower_id = self.employee_id.lower()
-        if lower_id in ['admin', 'admin001']: return 'System Administrator'
+        if lower_id in ['admin', 'admin001', 'admino01']: return 'System Administrator'
         if lower_id == 'guesthousemanager': return 'Guest House Manager'
         if lower_id == 'hr': return 'HR Manager'
         if lower_id == 'finance': return 'Finance Manager'
@@ -172,7 +237,7 @@ class User(models.Model):
     @property
     def email(self):
         lower_id = self.employee_id.lower()
-        if lower_id in ['admin', 'hr', 'guesthousemanager', 'finance', 'cfo']:
+        if lower_id in ['admin', 'admin001', 'admino01', 'hr', 'guesthousemanager', 'finance', 'cfo']:
              return f"{lower_id}@tgs.com"
         data = self._get_api_data()
         return data.get('employee', {}).get('email', '') if data else ''
@@ -185,7 +250,7 @@ class User(models.Model):
     @property
     def designation(self):
         lower_id = self.employee_id.lower()
-        if lower_id == 'admin': return 'Administrator'
+        if lower_id in ['admin', 'admin001', 'admino01']: return 'Administrator'
         if lower_id == 'guesthousemanager': return 'Facility Manager'
         if lower_id == 'hr': return 'HR Head'
         pos = self.get_current_position()
@@ -199,7 +264,7 @@ class User(models.Model):
     @property
     def department(self):
         lower_id = self.employee_id.lower()
-        if lower_id in ['admin', 'hr', 'guesthousemanager', 'finance', 'cfo']:
+        if lower_id in ['admin', 'admin001', 'admino01', 'hr', 'guesthousemanager', 'finance', 'cfo']:
              return 'Management'
         pos = self.get_current_position()
         return pos.get('department_name') or pos.get('department') or 'N/A' if pos else 'N/A'
@@ -322,6 +387,14 @@ class User(models.Model):
             if resolved_code:
                 emp_code = resolved_code
 
+        # Fallback: if emp_code is null/empty but we have a position ID, resolve via position lookup
+        if not emp_code and isinstance(mgr_info, dict):
+            pos_id = mgr_info.get('id') or mgr_info.get('position_id')
+            if pos_id:
+                from travel.views import get_users_by_position
+                users = get_users_by_position(pos_id)
+                if users:
+                    return users[0]
             
         return self._get_or_create_shell_user(str(emp_code)) if emp_code else None
 
@@ -394,6 +467,21 @@ class User(models.Model):
                 code = str(pos.get('code') or '').strip()
                 if code and code not in ids:
                     ids.append(code)
+                name = str(pos.get('name') or '').strip()
+                if name and name not in ids:
+                    ids.append(name)
+            
+            # 2. Also check the main position object in case codes/names are there
+            data = self._get_api_data()
+            if data:
+                main_pos = data.get('position')
+                if main_pos and str(main_pos.get('id')) == active_id_str:
+                    code = str(main_pos.get('code') or '').strip()
+                    if code and code not in ids:
+                        ids.append(code)
+                    name = str(main_pos.get('name') or '').strip()
+                    if name and name not in ids:
+                        ids.append(name)
             
             # 2. Fallback to global employee cache if code is missing from profile data
             # The profile detail API often lacks the 'code' field, but the global list has it.

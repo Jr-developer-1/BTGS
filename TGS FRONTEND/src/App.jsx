@@ -50,6 +50,7 @@ import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import FinanceWorkflowConfig from './pages/FinanceWorkflowConfig';
 import HRPositionConfig from './pages/HRPositionConfig';
+import ClaimReport from './pages/ClaimReport';
 
 
 const ProtectedRoute = ({ children }) => {
@@ -75,6 +76,19 @@ const AdminRoute = ({ children }) => {
     roleName.includes('cfo');
   
   if (!isAdmin) {
+    return <Navigate to="/" />;
+  }
+  
+  return <Layout>{children}</Layout>;
+};
+
+const ReportRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" />;
+  
+  if (!user.can_view_reports) {
     return <Navigate to="/" />;
   }
   
@@ -357,6 +371,7 @@ function App() {
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/finance-workflow" element={<AdminRoute><FinanceWorkflowConfig /></AdminRoute>} />
             <Route path="/hr-positions" element={<AdminRoute><HRPositionConfig /></AdminRoute>} />
+            <Route path="/claim-report" element={<ReportRoute><ClaimReport /></ReportRoute>} />
 
             <Route path="/app-version" element={<AdminRoute><AppVersionManagement /></AdminRoute>} />
           </Routes>
