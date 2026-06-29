@@ -8,8 +8,8 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  // static const String baseUrl = 'https://one.bhspl.in/tgs';
-  static const String baseUrl = 'http://10.2.1.31:4567';
+  static const String baseUrl = 'https://one.bhspl.in/tgs';
+  // static const String baseUrl = 'http://10.2.1.31:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -133,8 +133,8 @@ class ApiConstants {
   static const String apiKey = 'MOBILE-APP-PROD-2025-V11';
 
   // App Version & Build Configuration
-  static const String appVersion = '1.1.2';
-  static const String buildNumber = '1';
+  static const String appVersion = '3.0.0';
+  static const String buildNumber = '3';
 
   static const String financeExport = '$baseUrl/api/finance/export/';
   static const String financeImport = '$baseUrl/api/finance/import/';

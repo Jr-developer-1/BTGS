@@ -101,6 +101,7 @@ const Header = () => {
 
     const managementNav = [
         { title: 'Claim Report', icon: <BarChart2 size={18} />, path: '/claim-report', roles: ['hr', 'finance', 'admin'] },
+        { title: 'Trip & Travel Reports', icon: <BarChart3 size={18} />, path: '/trip-travel-reports', roles: ['hr', 'finance', 'admin'] },
         { title: 'Finance Hub', icon: <IndianRupee size={18} />, path: '/finance', roles: ['finance', 'admin'] },
         { title: 'Job Report', icon: <ClipboardList size={18} />, path: '/job-report', roles: ['employee', 'reporting_authority', 'admin'] },
         { title: 'Settlements', icon: <Wallet size={18} />, path: '/settlement', roles: ['finance', 'admin'] },
@@ -126,10 +127,13 @@ const Header = () => {
 
     const filteredMain = mainNav.filter(item => !item.roles || item.roles.includes(userRole));
     const filteredManagement = managementNav.filter(item => {
-        if (item.roles && !item.roles.includes(userRole)) return false;
-        if (item.path === '/claim-report') {
+        if (item.path === '/trip-travel-reports') {
             return !!user?.can_view_reports;
         }
+        if (item.path === '/claim-report') {
+            return !!user?.can_view_claim_report;
+        }
+        if (item.roles && !item.roles.includes(userRole)) return false;
         return true;
     });
 

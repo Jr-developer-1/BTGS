@@ -463,7 +463,7 @@ class ApiService {
         case 500:
           throw ServerException(_extractMessage(data, 'Server error. Please try again later.'));
         default:
-          throw Exception('Unknown error. Status: ${response.statusCode}');
+          throw Exception(_extractMessage(data, 'Unknown error. Status: ${response.statusCode}'));
       }
     } on FormatException {
       // Response was not valid JSON

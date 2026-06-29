@@ -15,10 +15,10 @@ from rest_framework.response import Response
 from rest_framework import status, generics, viewsets
 from rest_framework.permissions import AllowAny
 
-from .models import User, Role, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest, AppVersion
+from .models import User, Role, Session, LoginHistory, AuditLog, FaceRegistrationRequest, AttendanceFRS, PhotoUpdateRequest, AppVersion, ReportAccessControl
 from notifications.models import Notification
 from .permissions import IsCustomAuthenticated, IsAdmin
-from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer, RoleSerializer, AppVersionSerializer
+from .serializers import AuditLogSerializer, LoginHistorySerializer, UserSerializer, RoleSerializer, AppVersionSerializer, ReportAccessControlSerializer
 from .pagination import StandardResultsSetPagination
 from django.db.models import Q
 from rest_framework import filters
@@ -44,12 +44,38 @@ def check_user_can_view_reports(user):
         if role_name in ['admin', 'it-admin', 'superuser']:
             return True
 
+        from django.db.models import Q
+
+        # Check ReportAccessControl table
+        # Check if user is allowed specifically by employee_code
+        emp_id = str(user.employee_id or '').strip()
+        if emp_id:
+            if ReportAccessControl.objects.filter(
+                access_type='employee',
+                can_view_reports=True
+            ).filter(
+                Q(target_id=emp_id) | Q(employee_code=emp_id)
+            ).exists():
+                return True
+
         user_pos_codes = user.get_active_position_identifiers()
+        
+        # Check if user is allowed by their position codes
+        if user_pos_codes:
+            if ReportAccessControl.objects.filter(
+                access_type='position',
+                can_view_reports=True
+            ).filter(
+                Q(target_id__in=user_pos_codes) |
+                Q(position_code__in=user_pos_codes) |
+                Q(position_name__in=user_pos_codes)
+            ).exists():
+                return True
+
         if not user_pos_codes:
             return False
 
         from travel.models import HRPositionConfig, FinanceWorkflowStep
-        from django.db.models import Q
         
         is_hr_allowed = HRPositionConfig.objects.filter(
             position_id__in=user_pos_codes, is_active=True, can_view_reports=True
@@ -66,6 +92,36 @@ def check_user_can_view_reports(user):
             return True
     except Exception as e:
         print(f"Error checking report access: {e}")
+    return False
+
+def check_user_can_view_claim_report(user):
+    try:
+        role_name = (user.role.name if user.role else '').lower()
+        if role_name in ['admin', 'it-admin', 'superuser']:
+            return True
+
+        user_pos_codes = user.get_active_position_identifiers()
+        if not user_pos_codes:
+            return False
+
+        from travel.models import HRPositionConfig, FinanceWorkflowStep
+        from django.db.models import Q
+
+        is_hr_allowed = HRPositionConfig.objects.filter(
+            position_id__in=user_pos_codes, is_active=True, can_view_reports=True
+        ).exists()
+        if is_hr_allowed:
+            return True
+
+        is_finance_allowed = FinanceWorkflowStep.objects.filter(
+            Q(position_id__in=user_pos_codes) | Q(user=user),
+            is_active=True,
+            can_view_reports=True
+        ).exists()
+        if is_finance_allowed:
+            return True
+    except Exception as e:
+        print(f"Error checking claim report access: {e}")
     return False
 
 @api_view(['POST'])
@@ -112,6 +168,25 @@ def login_view(request):
             
         # Web: 1 hour, Mobile: practically never (10 years)
         if is_mobile:
+            # Enforce minimum mobile app version (v3.0.0, build 3)
+            app_version = data.get('app_version')
+            build_number = data.get('build_number')
+            try:
+                if not app_version or not build_number:
+                    return Response({
+                        'error': 'A newer version of the mobile app is available. Please update the app to login.'
+                    }, status=status.HTTP_426_UPGRADE_REQUIRED)
+                
+                build_int = int(build_number)
+                if build_int < 3:
+                    return Response({
+                        'error': 'A newer version of the mobile app is available. Please update the app to login.'
+                    }, status=status.HTTP_426_UPGRADE_REQUIRED)
+            except (ValueError, TypeError):
+                return Response({
+                    'error': 'A newer version of the mobile app is available. Please update the app to login.'
+                }, status=status.HTTP_426_UPGRADE_REQUIRED)
+                
             expiration = timezone.now() + datetime.timedelta(days=3650)
         else:
             expiration = timezone.now() + datetime.timedelta(hours=1)
@@ -180,7 +255,8 @@ def login_view(request):
                 'theme': getattr(user, 'theme', 'classic'),
                 'active_position_id': user.active_position_id,
                 'available_positions': available_positions,
-                'can_view_reports': check_user_can_view_reports(user)
+                'can_view_reports': check_user_can_view_reports(user),
+                'can_view_claim_report': check_user_can_view_claim_report(user)
             }
         })
         
@@ -414,7 +490,8 @@ def me_view(request):
             'theme': getattr(user, 'theme', 'classic'),
             'active_position_id': user.active_position_id,
             'available_positions': user.get_available_positions(force_fresh=True),
-            'can_view_reports': check_user_can_view_reports(user)
+            'can_view_reports': check_user_can_view_reports(user),
+            'can_view_claim_report': check_user_can_view_claim_report(user)
         })
     except Exception as e:
         import traceback
@@ -540,7 +617,8 @@ def switch_position_view(request):
                 'email': user.email,
                 'active_position_id': user.active_position_id,
                 'available_positions': available,
-                'can_view_reports': check_user_can_view_reports(user)
+                'can_view_reports': check_user_can_view_reports(user),
+                'can_view_claim_report': check_user_can_view_claim_report(user)
             }
         })
     except Exception as e:
@@ -758,7 +836,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         user = request.custom_user
         role_name = user.active_role.lower() if user else ''
         privileged_keywords = ['admin', 'superuser', 'it admin', 'it-admin', 'cfo', 'hr', 'finance']
-        is_privileged = any(kw in role_name for kw in privileged_keywords)
+        is_privileged = any(kw in role_name for kw in privileged_keywords) or check_user_can_view_reports(user)
 
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
@@ -925,23 +1003,27 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 role_name = ''
 
             current_approver_name = None
-            if trip.status not in ['Approved', 'Rejected', 'Completed']:
-                if not trip.approver_position:
-                    current_approver_name = get_resolved_user_name(trip.current_approver) if trip.current_approver else 'Pending'
+            if trip.status not in ['Approved', 'Rejected', 'Completed', 'Settled']:
+                approver_obj = trip
+                if hasattr(trip, 'claim') and trip.claim and trip.claim.status not in ['Paid', 'Draft']:
+                    approver_obj = trip.claim
+                
+                if not approver_obj.approver_position:
+                    current_approver_name = get_resolved_user_name(approver_obj.current_approver) if approver_obj.current_approver else 'Pending'
                 else:
                     try:
                         from travel.views import get_users_by_position
-                        users = get_users_by_position(trip.approver_position)
+                        users = get_users_by_position(approver_obj.approver_position)
                         target_user = users[0] if users else None
                         if target_user:
                             current_approver_name = get_resolved_user_name(target_user)
-                        elif trip.current_approver:
-                            current_approver_name = get_resolved_user_name(trip.current_approver)
+                        elif approver_obj.current_approver:
+                            current_approver_name = get_resolved_user_name(approver_obj.current_approver)
                         else:
-                            current_approver_name = f"Position {trip.approver_position}"
+                            current_approver_name = f"Position {approver_obj.approver_position}"
                     except Exception:
-                        if trip.current_approver:
-                            current_approver_name = get_resolved_user_name(trip.current_approver)
+                        if approver_obj.current_approver:
+                            current_approver_name = get_resolved_user_name(approver_obj.current_approver)
 
             rejected_by = None
             rejection_reason = None
@@ -1857,3 +1939,84 @@ def app_version_view(request):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class ReportAccessControlViewSet(viewsets.ModelViewSet):
+    queryset = ReportAccessControl.objects.all()
+    serializer_class = ReportAccessControlSerializer
+    permission_classes = [IsCustomAuthenticated]
+
+    def get_queryset(self):
+        user = getattr(self.request, 'custom_user', None)
+        if not user or not user.role or user.role.name.lower() not in ['admin', 'it-admin', 'superuser']:
+            return ReportAccessControl.objects.none()
+        return ReportAccessControl.objects.all().order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        user = getattr(request, 'custom_user', None)
+        if not user or not user.role or user.role.name.lower() not in ['admin', 'it-admin', 'superuser']:
+            return Response({"error": "Only administrators can configure report access."}, status=403)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        user = getattr(request, 'custom_user', None)
+        if not user or not user.role or user.role.name.lower() not in ['admin', 'it-admin', 'superuser']:
+            return Response({"error": "Only administrators can configure report access."}, status=403)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        user = getattr(request, 'custom_user', None)
+        if not user or not user.role or user.role.name.lower() not in ['admin', 'it-admin', 'superuser']:
+            return Response({"error": "Only administrators can configure report access."}, status=403)
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'], url_path='search-profiles')
+    def search_profiles(self, request):
+        user = getattr(request, 'custom_user', None)
+        if not user or not user.role or user.role.name.lower() not in ['admin', 'it-admin', 'superuser']:
+            return Response({"error": "Only administrators can search profiles for report access."}, status=403)
+
+        query = request.query_params.get('q', '').strip().lower()
+        if not query:
+            return Response([])
+
+        from api_management.services import safe_cache_get, GLOBAL_EMPLOYEE_CACHE
+        import time
+        
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+        if not persistent_data:
+            mem_cache = GLOBAL_EMPLOYEE_CACHE
+            if mem_cache.get('data') and (time.time() - mem_cache.get('timestamp', 0)) < 7200:
+                persistent_data = mem_cache['data']
+
+        results = []
+        if persistent_data:
+            for item in persistent_data:
+                if not isinstance(item, dict):
+                    continue
+                emp = item.get('employee', {})
+                pos = item.get('position', {}) or {}
+                
+                emp_code = emp.get('employee_code', '') or ''
+                emp_name = emp.get('name', '') or ''
+                pos_code = pos.get('code', '') or ''
+                pos_name = pos.get('name', '') or ''
+                
+                # Check match
+                if (query in emp_code.lower() or 
+                    query in emp_name.lower() or 
+                    query in pos_code.lower() or 
+                    query in pos_name.lower()):
+                    
+                    # Avoid duplicate records in search results
+                    res_item = {
+                        'employee_code': emp_code,
+                        'employee_name': emp_name,
+                        'position_code': pos_code,
+                        'position_name': pos_name,
+                    }
+                    if res_item not in results:
+                        results.append(res_item)
+                    
+        # Limit results to top 50
+        return Response(results[:50])
+
+

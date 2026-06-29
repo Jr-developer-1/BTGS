@@ -549,7 +549,7 @@ const LoginHistory = () => {
                 !['Approved', 'Rejected', 'Completed'].includes(trip.status) ? (trip.current_approver_name || '') : '',
                 trip.status === 'Rejected' ? (trip.rejected_by || '') : '',
                 trip.status === 'Rejected' ? (trip.rejection_reason || '') : '',
-                format(new Date(trip.created_at), 'yyyy-MM-dd HH:mm:ss')
+                trip.created_at ? format(new Date(trip.created_at), 'yyyy-MM-dd HH:mm:ss') : 'null'
             ]);
             csvContent = [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
             fileName = `trips_created_report_${format(new Date(), 'yyyyMMdd_HHmm')}.csv`;
@@ -576,7 +576,7 @@ const LoginHistory = () => {
                 ['Submitted', 'Resubmitted', 'Pending', 'Forwarded'].includes(batch.status) ? (batch.current_approver_name || '') : '',
                 batch.status === 'Rejected' ? (batch.rejected_by || '') : '',
                 batch.status === 'Rejected' ? (batch.rejection_reason || '') : '',
-                batch.created_at ? format(new Date(batch.created_at), 'yyyy-MM-dd HH:mm:ss') : '—'
+                batch.created_at ? format(new Date(batch.created_at), 'yyyy-MM-dd HH:mm:ss') : 'null'
             ]);
             csvContent = [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
             fileName = `bulk_uploads_report_${format(new Date(), 'yyyyMMdd_HHmm')}.csv`;
@@ -1697,7 +1697,7 @@ const LoginHistory = () => {
                                                             )}
 
                                                             {/* Pending tracking */}
-                                                            {!['Approved', 'Rejected', 'Completed'].includes(trip.status) && trip.current_approver_name && (
+                                                            {!['Approved', 'Rejected', 'Completed', 'Settled'].includes(trip.status) && trip.current_approver_name && (
                                                                 <div style={{ fontSize: '0.72rem', color: '#4338ca', marginTop: '2px', fontWeight: 600 }}>
                                                                     Waiting for: {trip.current_approver_name}
                                                                 </div>
@@ -1788,7 +1788,7 @@ const LoginHistory = () => {
                                                                     <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>{batch.user_designation}</span>
                                                                 </div>
                                                             )}
-                                                            {batch.user_position_code && (
+                                                            {batch.status !== 'Not Submitted' && batch.user_position_code && (
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
                                                                     <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{batch.user_position_code}</span>
                                                                 </div>

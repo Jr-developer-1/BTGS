@@ -618,5 +618,33 @@ class AppVersion(models.Model):
     class Meta:
         ordering = ['-updated_at']
 
+class ReportAccessControl(models.Model):
+    ACCESS_TYPE_CHOICES = [
+        ('employee', 'Specific Employee'),
+        ('position', 'Specific Position'),
+    ]
+    access_type = models.CharField(max_length=20, choices=ACCESS_TYPE_CHOICES)
+    target_id = models.CharField(max_length=100)
+    target_name = models.CharField(max_length=255, blank=True, null=True)
+    can_view_reports = models.BooleanField(default=True)
+    
+    # Extra fields for total details
+    employee_code = models.CharField(max_length=100, blank=True, null=True)
+    employee_name = models.CharField(max_length=255, blank=True, null=True)
+    position_code = models.CharField(max_length=100, blank=True, null=True)
+    position_name = models.CharField(max_length=255, blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Report Access Control'
+        verbose_name_plural = 'Report Access Controls'
+        unique_together = ('access_type', 'target_id')
+
+    def __str__(self):
+        return f"{self.access_type} - {self.target_name} ({self.target_id})"
+
+
 
 

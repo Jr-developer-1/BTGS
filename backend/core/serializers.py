@@ -80,9 +80,15 @@ class AuditLogSerializer(serializers.ModelSerializer):
         model = AuditLog
         fields = ['id', 'user_name', 'action', 'model_name', 'object_repr', 'details', 'ip_address', 'timestamp']
 
-from .models import AppVersion
+from .models import AppVersion, ReportAccessControl
 
 class AppVersionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppVersion
         fields = '__all__'
+
+class ReportAccessControlSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReportAccessControl
+        fields = '__all__'
+

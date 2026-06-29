@@ -70,10 +70,11 @@ class _LoginScreenState extends State<LoginScreen> {
       final response = await apiService.post(
         ApiConstants.authLogin,
         body: {
-          'employee_id':
-              username, // Backend accepts both 'username' and 'employee_id'; web uses 'employee_id'
+          'employee_id': username,
           'password': password,
           'is_mobile': true,
+          'app_version': ApiConstants.appVersion,
+          'build_number': ApiConstants.buildNumber,
         },
       );
 

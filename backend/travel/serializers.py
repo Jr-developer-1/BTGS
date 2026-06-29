@@ -719,21 +719,25 @@ class TripSerializer(serializers.ModelSerializer):
         return obj.reporting_manager_name or (obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else None)
 
     def get_current_approver_name(self, obj):
-        if not obj.approver_position:
-            return obj.current_approver.name if obj.current_approver else 'Pending'
+        approver_obj = obj
+        if hasattr(obj, 'claim') and obj.claim and obj.claim.status not in ['Paid', 'Draft']:
+            approver_obj = obj.claim
+
+        if not approver_obj.approver_position:
+            return approver_obj.current_approver.name if approver_obj.current_approver else 'Pending'
         
         # Try to find user by position ID
         from travel.views import get_users_by_position
-        users = get_users_by_position(obj.approver_position)
+        users = get_users_by_position(approver_obj.approver_position)
         target_user = users[0] if users else None
         if target_user:
             return target_user.name
         
         # Fallback to current_approver name if it exists
-        if obj.current_approver:
-            return obj.current_approver.name
+        if approver_obj.current_approver:
+            return approver_obj.current_approver.name
             
-        return f"Position {obj.approver_position}"
+        return f"Position {approver_obj.approver_position}"
 
     def get_total_approved_advance(self, obj):
         return sum(
