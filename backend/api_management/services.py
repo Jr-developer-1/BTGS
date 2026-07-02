@@ -6,13 +6,34 @@ from .models import SystemConfig
 from .utils import decrypt_key
 from core.models import User, Role
 
-# --- WINDOWS CACHE SAFETY WRAPPERS ---
+_cache_warming = False
+_cache_warm_lock = threading.Lock()
+
 def safe_cache_get(key, default=None):
     """Wraps cache.get to handle Windows file-lock PermissionErrors gracefully."""
     try:
-        return cache.get(key, default)
+        val = cache.get(key, default)
     except (PermissionError, OSError):
-        return default
+        val = default
+
+    if key == 'GLOBAL_EMPLOYEE_DATA' and not val:
+        global _cache_warming
+        if not _cache_warming:
+            with _cache_warm_lock:
+                if not _cache_warming:
+                    _cache_warming = True
+                    def _warm_in_bg():
+                        global _cache_warming
+                        try:
+                            _bg_refresh_global_employee_cache()
+                        except Exception:
+                            pass
+                        finally:
+                            _cache_warming = False
+                    t = threading.Thread(target=_warm_in_bg, daemon=True)
+                    t.start()
+    return val
+
 
 def safe_cache_set(key, value, timeout=None):
     """Wraps cache.set to handle Windows file-lock PermissionErrors gracefully."""
@@ -170,7 +191,6 @@ def resolve_numeric_employee_id(emp_id_val):
         
     return None, None
 
-
 def get_dynamic_employee_data(employee_code, force_fresh=False):
     """
     Fetches employee details in real-time. Checks local caches first unless force_fresh=True.
@@ -182,17 +202,12 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
         
     cache_key = f"EMP_DATA_PERSISTENT_{str(employee_code).strip().upper()}"
     
-    # 1. Check Persistent Cache (Instantly fetches from Disk, survives restarts)
-    if not force_fresh:
-        persistent_data = safe_cache_get(cache_key)
-        if persistent_data:
-            if isinstance(persistent_data, dict) and persistent_data.get('not_found'):
-                return None
-            return persistent_data
-    # 2. Check memory/persistent global employee cache (Alternative local fallback)
-    now = time.time()
+    # 1. Check memory/persistent global employee cache FIRST (Master source of truth)
+    # If the global employee cache has the data, that is always fresh and authoritative,
+    # and it automatically heals any transient negative cache (not_found=True) records.
     g_cached = GLOBAL_EMPLOYEE_CACHE
     if not force_fresh:
+        now = time.time()
         if not g_cached['data'] or now - g_cached['timestamp'] >= GLOBAL_CACHE_TIMEOUT:
             persistent_global = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
             if persistent_global:
@@ -202,21 +217,33 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
         if g_cached['data'] and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT:
             for item in g_cached['data']:
                 if item.get('employee', {}).get('employee_code') == employee_code:
-                    # Promote to persistent cache and return
+                    # Overwrite/promote to persistent cache to heal/update it, then return
                     safe_cache_set(cache_key, item, timeout=2592000)
                     return item
 
-            
+    # 2. Check Persistent Cache (fallback/individual cached entries)
+    if not force_fresh:
+        persistent_data = safe_cache_get(cache_key)
+        if persistent_data:
+            if isinstance(persistent_data, dict) and persistent_data.get('not_found'):
+                return None
+            return persistent_data
+
     # 3. Fetch from API (Cold start fallback - executed max once per hour per employee)
     data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
-    if data and not data.get('error') and data.get('results'):
-        emp_data = data['results'][0]
-        # Commit to persistent cache with 30-day timeout (Organizational structures are stable)
-        safe_cache_set(cache_key, emp_data, timeout=2592000)
-        return emp_data
+    if data and not data.get('error'):
+        if data.get('results'):
+            emp_data = data['results'][0]
+            # Commit to persistent cache with 30-day timeout (Organizational structures are stable)
+            safe_cache_set(cache_key, emp_data, timeout=2592000)
+            return emp_data
+        else:
+            # Cache negative result ONLY if API successfully ran but returned 0 results (user doesn't exist)
+            safe_cache_set(cache_key, {"not_found": True}, timeout=2592000)
     else:
-        # Cache negative result to prevent repeating slow queries for non-existent users
-        safe_cache_set(cache_key, {"not_found": True}, timeout=2592000)
+        # DO NOT cache negative results on transient errors or timeouts!
+        # Just return None for now, so next request can retry fetching.
+        pass
         
     return None
 
@@ -437,7 +464,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         return []
 
                     # Lower concurrency to prevent external system connection exhaustion
-                    with ThreadPoolExecutor(max_workers=3) as executor:
+                    with ThreadPoolExecutor(max_workers=15) as executor:
                         extra_results_list = list(executor.map(fetch_single_page, pages_to_fetch))
                     
                     for er in extra_results_list:
