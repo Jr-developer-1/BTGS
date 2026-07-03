@@ -854,6 +854,9 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             batch_qs = batch_qs.filter(user=user)
 
         # Date filtering
+        # For trips and batches we filter by the TRAVEL PERIOD (start_date) - i.e. the month
+        # the activity was done - NOT the upload/creation timestamp.
+        # LoginHistory still uses login_time as there is no separate "activity month".
         if start_date_str:
             parsed_start = parse_date(start_date_str)
             if parsed_start:
@@ -861,8 +864,13 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 if timezone.is_aware(timezone.now()):
                     start_dt = timezone.make_aware(start_dt)
                 history_qs = history_qs.filter(login_time__gte=start_dt)
-                trip_qs = trip_qs.filter(created_at__gte=start_dt)
-                batch_qs = batch_qs.filter(created_at__gte=start_dt)
+                # Trips: filter by the trip's own start_date (travel month)
+                trip_qs = trip_qs.filter(start_date__gte=parsed_start)
+                # Batches: filter by the linked trip's start_date; fall back to batch created_at
+                batch_qs = batch_qs.filter(
+                    Q(trip__start_date__gte=parsed_start) |
+                    Q(trip__isnull=True, created_at__gte=start_dt)
+                )
 
         if end_date_str:
             parsed_end = parse_date(end_date_str)
@@ -871,8 +879,13 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 if timezone.is_aware(timezone.now()):
                     end_dt = timezone.make_aware(end_dt)
                 history_qs = history_qs.filter(login_time__lte=end_dt)
-                trip_qs = trip_qs.filter(created_at__lte=end_dt)
-                batch_qs = batch_qs.filter(created_at__lte=end_dt)
+                # Trips: filter by the trip's own start_date (travel month)
+                trip_qs = trip_qs.filter(start_date__lte=parsed_end)
+                # Batches: filter by the linked trip's start_date; fall back to batch created_at
+                batch_qs = batch_qs.filter(
+                    Q(trip__start_date__lte=parsed_end) |
+                    Q(trip__isnull=True, created_at__lte=end_dt)
+                )
 
         # Search query filtering (if any search filters the list)
         if search_query:
@@ -973,13 +986,18 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         for item in unique_users_data:
             u_obj = users_map.get(item['user_id'])
             if u_obj:
-                try:
-                    pos = u_obj.get_current_position()
-                    pos_code = pos.get('code', '') if pos else ''
-                    designation = u_obj.designation or ''
-                except Exception:
-                    pos_code = ''
-                    designation = ''
+                cached_emp = emp_details_map.get(u_obj.employee_id)
+                if cached_emp:
+                    designation = cached_emp.get('designation') or ''
+                    pos_code = cached_emp.get('position_code') or ''
+                else:
+                    try:
+                        pos = u_obj.get_current_position()
+                        pos_code = pos.get('code', '') if pos else ''
+                        designation = u_obj.designation or ''
+                    except Exception:
+                        pos_code = ''
+                        designation = ''
                 unique_users_list.append({
                     'employee_id': u_obj.employee_id,
                     'name': u_obj.name,
@@ -992,15 +1010,22 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
 
         trips_list = []
         for trip in trip_qs.order_by('-created_at'):
-            try:
-                pos = trip.user.get_current_position() if trip.user else None
-                designation = trip.user.designation or '' if trip.user else ''
-                pos_code = pos.get('code', '') if pos else ''
-                role_name = pos.get('role_name') if pos else (trip.user.role.name if trip.user and trip.user.role else '')
-            except Exception:
-                designation = ''
-                pos_code = ''
-                role_name = ''
+            emp_id = trip.user.employee_id if trip.user else None
+            cached_emp = emp_details_map.get(emp_id) if emp_id else None
+            if cached_emp:
+                designation = cached_emp.get('designation') or ''
+                pos_code = cached_emp.get('position_code') or ''
+                role_name = cached_emp.get('role_name') or ''
+            else:
+                try:
+                    pos = trip.user.get_current_position() if trip.user else None
+                    designation = trip.user.designation or '' if trip.user else ''
+                    pos_code = pos.get('code', '') if pos else ''
+                    role_name = pos.get('role_name') if pos else (trip.user.role.name if trip.user and trip.user.role else '')
+                except Exception:
+                    designation = ''
+                    pos_code = ''
+                    role_name = ''
 
             current_approver_name = None
             if trip.status not in ['Approved', 'Rejected', 'Completed', 'Settled']:
@@ -1053,15 +1078,22 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         batches_list = []
         submitted_by_emp_code = {}
         for batch in batch_qs.order_by('-created_at'):
-            try:
-                pos = batch.user.get_current_position() if batch.user else None
-                designation = batch.user.designation or '' if batch.user else ''
-                pos_code = pos.get('code', '') if pos else ''
-                role_name = pos.get('role_name') if pos else (batch.user.role.name if batch.user and batch.user.role else '')
-            except Exception:
-                designation = ''
-                pos_code = ''
-                role_name = ''
+            emp_id = batch.user.employee_id if batch.user else None
+            cached_emp = emp_details_map.get(emp_id) if emp_id else None
+            if cached_emp:
+                designation = cached_emp.get('designation') or ''
+                pos_code = cached_emp.get('position_code') or ''
+                role_name = cached_emp.get('role_name') or ''
+            else:
+                try:
+                    pos = batch.user.get_current_position() if batch.user else None
+                    designation = batch.user.designation or '' if batch.user else ''
+                    pos_code = pos.get('code', '') if pos else ''
+                    role_name = pos.get('role_name') if pos else (batch.user.role.name if batch.user and batch.user.role else '')
+                except Exception:
+                    designation = ''
+                    pos_code = ''
+                    role_name = ''
 
             # Merge live odometer and deviation data from created expenses
             rows_data = batch.data_json if batch.data_json else []
@@ -1160,6 +1192,8 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 'user_role': role_name,
                 'file_name': batch.file_name,
                 'trip_id': batch.trip.trip_id if batch.trip else None,
+                'trip_start_date': batch.trip.start_date.isoformat() if batch.trip and batch.trip.start_date else None,
+                'trip_end_date': batch.trip.end_date.isoformat() if batch.trip and batch.trip.end_date else None,
                 'status': batch.status,
                 'created_at': batch.created_at.isoformat() if batch.created_at else None,
                 'row_count': len(rows_data),
@@ -1191,25 +1225,32 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 if emp_id in processed_codes:
                     continue
                 
-                # Fetch employee details from DB or cache fallback
-                u_obj = User.objects.filter(employee_id=emp_id).first()
-                if u_obj:
-                    try:
-                        pos = u_obj.get_current_position()
-                        pos_code = pos.get('code', '') if pos else ''
-                        designation = u_obj.designation or ''
-                        role_name = pos.get('role_name') if pos else (u_obj.role.name if u_obj.role else '')
-                    except Exception:
-                        designation = ''
-                        pos_code = ''
-                        role_name = ''
-                    name = u_obj.name
-                else:
-                    cache_info = emp_details_map.get(emp_id, {})
+                # Prioritize cache lookup to avoid database query and N+1 requests
+                cache_info = emp_details_map.get(emp_id, {})
+                if cache_info:
                     name = cache_info.get('name', 'Unknown')
                     designation = cache_info.get('designation', '')
                     pos_code = cache_info.get('position_code', '')
                     role_name = cache_info.get('role_name', '')
+                else:
+                    # Fetch employee details from DB fallback
+                    u_obj = User.objects.filter(employee_id=emp_id).first()
+                    if u_obj:
+                        try:
+                            pos = u_obj.get_current_position()
+                            pos_code = pos.get('code', '') if pos else ''
+                            designation = u_obj.designation or ''
+                            role_name = pos.get('role_name') if pos else (u_obj.role.name if u_obj.role else '')
+                        except Exception:
+                            designation = ''
+                            pos_code = ''
+                            role_name = ''
+                        name = u_obj.name
+                    else:
+                        name = 'Unknown'
+                        designation = ''
+                        pos_code = ''
+                        role_name = ''
 
                 batches_list.append({
                     'id': f"not_submitted_{emp_id}",

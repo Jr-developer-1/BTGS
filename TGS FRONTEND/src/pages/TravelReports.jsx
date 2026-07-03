@@ -71,6 +71,37 @@ const TravelReports = () => {
         selectedRoles: []
     });
 
+    const monthOptions = useMemo(() => {
+        const options = [];
+        const date = new Date();
+        for (let i = 0; i < 12; i++) {
+            const m = date.getMonth();
+            const y = date.getFullYear();
+            const monthName = date.toLocaleString('default', { month: 'long' });
+            const startStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+            const lastDay = new Date(y, m + 1, 0).getDate();
+            const endStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+            options.push({
+                label: `${monthName} ${y}`,
+                value: `${startStr}|${endStr}`
+            });
+            date.setMonth(m - 1);
+        }
+        return options;
+    }, []);
+
+    const [selectedMonth, setSelectedMonth] = useState('');
+
+    useEffect(() => {
+        const currentVal = `${filters.startDate}|${filters.endDate}`;
+        const match = monthOptions.find(opt => opt.value === currentVal);
+        if (match) {
+            setSelectedMonth(match.value);
+        } else {
+            setSelectedMonth('');
+        }
+    }, [filters.startDate, filters.endDate, monthOptions]);
+
     const [projects, setProjects] = useState([]);
     const [projectsLoading, setProjectsLoading] = useState(false);
 
@@ -239,13 +270,12 @@ const TravelReports = () => {
 
     // Unique roles listing inside modals
     const uniqueRoles = useMemo(() => {
-        if (activeModal === 'trips') {
-            return [...new Set((stats.trips || []).map(t => t.user_role || t.user_designation).filter(Boolean))].sort();
-        }
-        if (activeModal === 'batches') {
-            return [...new Set((stats.batches || []).map(b => b.user_role || b.user_designation).filter(Boolean))].sort();
-        }
-        return [];
+        const roles = new Set();
+        const list = activeModal === 'trips' ? stats.trips : (activeModal === 'batches' ? stats.batches : []);
+        (list || []).forEach(item => {
+            if (item.user_role) roles.add(item.user_role);
+        });
+        return [...roles].sort();
     }, [activeModal, stats]);
 
     // Local filtering within modals
@@ -268,7 +298,11 @@ const TravelReports = () => {
             if (mappedStatus !== modalFilters.status) return false;
         }
         if (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0) {
-            if (!modalFilters.selectedRoles.includes(trip.user_role || trip.user_designation)) return false;
+            const hasMatch = modalFilters.selectedRoles.some(r => 
+                (trip.user_role && trip.user_role === r) || 
+                (!trip.user_role && trip.user_designation && trip.user_designation.startsWith(r))
+            );
+            if (!hasMatch) return false;
         }
         return true;
     });
@@ -280,7 +314,11 @@ const TravelReports = () => {
                 if (mappedStatus !== modalFilters.status) return false;
             }
             if (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0) {
-                if (!modalFilters.selectedRoles.includes(batch.user_role || batch.user_designation)) return false;
+                const hasMatch = modalFilters.selectedRoles.some(r => 
+                    (batch.user_role && batch.user_role === r) || 
+                    (!batch.user_role && batch.user_designation && batch.user_designation.startsWith(r))
+                );
+                if (!hasMatch) return false;
             }
             return true;
         }
@@ -301,10 +339,38 @@ const TravelReports = () => {
             if (mappedStatus !== modalFilters.status) return false;
         }
         if (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0) {
-            if (!modalFilters.selectedRoles.includes(batch.user_role || batch.user_designation)) return false;
+            const hasMatch = modalFilters.selectedRoles.some(r => 
+                (batch.user_role && batch.user_role === r) || 
+                (!batch.user_role && batch.user_designation && batch.user_designation.startsWith(r))
+            );
+            if (!hasMatch) return false;
         }
         return true;
     });
+
+    const totalTripsCount = useMemo(() => {
+        if (!modalFilters.selectedRoles || modalFilters.selectedRoles.length === 0) {
+            return stats.trips?.length || 0;
+        }
+        return (stats.trips || []).filter(trip => 
+            modalFilters.selectedRoles.some(r => 
+                (trip.user_role && trip.user_role === r) || 
+                (!trip.user_role && trip.user_designation && trip.user_designation.startsWith(r))
+            )
+        ).length;
+    }, [stats.trips, modalFilters.selectedRoles]);
+
+    const totalBatchesCount = useMemo(() => {
+        if (!modalFilters.selectedRoles || modalFilters.selectedRoles.length === 0) {
+            return stats.batches?.length || 0;
+        }
+        return (stats.batches || []).filter(batch => 
+            modalFilters.selectedRoles.some(r => 
+                (batch.user_role && batch.user_role === r) || 
+                (!batch.user_role && batch.user_designation && batch.user_designation.startsWith(r))
+            )
+        ).length;
+    }, [stats.batches, modalFilters.selectedRoles]);
 
     const filteredUsers = (stats.users || []).filter(userObj => {
         if (!userObj) return false;
@@ -774,6 +840,51 @@ const TravelReports = () => {
                             flexWrap: 'wrap',
                             marginBottom: '24px'
                         }}>
+                            {/* Month Filter */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minWidth: '200px' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                                    <Calendar size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'text-bottom' }} />
+                                    Month Filter
+                                </label>
+                                <select 
+                                    value={selectedMonth}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSelectedMonth(val);
+                                        if (val) {
+                                            const [start, end] = val.split('|');
+                                            setFilters(prev => ({
+                                                ...prev,
+                                                startDate: start,
+                                                endDate: end
+                                            }));
+                                        } else {
+                                            setFilters(prev => ({
+                                                ...prev,
+                                                startDate: '',
+                                                endDate: ''
+                                            }));
+                                        }
+                                    }}
+                                    style={{
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        border: '1px solid #cbd5e1',
+                                        background: 'white',
+                                        fontSize: '0.9rem',
+                                        color: '#334155',
+                                        outline: 'none'
+                                    }}
+                                >
+                                    <option value="">Select Month (Custom Range)</option>
+                                    {monthOptions.map(opt => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
                             {/* Start Date */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minWidth: '200px' }}>
                                 <label style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-muted)' }}>
@@ -849,7 +960,10 @@ const TravelReports = () => {
 
                             {/* Reset Button */}
                             <button
-                                onClick={() => setFilters({ startDate: '', endDate: '', project: 'All' })}
+                                onClick={() => {
+                                    setFilters({ startDate: '', endDate: '', project: 'All' });
+                                    setSelectedMonth('');
+                                }}
                                 style={{
                                     padding: '12px 24px',
                                     borderRadius: '12px',
@@ -917,8 +1031,8 @@ const TravelReports = () => {
                                                 {activeModal === 'users' && 'Unique Active Users Detail'}
                                             </h2>
                                             <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '4px 0 0 0' }}>
-                                                {activeModal === 'trips' && `Showing ${filteredTrips.length} of ${stats.trips.length} trips created`}
-                                                {activeModal === 'batches' && `Showing ${filteredBatches.length} of ${stats.batches.length} bulk uploads`}
+                                                {activeModal === 'trips' && `Showing ${filteredTrips.length} of ${totalTripsCount} trips created`}
+                                                {activeModal === 'batches' && `Showing ${filteredBatches.length} of ${totalBatchesCount} bulk uploads`}
                                                 {activeModal === 'users' && `Showing ${filteredUsers.length} of ${stats.users.length} unique active users`}
                                             </p>
                                         </div>
@@ -957,11 +1071,49 @@ const TravelReports = () => {
                                     }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Month:</span>
+                                                <select 
+                                                    value={selectedMonth}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setSelectedMonth(val);
+                                                        if (val) {
+                                                            const [start, end] = val.split('|');
+                                                            setModalFilters(prev => ({ ...prev, startDate: start, endDate: end }));
+                                                            setFilters(prev => ({ ...prev, startDate: start, endDate: end }));
+                                                        } else {
+                                                            setModalFilters(prev => ({ ...prev, startDate: '', endDate: '' }));
+                                                            setFilters(prev => ({ ...prev, startDate: '', endDate: '' }));
+                                                        }
+                                                    }}
+                                                    style={{
+                                                        border: '1px solid #cbd5e1',
+                                                        borderRadius: '10px',
+                                                        padding: '6px 12px',
+                                                        fontSize: '0.85rem',
+                                                        color: '#334155',
+                                                        background: 'white',
+                                                        outline: 'none'
+                                                    }}
+                                                >
+                                                    <option value="">Select Month</option>
+                                                    {monthOptions.map(opt => (
+                                                        <option key={opt.value} value={opt.value}>
+                                                            {opt.label}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>From:</span>
                                                 <input 
                                                     type="date" 
                                                     value={modalFilters.startDate}
-                                                    onChange={(e) => setModalFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setModalFilters(prev => ({ ...prev, startDate: val }));
+                                                        setFilters(prev => ({ ...prev, startDate: val }));
+                                                    }}
                                                     style={{
                                                         border: '1px solid #cbd5e1',
                                                         borderRadius: '10px',
@@ -976,7 +1128,11 @@ const TravelReports = () => {
                                                 <input 
                                                     type="date" 
                                                     value={modalFilters.endDate}
-                                                    onChange={(e) => setModalFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setModalFilters(prev => ({ ...prev, endDate: val }));
+                                                        setFilters(prev => ({ ...prev, endDate: val }));
+                                                    }}
                                                     style={{
                                                         border: '1px solid #cbd5e1',
                                                         borderRadius: '10px',
@@ -1295,6 +1451,7 @@ const TravelReports = () => {
                                                 <thead>
                                                     <tr style={{ borderBottom: '2px solid #e2e8f0', textAlign: 'left', color: '#64748b', fontWeight: 700 }}>
                                                         <th style={{ padding: '12px 16px' }}>Uploaded By</th>
+                                                        <th style={{ padding: '12px 16px' }}>Travel Month</th>
                                                         <th style={{ padding: '12px 16px' }}>Trip ID</th>
                                                         <th style={{ padding: '12px 16px' }}>File Name</th>
                                                         <th style={{ padding: '12px 16px' }}>Status</th>
@@ -1321,10 +1478,27 @@ const TravelReports = () => {
                                                                                 <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>{batch.user_designation}</span>
                                                                             </div>
                                                                         )}
-                                                                        {batch.status !== 'Not Submitted' && batch.user_position_code && (
+                                                                        {batch.user_position_code && (
                                                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
                                                                                 <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{batch.user_position_code}</span>
                                                                             </div>
+                                                                        )}
+                                                                    </td>
+                                                                    <td style={{ padding: '16px 16px' }}>
+                                                                        {batch.trip_start_date ? (
+                                                                            <span style={{
+                                                                                display: 'inline-block',
+                                                                                padding: '4px 10px',
+                                                                                borderRadius: '8px',
+                                                                                background: '#eff6ff',
+                                                                                color: '#2563eb',
+                                                                                fontWeight: 700,
+                                                                                fontSize: '0.8rem'
+                                                                            }}>
+                                                                                {format(new Date(batch.trip_start_date), 'MMMM yyyy')}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: '0.8rem' }}>—</span>
                                                                         )}
                                                                     </td>
                                                                     <td style={{ padding: '16px 16px' }}>
