@@ -8,7 +8,8 @@ class LocalTravelTimelineScreen extends StatefulWidget {
   const LocalTravelTimelineScreen({super.key, required this.tripId});
 
   @override
-  State<LocalTravelTimelineScreen> createState() => _LocalTravelTimelineScreenState();
+  State<LocalTravelTimelineScreen> createState() =>
+      _LocalTravelTimelineScreenState();
 }
 
 class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
@@ -42,13 +43,20 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
     if (trip == null) return;
 
     final recordedEvents = trip!.lifecycleEvents;
-    final isClosed = ['Approved', 'Settled', 'Rejected', 'Completed'].contains(trip!.status);
+    final isClosed = [
+      'Approved',
+      'Settled',
+      'Rejected',
+      'Completed',
+    ].contains(trip!.status);
     final approvalChain = trip!.approvalChain ?? [];
-    
+
     List<Map<String, dynamic>> builtSteps = [];
 
     // 1. Request Sent
-    final dynamic initEvent = recordedEvents.isNotEmpty ? recordedEvents[0] : null;
+    final dynamic initEvent = recordedEvents.isNotEmpty
+        ? recordedEvents[0]
+        : null;
     String requestDate = 'Unknown';
     if (initEvent != null && initEvent['date'] != null) {
       try {
@@ -74,18 +82,21 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         var person = approvalChain[i];
         final name = (person['name'] ?? '').toString();
         final nameLower = name.toLowerCase();
-        
+
         dynamic approvalEvent;
         for (var e in recordedEvents) {
           final tLower = (e['title'] ?? '').toString().toLowerCase();
           final dLower = (e['description'] ?? '').toString().toLowerCase();
-          if (tLower.contains('approved by $nameLower') || dLower.contains('approved by $nameLower')) {
+          if (tLower.contains('approved by $nameLower') ||
+              dLower.contains('approved by $nameLower')) {
             approvalEvent = e;
             break;
           }
         }
 
-        final isCurrentApprover = (trip!.currentApproverName ?? '').toString().toLowerCase() == nameLower;
+        final isCurrentApprover =
+            (trip!.currentApproverName ?? '').toString().toLowerCase() ==
+            nameLower;
 
         String status = 'pending';
         String date = 'Pending';
@@ -93,9 +104,9 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         if (approvalEvent != null) {
           status = 'completed';
           try {
-             date = approvalEvent['date'].toString().split(' ').first;
-          } catch(e) {
-             date = approvalEvent['date'] ?? 'Completed';
+            date = approvalEvent['date'].toString().split(' ').first;
+          } catch (e) {
+            date = approvalEvent['date'] ?? 'Completed';
           }
         } else if (isCurrentApprover && !isClosed) {
           status = 'current';
@@ -106,9 +117,13 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           'smallLabel': name,
           'capsuleText': date,
           'status': status,
-          'icon': person['role'] == 'HR' ? Icons.security_rounded : Icons.how_to_reg_rounded,
+          'icon': person['role'] == 'HR'
+              ? Icons.security_rounded
+              : Icons.how_to_reg_rounded,
           'color': _getNodeColor(i + 1),
-          'role': person['role'] == 'HR' ? 'HR Verification' : 'Manager Approval',
+          'role': person['role'] == 'HR'
+              ? 'HR Verification'
+              : 'Manager Approval',
           'title': name,
         });
       }
@@ -123,13 +138,24 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         String eventStatus = 'completed';
         String displayTitle = title.isEmpty ? 'Approved' : title;
 
-        if (titleLower.contains('rejected') || (event['description']?.toString().toLowerCase().contains('rejected by') ?? false)) {
+        if (titleLower.contains('rejected') ||
+            (event['description']?.toString().toLowerCase().contains(
+                  'rejected by',
+                ) ??
+                false)) {
           role = 'Rejected';
           eventStatus = 'rejected';
-        } else if (titleLower.startsWith('hr approved by') || titleLower.contains('hr verification') || titleLower.contains('ticket booking')) {
+        } else if (titleLower.startsWith('hr approved by') ||
+            titleLower.contains('hr verification') ||
+            titleLower.contains('ticket booking')) {
           role = 'HR Verification';
-          final hrMatch = RegExp(r'hr approved by (.+)', caseSensitive: false).firstMatch(titleLower);
-          displayTitle = hrMatch != null ? 'HR Approved by ${hrMatch.group(1)!.trim()}' : 'HR Verified';
+          final hrMatch = RegExp(
+            r'hr approved by (.+)',
+            caseSensitive: false,
+          ).firstMatch(titleLower);
+          displayTitle = hrMatch != null
+              ? 'HR Approved by ${hrMatch.group(1)!.trim()}'
+              : 'HR Verified';
         } else if (titleLower.startsWith('forwarded to')) {
           role = 'Escalated';
           displayTitle = title;
@@ -137,10 +163,17 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           role = 'Manager Approval';
           displayTitle = title;
         } else if (titleLower.contains('management approval')) {
-          final nameMatch = RegExp(r'approved by ([A-Za-z\s.]+?)(?:\.|,|and|$)', caseSensitive: false).firstMatch(event['description']?.toString() ?? '');
-          final approverName = nameMatch != null ? nameMatch.group(1)!.trim() : '';
+          final nameMatch = RegExp(
+            r'approved by ([A-Za-z\s.]+?)(?:\.|,|and|$)',
+            caseSensitive: false,
+          ).firstMatch(event['description']?.toString() ?? '');
+          final approverName = nameMatch != null
+              ? nameMatch.group(1)!.trim()
+              : '';
           role = 'Manager Approval';
-          displayTitle = approverName.isNotEmpty ? 'Approved by $approverName' : 'Manager Approved';
+          displayTitle = approverName.isNotEmpty
+              ? 'Approved by $approverName'
+              : 'Manager Approved';
         }
 
         String dt = 'Completed';
@@ -173,7 +206,9 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
     }
 
     // Final Step
-    if (trip!.status == 'Approved' || trip!.status == 'Settled' || trip!.status == 'Completed') {
+    if (trip!.status == 'Approved' ||
+        trip!.status == 'Settled' ||
+        trip!.status == 'Completed') {
       builtSteps.add({
         'smallLabel': 'Final Approval',
         'capsuleText': 'Success',
@@ -228,12 +263,14 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
     return Icons.how_to_reg_rounded;
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: Color(0xFFBB0633))));
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFFBB0633)),
+        ),
+      );
     }
 
     return Scaffold(
@@ -242,10 +279,18 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         backgroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.chevron_left, color: Color(0xFF0F1E2A), size: 30),
+          icon: const Icon(
+            Icons.chevron_left,
+            color: Color(0xFF0F1E2A),
+            size: 30,
+          ),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Image.asset('assets/bavya.png', height: 40, errorBuilder: (c, e, s) => const SizedBox()),
+        title: Image.asset(
+          'assets/bavya.png',
+          height: 40,
+          errorBuilder: (c, e, s) => const SizedBox(),
+        ),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -253,13 +298,25 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           children: [
             _buildProfessionalHeader(),
             const SizedBox(height: 20),
-            if (trip!.status != 'Approved' && trip!.status != 'Success' && trip!.status != 'Settled' && trip!.status != 'Rejected' && trip!.status != 'Completed')
-                _buildActionBox(),
-            
-            if (trip!.status == 'Rejected' && trip!.rejectionReason != null && trip!.rejectionReason!.isNotEmpty)
+            if (trip!.status != 'Approved' &&
+                trip!.status != 'Success' &&
+                trip!.status != 'Settled' &&
+                trip!.status != 'Rejected' &&
+                trip!.status != 'Completed')
+              _buildActionBox(),
+
+            if (trip!.status == 'Rejected' &&
+                trip!.rejectionReason != null &&
+                trip!.rejectionReason!.isNotEmpty)
               Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFEF2F2),
                   borderRadius: BorderRadius.circular(12),
@@ -268,22 +325,39 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Color(0xFFEF4444),
+                      size: 20,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Rejection Reason', style: GoogleFonts.plusJakartaSans(color: const Color(0xFFDC2626), fontWeight: FontWeight.w700, fontSize: 13)),
+                          Text(
+                            'Rejection Reason',
+                            style: GoogleFonts.plusJakartaSans(
+                              color: const Color(0xFFDC2626),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
                           const SizedBox(height: 4),
-                          Text(trip!.rejectionReason!, style: GoogleFonts.plusJakartaSans(color: const Color(0xFF7F1D1D), fontSize: 12)),
+                          Text(
+                            trip!.rejectionReason!,
+                            style: GoogleFonts.plusJakartaSans(
+                              color: const Color(0xFF7F1D1D),
+                              fontSize: 12,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-            
+
             const SizedBox(height: 32),
 
             // Vertical Alternating Zigzag Timeline
@@ -303,7 +377,10 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
                     physics: const NeverScrollableScrollPhysics(),
                     itemCount: timelineSteps.length,
                     itemBuilder: (context, index) {
-                      return _buildVerticalNode(timelineSteps[index], index % 2 == 0);
+                      return _buildVerticalNode(
+                        timelineSteps[index],
+                        index % 2 == 0,
+                      );
                     },
                   ),
                 ],
@@ -323,18 +400,44 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(32), bottomRight: Radius.circular(32)),
-        boxShadow: [BoxShadow(color: const Color(0x0A000000), blurRadius: 20, offset: const Offset(0, 10))],
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(32),
+          bottomRight: Radius.circular(32),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0x0A000000),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(color: const Color(0xFFE11D48).withOpacity(0.05), borderRadius: BorderRadius.circular(6)),
-            child: Text(trip?.id ?? '', style: GoogleFonts.plusJakartaSans(fontSize: 10, fontWeight: FontWeight.w800, color: const Color(0xFFE11D48))),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE11D48).withOpacity(0.05),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              trip?.id ?? '',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFFE11D48),
+              ),
+            ),
           ),
           const SizedBox(height: 16),
-          Text('Travel Timeline', style: GoogleFonts.plusJakartaSans(fontSize: 26, fontWeight: FontWeight.w900, color: const Color(0xFF0F1E2A))),
+          Text(
+            'Travel Timeline',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF0F1E2A),
+            ),
+          ),
           const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -352,12 +455,29 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
   Widget _buildBadge(String label, String value, Color color) {
     return Column(
       children: [
-        Text(label, style: GoogleFonts.plusJakartaSans(fontSize: 9, fontWeight: FontWeight.w800, color: const Color(0xFF94A3B8))),
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF94A3B8),
+          ),
+        ),
         const SizedBox(height: 4),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-          child: Text(value, style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w800, color: color)),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            value,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
         ),
       ],
     );
@@ -375,12 +495,20 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.info_outline_rounded, color: Color(0xFFBB0633), size: 18),
+            const Icon(
+              Icons.info_outline_rounded,
+              color: Color(0xFFBB0633),
+              size: 18,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 'Action required to proceed to next stage.',
-                style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFFBB0633)),
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFFBB0633),
+                ),
               ),
             ),
           ],
@@ -402,7 +530,12 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           SizedBox(
             width: halfWidth,
             child: isLeft
-                ? _buildNodeCard(step, color, Alignment.centerRight, CrossAxisAlignment.end)
+                ? _buildNodeCard(
+                    step,
+                    color,
+                    Alignment.centerRight,
+                    CrossAxisAlignment.end,
+                  )
                 : const SizedBox.shrink(),
           ),
 
@@ -415,9 +548,19 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: color.withOpacity(0.35), blurRadius: 10, offset: const Offset(0, 4))],
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: Icon(step['icon'] as IconData, size: 20, color: Colors.white),
+            child: Icon(
+              step['icon'] as IconData,
+              size: 20,
+              color: Colors.white,
+            ),
           ),
 
           const SizedBox(width: 12),
@@ -426,7 +569,12 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           SizedBox(
             width: halfWidth,
             child: !isLeft
-                ? _buildNodeCard(step, color, Alignment.centerLeft, CrossAxisAlignment.start)
+                ? _buildNodeCard(
+                    step,
+                    color,
+                    Alignment.centerLeft,
+                    CrossAxisAlignment.start,
+                  )
                 : const SizedBox.shrink(),
           ),
         ],
@@ -448,7 +596,13 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(10),
-            boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [
+              BoxShadow(
+                color: color.withOpacity(0.3),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Column(
             children: [
@@ -476,7 +630,9 @@ class _LocalTravelTimelineScreenState extends State<LocalTravelTimelineScreen> {
         // Label below capsule
         Text(
           step['smallLabel'],
-          textAlign: crossAlign == CrossAxisAlignment.end ? TextAlign.right : TextAlign.left,
+          textAlign: crossAlign == CrossAxisAlignment.end
+              ? TextAlign.right
+              : TextAlign.left,
           style: GoogleFonts.plusJakartaSans(
             fontSize: 11,
             fontWeight: FontWeight.w800,

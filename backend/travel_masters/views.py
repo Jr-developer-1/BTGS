@@ -1096,8 +1096,12 @@ def my_eligibility_view(request):
                     "own_stay_others_pct": 100.0
                 },
                 "daily_allowance": 999999.0,
+                "monthly_tour_daily_allowance": 999999.0,
                 "max_mileage_km": 0.0,
-                "laundry_days_threshold": 0
+                "max_mileage_bike_km": 0.0,
+                "max_mileage_car_km": 0.0,
+                "laundry_days_threshold": 0,
+                "travel_rules": {}
             })
 
         # 3. Construct clean structured response matching frontend expectation
@@ -1142,8 +1146,12 @@ def my_eligibility_view(request):
                 "own_stay_others_pct": float(rule.own_stay_others_pct)
             },
             "daily_allowance": float(rule.daily_allowance_amount),
+            "monthly_tour_daily_allowance": float(rule.monthly_tour_daily_allowance_amount),
             "max_mileage_km": float(rule.max_mileage_km),
-            "laundry_days_threshold": int(rule.laundry_days_threshold)
+            "max_mileage_bike_km": float(rule.max_mileage_bike_km or 0.0),
+            "max_mileage_car_km": float(rule.max_mileage_car_km or 0.0),
+            "laundry_days_threshold": int(rule.laundry_days_threshold),
+            "travel_rules": rule.travel_rules if rule else {}
         }
         return Response(response_data)
     except Exception as e:

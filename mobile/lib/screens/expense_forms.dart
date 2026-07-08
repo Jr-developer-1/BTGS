@@ -116,6 +116,35 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
             double.tryParse(_incidentalAmountController.text) ?? 0.0;
         totalAmount = odoAmount + incidentalAmount; // Sum up for grid display
 
+        // Travel distance limits (500 for bike, 1200 for car)
+        if (odoStart > 0.0 && odoEnd > odoStart) {
+          final isTrip = widget.tripId.toUpperCase().startsWith('TRP-');
+          final String currentVehicle = isTrip ? (_travelMode ?? 'Bike') : 'Bike';
+          final bool isBike = currentVehicle.toLowerCase().contains('bike');
+          final bool isCar = currentVehicle.toLowerCase().contains('car') || currentVehicle.toLowerCase().contains('cab');
+
+          if (isBike && distance > 500) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Travel distance not allowed'),
+                backgroundColor: Colors.red[700],
+              ),
+            );
+            setState(() => _isProcessing = false);
+            return;
+          }
+          if (isCar && distance > 1200) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Travel distance not allowed'),
+                backgroundColor: Colors.red[700],
+              ),
+            );
+            setState(() => _isProcessing = false);
+            return;
+          }
+        }
+
         // Cadre max-mileage guard (admin-configured per EligibilityRule)
         if (_maxMileageKm > 0.0 && odoStart > 0.0 && odoEnd > odoStart) {
           if (distance > _maxMileageKm) {

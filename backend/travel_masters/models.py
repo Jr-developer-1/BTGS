@@ -209,6 +209,7 @@ class EligibilityRule(SoftDeleteModel):
         ('Preferred', 'Preferred (Strong Preference)'),
         ('Optional', 'Optional'),
         ('Exceptional Only', 'Exceptional Only (Hotel in rare cases)'),
+        ('available', 'Available (Legacy - maps to Optional)'),  # Legacy value — kept for backward compat
     ]
     company_guest_house_status = models.CharField(
         max_length=20, choices=COMPANY_GH_CHOICES, default='Optional',
@@ -245,11 +246,23 @@ class EligibilityRule(SoftDeleteModel):
         max_digits=10, decimal_places=2, default=0,
         help_text="Flat daily allowance amount for this cadre"
     )
+    monthly_tour_daily_allowance_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Flat daily allowance amount for monthly tours for this cadre"
+    )
 
     # --- (E) ODOMETER/MILEAGE LIMIT ---
     max_mileage_km = models.DecimalField(
         max_digits=10, decimal_places=2, default=0,
         help_text="Maximum permitted odometer/distance limit per cadre in km"
+    )
+    max_mileage_bike_km = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Maximum permitted bike odometer/distance limit per cadre in km"
+    )
+    max_mileage_car_km = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Maximum permitted car odometer/distance limit per cadre in km"
     )
 
     # --- (D) OWN STAY ALLOWANCE ---

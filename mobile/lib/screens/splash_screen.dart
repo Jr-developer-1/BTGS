@@ -4,8 +4,9 @@ import 'package:video_player/video_player.dart';
 import '../services/api_service.dart';
 import '../services/expense_reminder_service.dart';
 import '../services/app_version_service.dart';
+import '../constants/api_constants.dart';
 import 'login_screen.dart';
-import 'role_based_dashboard.dart';
+import 'security_pin_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -28,38 +29,44 @@ class _SplashScreenState extends State<SplashScreen> {
         'assets/logo_video.mp4',
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
-      
-      _videoController.initialize().then((_) {
-        if (!mounted) return;
-        _videoController.setVolume(0.0);
-        _videoController.setLooping(false);
-        _videoController.play().catchError((e) {
-          debugPrint('Video play error: $e');
-        });
-        
-        _videoController.addListener(() {
-          if (!mounted) return;
-          if (_videoController.value.hasError) {
-             debugPrint('Video player error: ${_videoController.value.errorDescription}');
-             _videoCompleted = true; // Skip video if it errors out
-             return;
-          }
-          if (_videoController.value.isInitialized &&
-              !_videoCompleted &&
-              _videoController.value.position >= _videoController.value.duration) {
-            setState(() {
-              _videoCompleted = true;
+
+      _videoController
+          .initialize()
+          .then((_) {
+            if (!mounted) return;
+            _videoController.setVolume(0.0);
+            _videoController.setLooping(false);
+            _videoController.play().catchError((e) {
+              debugPrint('Video play error: $e');
             });
-          }
-        });
-        
-        setState(() {
-          _isVideoReady = true;
-        });
-      }).catchError((e) {
-        debugPrint('Video init error: $e');
-        if (mounted) setState(() => _videoCompleted = true);
-      });
+
+            _videoController.addListener(() {
+              if (!mounted) return;
+              if (_videoController.value.hasError) {
+                debugPrint(
+                  'Video player error: ${_videoController.value.errorDescription}',
+                );
+                _videoCompleted = true; // Skip video if it errors out
+                return;
+              }
+              if (_videoController.value.isInitialized &&
+                  !_videoCompleted &&
+                  _videoController.value.position >=
+                      _videoController.value.duration) {
+                setState(() {
+                  _videoCompleted = true;
+                });
+              }
+            });
+
+            setState(() {
+              _isVideoReady = true;
+            });
+          })
+          .catchError((e) {
+            debugPrint('Video init error: $e');
+            if (mounted) setState(() => _videoCompleted = true);
+          });
     } catch (e) {
       debugPrint('Video controller setup error: $e');
       _videoCompleted = true;
@@ -72,7 +79,9 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _initializeAndNavigate() async {
     // 1. Initial services boot (Timezones, Notifs)
     try {
-      await ExpenseReminderService.initialize().timeout(const Duration(seconds: 5));
+      await ExpenseReminderService.initialize().timeout(
+        const Duration(seconds: 5),
+      );
     } catch (e) {
       debugPrint('Startup service error (silent): $e');
     }
@@ -96,22 +105,36 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
-  void _navigateAfterSplash() {
+  void _navigateAfterSplash() async {
     final apiService = ApiService();
 
     if (apiService.isAuthenticated) {
       final user = apiService.getUser() ?? {};
-      final name  = (user['name'] ?? user['username'] ?? '').toString();
-      final role  = (user['role'] ?? 'employee').toString().trim().toLowerCase();
+      final name = (user['name'] ?? user['username'] ?? '').toString();
+      final role = (user['role'] ?? 'employee').toString().trim().toLowerCase();
       final email = (user['email'] ?? '').toString();
+      final empId = (user['employee_id'] ?? '').toString();
 
+      // Check if the user has a PIN configured on the server
+      bool hasPin = false;
+      try {
+        final res = await apiService.get(ApiConstants.authHasPin, includeAuth: true);
+        hasPin = res['has_pin'] == true;
+      } catch (_) {
+        // If API call fails (e.g. offline), default to setup mode
+        hasPin = false;
+      }
+
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (context) => RoleBasedDashboard(
+          builder: (context) => SecurityPinScreen(
+            mode: hasPin ? PinMode.verify : PinMode.setup,
             username: name,
             userRole: role,
             email: email.isNotEmpty ? email : null,
+            employeeId: empId,
           ),
         ),
       );

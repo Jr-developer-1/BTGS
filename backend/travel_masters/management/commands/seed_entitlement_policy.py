@@ -40,12 +40,15 @@ POLICY_DATA = [
             "accommodation_others": 1500,
             # (C) DAILY ALLOWANCE
             "daily_allowance_amount": 1000,
+            "monthly_tour_daily_allowance_amount": 1000,
             # (D) OWN STAY ALLOWANCE
             "own_stay_state_hq_pct": 50,
             "own_stay_districts_pct": 50,
             "own_stay_others_pct": 50,
             # (E) ODOMETER LIMIT
             "max_mileage_km": 500.00,
+            "max_mileage_bike_km": 150.00,
+            "max_mileage_car_km": 300.00,
         }
     },
     {
@@ -79,12 +82,15 @@ POLICY_DATA = [
             "accommodation_others": 1250,
             # (C) DAILY ALLOWANCE
             "daily_allowance_amount": 700,
+            "monthly_tour_daily_allowance_amount": 700,
             # (D) OWN STAY ALLOWANCE
             "own_stay_state_hq_pct": 50,
             "own_stay_districts_pct": 50,
             "own_stay_others_pct": 50,
             # (E) ODOMETER LIMIT
             "max_mileage_km": 300.00,
+            "max_mileage_bike_km": 120.00,
+            "max_mileage_car_km": 250.00,
         }
     },
     {
@@ -118,12 +124,15 @@ POLICY_DATA = [
             "accommodation_others": 650,
             # (C) DAILY ALLOWANCE
             "daily_allowance_amount": 400,
+            "monthly_tour_daily_allowance_amount": 400,
             # (D) OWN STAY ALLOWANCE
             "own_stay_state_hq_pct": 50,
             "own_stay_districts_pct": 50,
             "own_stay_others_pct": 50,
             # (E) ODOMETER LIMIT
             "max_mileage_km": 250.00,
+            "max_mileage_bike_km": 100.00,
+            "max_mileage_car_km": 200.00,
         }
     },
     {
@@ -154,12 +163,15 @@ POLICY_DATA = [
             "accommodation_others": 500,
             # (C) DAILY ALLOWANCE
             "daily_allowance_amount": 350,
+            "monthly_tour_daily_allowance_amount": 350,
             # (D) OWN STAY ALLOWANCE
             "own_stay_state_hq_pct": 50,
             "own_stay_districts_pct": 50,
             "own_stay_others_pct": 50,
             # (E) ODOMETER LIMIT
             "max_mileage_km": 200.00,
+            "max_mileage_bike_km": 80.00,
+            "max_mileage_car_km": 150.00,
         }
     },
     {
@@ -193,12 +205,15 @@ POLICY_DATA = [
             "accommodation_others": 300,
             # (C) DAILY ALLOWANCE
             "daily_allowance_amount": 300,
+            "monthly_tour_daily_allowance_amount": 300,
             # (D) OWN STAY ALLOWANCE
             "own_stay_state_hq_pct": 50,
             "own_stay_districts_pct": 50,
             "own_stay_others_pct": 50,
             # (E) ODOMETER LIMIT
             "max_mileage_km": 150.00,
+            "max_mileage_bike_km": 60.00,
+            "max_mileage_car_km": 120.00,
         }
     },
 ]

@@ -522,6 +522,8 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
 
   Widget _buildExpenseTile(String category, dynamic exp) {
     final desc = _parseDescription(exp);
+    final bool isDA = desc['nature'] == 'Daily Allowance';
+    final String actualCategory = isDA ? 'Daily Allowance' : category;
     final subType = desc['subType']?.toString() ?? 'N/A';
     final mode = desc['mode']?.toString() ?? (desc['isPublicTransport'] == true ? 'PUBLIC TRANSPORT' : 'Local');
     final odoStart = desc['odoStart']?.toString() ?? '';
@@ -564,7 +566,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(20),
               ),
-              onTap: _isLocked ? null : () => _openEditForm(category, exp),
+              onTap: _isLocked ? null : () => _openEditForm(actualCategory, exp),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
                 child: Row(
@@ -579,11 +581,13 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                       ),
                       child: Center(
                         child: Icon(
-                          subType.contains('Car')
-                              ? Icons.directions_car_rounded
-                              : subType.contains('Bike')
-                              ? Icons.directions_bike_rounded
-                              : Icons.directions_bus_rounded,
+                          isDA
+                              ? Icons.assignment_turned_in_rounded
+                              : subType.contains('Car')
+                                  ? Icons.directions_car_rounded
+                                  : subType.contains('Bike')
+                                      ? Icons.directions_bike_rounded
+                                      : Icons.directions_bus_rounded,
                           size: 20,
                           color: const Color(0xFF64748B),
                         ),
@@ -710,7 +714,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                     text: TextSpan(
                       children: [
                         TextSpan(
-                          text: 'Calc. Odo Expense: ',
+                          text: isDA ? 'Daily Allowance: ' : 'Calc. Odo Expense: ',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
@@ -718,7 +722,7 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
                           ),
                         ),
                         TextSpan(
-                          text: '₹${odoExpense.toStringAsFixed(2)}',
+                          text: isDA ? '₹${exp['amount']}' : '₹${odoExpense.toStringAsFixed(2)}',
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 12,
                             fontWeight: FontWeight.w900,
@@ -848,6 +852,9 @@ class _TravelExpenseGridScreenState extends State<TravelExpenseGridScreen> {
       final cat = exp['category']?.toString().toLowerCase();
       final desc = _parseDescription(exp);
 
+      if (desc['nature'] == 'Daily Allowance') {
+        return 'Daily Allowance';
+      }
       if (cat == 'fuel' || cat == 'local travel') {
         String origin = desc['origin'] ?? 'Start';
         String dest = desc['destination'] ?? 'End';

@@ -584,7 +584,30 @@ def _is_admin(user):
     return user.role.name.lower() in ['admin', 'it-admin', 'superuser']
 
 def _can_user_edit_amount(user, obj, is_hr, is_finance, is_finance_exec, is_finance_head, user_step):
-    from .models import HRPositionConfig, TravelClaim, TravelAdvance, BulkActivityBatch
+    has_edit_claim_perm = False
+    if user and hasattr(user, 'role') and user.role:
+        from django.db.models import Q
+        from core.models import Role
+        role_from_api = getattr(user, 'role_from_api', None)
+        designation = getattr(user, 'designation', None)
+        matching_role = None
+        if role_from_api or designation:
+            q_obj = Q()
+            if role_from_api:
+                q_obj |= Q(name__iexact=role_from_api)
+            if designation:
+                q_obj |= Q(name__iexact=designation)
+            matching_role = Role.objects.filter(q_obj).first()
+        user_role_obj = matching_role or user.role
+        if user_role_obj and isinstance(user_role_obj.permissions, dict):
+            has_edit_claim_perm = (
+                user_role_obj.permissions.get('can_edit_submitted_claim', False) or
+                user_role_obj.permissions.get('can_edit_claims', False)
+            )
+
+    if _is_admin(user) or has_edit_claim_perm:
+        return True
+
     if not isinstance(obj, (TravelClaim, TravelAdvance, BulkActivityBatch)):
         return False
         
@@ -1088,10 +1111,20 @@ def trigger_parallel_dispatch(obj, user=None):
     requester = obj.user if hasattr(obj, 'user') else (obj.trip.user if hasattr(obj, 'trip') and obj.trip else None)
     request_type = "Trip" if isinstance(obj, Trip) else ("Advance" if isinstance(obj, TravelAdvance) else ("Expense Claim" if isinstance(obj, TravelClaim) else "Bulk Activity Log"))
 
-    # Check if the requester needs to follow the HR approval flow (every employee except HR)
+    # Check if the requester needs to follow the HR approval flow (only if they report to the COO, are SPH, or have no reporting manager)
     reports_to_coo = False
     if requester and not _is_hr(requester):
-        reports_to_coo = True
+        user_dept = str(requester.department or '').strip().lower()
+        user_desig = str(requester.designation or '').strip().lower()
+        user_pos = str(requester.active_position_id or '').strip()
+        is_sph = ('sph' in user_dept or 'sph' in user_desig or user_pos == '2')
+        rm = requester.reporting_manager
+        if is_sph or not rm:
+            reports_to_coo = True
+        else:
+            rm_pos = rm.get_current_position()
+            rm_pos_name = rm_pos.get('name') if rm_pos else None
+            reports_to_coo = _is_coo_position(rm_pos_name, rm.designation, employee_id=rm.employee_id)
 
     # Get project code
     project_code = 'General'
@@ -1113,11 +1146,11 @@ def trigger_parallel_dispatch(obj, user=None):
 
     if isinstance(obj, (Trip, BulkActivityBatch)):
         if isinstance(obj, BulkActivityBatch):
-            hr_requires_approval = reports_to_coo and hr_positions.filter(bulk_approval='APPROVAL').exists()
+            hr_requires_approval = hr_positions.filter(bulk_approval='APPROVAL').exists()
         else:
-            hr_requires_approval = reports_to_coo and hr_positions.filter(trips_approval='APPROVAL').exists()
+            hr_requires_approval = hr_positions.filter(trips_approval='APPROVAL').exists()
     else:
-        hr_requires_approval = reports_to_coo and hr_positions.filter(claims_approval='APPROVAL').exists()
+        hr_requires_approval = hr_positions.filter(claims_approval='APPROVAL').exists()
 
     # --- A. INSTANT SYNCHRONOUS STATE FINALIZATION ---
     response_msg = "Management approval completed."
@@ -1159,9 +1192,11 @@ def trigger_parallel_dispatch(obj, user=None):
                 obj.trip.save()
 
             response_msg = "Management approval completed. Request forwarded to HR for approval."
+            msg_title = f"{request_type} Bypassed to HR" if reports_to_coo else f"{request_type} Sent to HR"
+            msg_body = f"Your {request_type} has bypassed COO and is pending HR approval." if reports_to_coo else f"Your {request_type} has cleared management approval and is pending HR approval."
             Notification.objects.create(
-                user=requester, title=f"{request_type} Bypassed to HR",
-                message=f"Your {request_type} has bypassed COO and is pending HR approval.",
+                user=requester, title=msg_title,
+                message=msg_body,
                 type='info'
             )
         else:
@@ -1267,7 +1302,7 @@ def trigger_parallel_dispatch(obj, user=None):
                 # Is it the current approval step?
                 is_appr = False
                 if first_approval_pos and hr_pos.position_id == first_approval_pos.position_id:
-                    is_appr = reports_to_coo
+                    is_appr = True
 
                 # Or if the config specifies MARK_READ, it's just an intimation
                 is_read_only = False
@@ -1770,10 +1805,96 @@ def _generate_expenses_from_batches(trip):
 
     # 2. Process authorized batches
     batches = trip.activity_batches.filter(status__in=['Approved', 'Manager Approved', 'HR Approved', 'Resolved', 'Resubmitted', 'Submitted', 'Forwarded', 'Under Process'])
+    
+    processed_da_dates = set()
+    for e in existing_expenses:
+        try:
+            d = json.loads(e.description)
+            b_id = d.get('batch_id')
+            if b_id is None or int(b_id) not in [b.id for b in batches]:
+                if float(d.get('daily_allowance', 0)) > 0:
+                    processed_da_dates.add(str(e.date)[:10])
+        except:
+            pass
+
     for batch in batches:
         data = batch.data_json
         if not isinstance(data, list):
             continue
+
+        # Group and pre-calculate aggregated DA results for this batch
+        date_groups = {}
+        for idx, row in enumerate(data):
+            row_status = row.get('_status')
+            date_val = row.get('date', '')
+            is_rejected = (row_status == 'Rejected')
+            is_instruction = ('instruc' in str(date_val).lower())
+            if is_rejected or is_instruction:
+                continue
+
+            date_str = str(date_val).strip()
+            if not date_str:
+                continue
+            if len(date_str) > 10:
+                date_str = date_str[:10]
+            final_date = None
+            from datetime import datetime
+            for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"]:
+                try:
+                    final_date = datetime.strptime(date_str, fmt).date().isoformat()
+                    break
+                except:
+                    continue
+            if not final_date:
+                continue
+
+            start_time_str = row.get('start_time') or row.get('startTime')
+            reach_time_str = row.get('reach_time') or row.get('endTime') or row.get('reachTime')
+            if not start_time_str:
+                start_time_str = '09:00'
+            if not reach_time_str:
+                reach_time_str = '18:00'
+
+            if final_date not in date_groups:
+                date_groups[final_date] = []
+            date_groups[final_date].append({
+                'start_time': start_time_str,
+                'reach_time': reach_time_str
+            })
+
+        aggregated_da_results = {}
+        for f_date, items in date_groups.items():
+            total_hours = 0.0
+            earliest_dt = None
+            latest_dt = None
+
+            for item in items:
+                try:
+                    from datetime import datetime, timedelta
+                    st_str = item['start_time']
+                    rt_str = item['reach_time']
+
+                    t1 = datetime.strptime(f"{f_date}T{st_str}", "%Y-%m-%dT%H:%M")
+                    t2 = datetime.strptime(f"{f_date}T{rt_str}", "%Y-%m-%dT%H:%M")
+
+                    if t2 < t1:
+                        t2 += timedelta(days=1)
+
+                    duration = (t2 - t1).total_seconds() / 3600.0
+                    total_hours += duration
+
+                    if earliest_dt is None or t1 < earliest_dt:
+                        earliest_dt = t1
+                    if latest_dt is None or t2 > latest_dt:
+                        latest_dt = t2
+                except Exception:
+                    pass
+
+            aggregated_da_results[f_date] = {
+                'hours': total_hours,
+                'start_time': earliest_dt.strftime('%H:%M') if earliest_dt else '09:00',
+                'reach_time': latest_dt.strftime('%H:%M') if latest_dt else '18:00'
+            }
             
         created_ids = []
         for idx, row in enumerate(data):
@@ -1864,6 +1985,94 @@ def _generate_expenses_from_batches(trip):
                     try: amount = float(amount)
                     except: amount = 0.0
 
+                # --- NEW: Daily Allowance (DA) Calculation based on Aggregated Hours ---
+                from travel_masters.models import Cadre, EligibilityRule
+                user = trip.user
+                desig = (user.designation or '').strip().lower()
+                matched_cadre = None
+
+                if desig:
+                    keyword_cadre_pairs = []
+                    for cadre in Cadre.objects.all():
+                        for kw in (cadre.designation_keywords or []):
+                            if kw:
+                                keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
+                    
+                    keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+                    
+                    import re
+                    desig_words = re.findall(r'[a-z0-9]+', desig)
+                    desig_words_set = set(desig_words)
+                    
+                    for kw_clean, cadre in keyword_cadre_pairs:
+                        kw_words = re.findall(r'[a-z0-9]+', kw_clean)
+                        if not kw_words:
+                            continue
+                        if all(word in desig_words_set for word in kw_words):
+                            matched_cadre = cadre
+                            break
+                        if kw_clean in desig:
+                            matched_cadre = cadre
+                            break
+
+                if not matched_cadre:
+                    role = getattr(user, 'active_role', '').lower()
+                    if role in ['admin', 'cfo']:
+                        matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
+                    elif role in ['hr', 'finance']:
+                        matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
+
+                if not matched_cadre:
+                    matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
+                if not matched_cadre:
+                    matched_cadre = Cadre.objects.first()
+
+                rule = EligibilityRule.objects.filter(cadre=matched_cadre).order_by('-id').first() if matched_cadre else None
+                is_local = getattr(trip, 'consider_as_local', False)
+                if rule:
+                    if is_local:
+                        daily_allowance_limit = float(rule.monthly_tour_daily_allowance_amount)
+                    else:
+                        daily_allowance_limit = float(rule.daily_allowance_amount)
+                else:
+                    daily_allowance_limit = 300.0
+
+                if final_date not in processed_da_dates:
+                    # Calculate aggregated DA for this date
+                    agg_info = aggregated_da_results.get(final_date, {'hours': 0.0})
+                    hours = agg_info['hours']
+                    
+                    eligible_da = 0.0
+                    if hours < 12:
+                        da_message = "no DA is allowed for you based on hours"
+                    elif 12 <= hours <= 18:
+                        eligible_da = (daily_allowance_limit * 50.0) / 100.0
+                        da_message = "50% based on hours"
+                    else:
+                        eligible_da = daily_allowance_limit
+                        da_message = "100% based on hours"
+                        
+                    da_raw = row.get('daily_allowance')
+                    if da_raw is not None and str(da_raw).strip() != '':
+                        try:
+                            applied_da = float(da_raw)
+                        except:
+                            applied_da = eligible_da
+                    else:
+                        applied_da = eligible_da
+                        
+                    processed_da_dates.add(final_date)
+                else:
+                    # Already processed DA for this date, subsequent rows get 0 DA
+                    hours = 0.0
+                    eligible_da = 0.0
+                    applied_da = 0.0
+                    da_message = f"Aggregated with other entries for this date ({final_date})"
+
+                # Total amount claimed = fuel_or_fare (amount) + applied_da
+                total_claimed = amount + applied_da
+                total_allowed = amount + eligible_da
+
                 desc_dict = {
                     'origin': origin,
                     'destination': destination,
@@ -1882,11 +2091,16 @@ def _generate_expenses_from_batches(trip):
                     'date': final_date,
                     'startDate': final_date,
                     'endDate': final_date,
-                    'startTime': row.get('start_time', '09:00'),
-                    'endTime': row.get('reach_time', '18:00'),
+                    'startTime': start_time_str,
+                    'endTime': reach_time_str,
                     'is_deviated': row.get('is_deviated', False),
                     'deviation_reason': row.get('deviation_reason', ''),
                     'deviation_target': row.get('deviation_target', ''),
+                    'daily_allowance': applied_da,
+                    'eligible_da': eligible_da,
+                    'da_hours': hours,
+                    'da_message': da_message,
+                    'fare_or_fuel': amount
                 }
                 
                 # Carry over all mobile-provided attachment lists and textual reports
@@ -1905,7 +2119,8 @@ def _generate_expenses_from_batches(trip):
                     trip=trip,
                     date=final_date,
                     category='Fuel' if 'bike' in mapped_mode.lower() or 'car' in mapped_mode.lower() else 'Local Travel',
-                    amount=amount,
+                    amount=total_claimed,
+                    allowed_amount=total_allowed,
                     description=json.dumps(desc_dict),
                     status='Approved',
                     rm_remarks=row.get('_remark') or desc_dict['purpose'],
@@ -1990,15 +2205,6 @@ def resolve_approver(user, members_data=None):
         t.daemon = True
         t.start()
             
-    user_dept = str(user.department or '').strip().lower()
-    user_desig = str(user.designation or '').strip().lower()
-    user_pos = str(user.active_position_id or '').strip()
-    is_sph = ('sph' in user_dept or 'sph' in user_desig or user_pos == '2')
-
-    if is_sph:
-        # SPH Bypass: Bypasses all managers directly to HR/Finance parallel stage
-        return None, 0, None, user.senior_manager, user.hod_director, None
-
     reporting_manager = user.reporting_manager
     
     # SPECIAL CASE: If direct reporting manager is COO, bypass them. 
@@ -2289,7 +2495,7 @@ class TripListCreateView(generics.ListCreateAPIView):
         hr_positions = HRPositionConfig.objects.filter(is_active=True, project_code=project_code)
         if not hr_positions.exists():
             hr_positions = HRPositionConfig.objects.filter(is_active=True, project_code='General')
-        hr_requires_approval = reports_to_coo and hr_positions.filter(trips_approval='APPROVAL').exists()
+        hr_requires_approval = hr_positions.filter(trips_approval='APPROVAL').exists()
 
         is_top_level = (current_approver is None)
         trip_status = 'Pending' if hr_requires_approval else ('Approved' if is_top_level else 'Pending')
@@ -3544,6 +3750,7 @@ class ApprovalsView(APIView):
                                 "allowed_amount": float(e.allowed_amount) if e.allowed_amount is not None else None,
                                 "hr_selected_amount": float(e.hr_selected_amount) if e.hr_selected_amount is not None else None,
                                 "hr_amount_source": e.hr_amount_source or "claimed",
+                                "hr_selected_by_role": e.hr_selected_by_role or "",
                                 "finance_selected_amount": float(e.finance_selected_amount) if e.finance_selected_amount is not None else None,
                                 "finance_amount_source": e.finance_amount_source or "claimed",
                                 "policy_note": e.policy_note or "",
@@ -4638,6 +4845,7 @@ def handle_workflow_action(obj, action, user, data=None):
                         finalize_trip_approval(obj)
                         # Mark all intimations (including read-only ones) as read
                         FinanceIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
+                        HRIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
                         
                         notify_hr(f"Trip Approved", f"{requester.name}'s trip has been finalized by Finance.")
                         return Response({"message": "Finance Approval completed. Trip finalized."})
@@ -4704,6 +4912,12 @@ def handle_workflow_action(obj, action, user, data=None):
                 obj.processed_by = user
                 obj.save()
                 
+                # Mark associated HR/Finance intimations as read upon successful payout
+                if isinstance(obj, TravelClaim):
+                    HRIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
+                elif isinstance(obj, TravelAdvance):
+                    HRIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
+                
                 if trip:
                     if isinstance(obj, TravelClaim):
                         trip.status = 'Settled'
@@ -4728,7 +4942,20 @@ def handle_workflow_action(obj, action, user, data=None):
                 elif not current_step and obj.status == 'PENDING_HEAD':
                     current_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('-sequence_order').first()
             else:
-                current_step = _get_finance_step_for_user(user)
+                current_step = None
+                if obj.approver_position:
+                    step = FinanceWorkflowStep.objects.filter(position_id=obj.approver_position, is_active=True).first()
+                    if step:
+                        all_pos_ids = _get_user_all_position_ids(user)
+                        if str(obj.approver_position) in all_pos_ids:
+                            current_step = step
+                elif obj.current_approver == user:
+                    step = FinanceWorkflowStep.objects.filter(user=user, is_active=True).first()
+                    if step:
+                        current_step = step
+                
+                if not current_step:
+                    current_step = _get_finance_step_for_user(user)
                 
             if current_step:
                 if current_step.can_edit_amount:
@@ -4876,7 +5103,13 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         if is_admin or is_hr or is_finance:
             queryset = self.queryset
         else:
-            q = Q(trip__user=user) & Q(requester_position=user.active_position_id)
+            q = (
+                (Q(trip__user=user) & Q(requester_position=user.active_position_id)) |
+                Q(current_approver=user) |
+                Q(approver_position=user.active_position_id) |
+                Q(trip__current_approver=user) |
+                Q(trip__approver_position=user.active_position_id)
+            )
             queryset = self.queryset.filter(q)
             
         trip_id = self.request.query_params.get('trip_id')
@@ -4958,7 +5191,30 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         is_finance = _is_finance_executive(user) or _is_finance_head(user)
         is_admin = hasattr(user, 'role') and user.role.name.lower() in ['admin', 'superuser']
         
-        if is_hr and not is_admin:
+        has_edit_claim_perm = False
+        if user and hasattr(user, 'role') and user.role:
+            from django.db.models import Q
+            from core.models import Role
+            role_from_api = getattr(user, 'role_from_api', None)
+            designation = getattr(user, 'designation', None)
+            matching_role = None
+            if role_from_api or designation:
+                q_obj = Q()
+                if role_from_api:
+                    q_obj |= Q(name__iexact=role_from_api)
+                if designation:
+                    q_obj |= Q(name__iexact=designation)
+                matching_role = Role.objects.filter(q_obj).first()
+            user_role_obj = matching_role or user.role
+            if user_role_obj and isinstance(user_role_obj.permissions, dict):
+                has_edit_claim_perm = (
+                    user_role_obj.permissions.get('can_edit_submitted_claim', False) or
+                    user_role_obj.permissions.get('can_edit_claims', False)
+                )
+
+        if is_admin or is_finance or has_edit_claim_perm:
+            pass
+        elif is_hr:
             from .models import HRPositionConfig
             project_code = claim.trip.project_code or 'General' if claim.trip else 'General'
             # Fallback to requester's project_code if general/empty
@@ -4974,7 +5230,7 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
             can_edit = configs.filter(edit_claims='CAN_EDIT').exists()
             if not can_edit:
                 raise serializers.ValidationError("Permission Denied: Your HR position does not have permission to edit claims.")
-        elif not is_admin and not is_finance and claim.trip.user != user:
+        elif claim.trip.user != user:
             raise serializers.ValidationError("Permission Denied: Unauthorized edit attempt.")
             
         claim = serializer.save()
@@ -5033,8 +5289,30 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         """
         from .models import Expense as ExpenseModel
         user = getattr(request, 'custom_user', None)
-        if not (_is_hr(user) or (hasattr(user, 'role') and user.role.name.lower() in ['admin'])):
-            return Response({'error': 'Only HR or Admin can record claim decisions.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        has_edit_claim_perm = False
+        if user and hasattr(user, 'role') and user.role:
+            from django.db.models import Q
+            from core.models import Role
+            role_from_api = getattr(user, 'role_from_api', None)
+            designation = getattr(user, 'designation', None)
+            matching_role = None
+            if role_from_api or designation:
+                q_obj = Q()
+                if role_from_api:
+                    q_obj |= Q(name__iexact=role_from_api)
+                if designation:
+                    q_obj |= Q(name__iexact=designation)
+                matching_role = Role.objects.filter(q_obj).first()
+            user_role_obj = matching_role or user.role
+            if user_role_obj and isinstance(user_role_obj.permissions, dict):
+                has_edit_claim_perm = (
+                    user_role_obj.permissions.get('can_edit_submitted_claim', False) or
+                    user_role_obj.permissions.get('can_edit_claims', False)
+                )
+
+        if not (_is_hr(user) or (hasattr(user, 'role') and user.role.name.lower() in ['admin', 'superuser']) or has_edit_claim_perm):
+            return Response({'error': 'Only HR, Admin or authorized roles can record claim decisions.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             claim = self.get_object()
@@ -5108,12 +5386,61 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
                             'error': f'For over-limit claims, approved amount must be at least the policy limit (₹{allowed})'
                         })
                         continue
+                    policy_note_val = dec.get('policy_note') or dec.get('note') or ''
+                    if not policy_note_val or not str(policy_note_val).strip():
+                        errors.append({
+                            'expense_id': exp_id,
+                            'error': 'Policy note / justification is required for over-limit claims'
+                        })
+                        continue
+
+            role_name = 'HR'
+            if _is_hr(user):
+                role_name = 'HR'
+            elif user and hasattr(user, 'role') and user.role and user.role.name.lower() in ['admin', 'superuser']:
+                role_name = 'Admin'
+            elif user:
+                claim_user = claim.trip.user if claim.trip else None
+                if claim_user:
+                    chain = claim_user.get_effective_reporting_chain()
+                    approver_emp_code = str(user.employee_id or '').strip().lower()
+                    approver_positions = []
+                    if hasattr(user, 'get_active_position_identifiers'):
+                        approver_positions = [str(pid).strip() for pid in user.get_active_position_identifiers() if pid]
+                    if user.active_position_id:
+                        approver_positions.append(str(user.active_position_id).strip())
+
+                    matched_role = None
+                    for idx, candidate_role in enumerate(['Reporting Manager', 'Senior Manager', 'HOD']):
+                        if len(chain) > idx:
+                            mgr_info = chain[idx]
+                            if mgr_info:
+                                if isinstance(mgr_info, dict):
+                                    pos_id = str(mgr_info.get('id') or mgr_info.get('position_id') or '').strip()
+                                    emp_code = str(mgr_info.get('employee_code') or mgr_info.get('employee_id') or '').strip().lower()
+                                    if pos_id and pos_id in approver_positions:
+                                        matched_role = candidate_role
+                                        break
+                                    if emp_code and emp_code == approver_emp_code:
+                                        matched_role = candidate_role
+                                        break
+                                else:
+                                    if str(mgr_info).strip().lower() == approver_emp_code:
+                                        matched_role = candidate_role
+                                        break
+                    if matched_role:
+                        role_name = matched_role
+                    else:
+                        role_name = 'Reporting Manager'
+                else:
+                    role_name = 'Manager'
 
             exp.hr_selected_amount = hr_amt_dec
             exp.hr_amount_source = source or 'manual'
+            exp.hr_selected_by_role = role_name
             if dec.get('policy_note') is not None:
                 exp.policy_note = dec.get('policy_note')[:255]
-            exp.save(update_fields=['hr_selected_amount', 'hr_amount_source', 'policy_note'])
+            exp.save(update_fields=['hr_selected_amount', 'hr_amount_source', 'hr_selected_by_role', 'policy_note'])
             final_total += hr_amt_dec
             updated += 1
 
@@ -5158,8 +5485,30 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
         user = getattr(request, 'custom_user', None)
         is_fin = _is_finance_executive(user) or _is_finance_head(user)
         is_admin = hasattr(user, 'role') and user.role.name.lower() in ['admin', 'it-admin', 'superuser']
-        if not (is_fin or is_admin):
-            return Response({'error': 'Only Finance or Admin can record finance claim decisions.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        has_edit_claim_perm = False
+        if user and hasattr(user, 'role') and user.role:
+            from django.db.models import Q
+            from core.models import Role
+            role_from_api = getattr(user, 'role_from_api', None)
+            designation = getattr(user, 'designation', None)
+            matching_role = None
+            if role_from_api or designation:
+                q_obj = Q()
+                if role_from_api:
+                    q_obj |= Q(name__iexact=role_from_api)
+                if designation:
+                    q_obj |= Q(name__iexact=designation)
+                matching_role = Role.objects.filter(q_obj).first()
+            user_role_obj = matching_role or user.role
+            if user_role_obj and isinstance(user_role_obj.permissions, dict):
+                has_edit_claim_perm = (
+                    user_role_obj.permissions.get('can_edit_submitted_claim', False) or
+                    user_role_obj.permissions.get('can_edit_claims', False)
+                )
+
+        if not (is_fin or is_admin or has_edit_claim_perm):
+            return Response({'error': 'Only Finance, Admin or authorized roles can record finance claim decisions.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             claim = self.get_object()
@@ -5234,6 +5583,12 @@ class TravelClaimViewSet(viewsets.ModelViewSet):
                             'error': f'For over-limit claims, approved amount must be at least the policy limit (₹{allowed})'
                         })
                         continue
+                    if not remarks or not str(remarks).strip():
+                        errors.append({
+                            'expense_id': exp_id,
+                            'error': 'Policy note / justification is required for over-limit claims'
+                        })
+                        continue
 
             exp.finance_selected_amount = fin_amt_dec
             exp.finance_amount_source = source or 'manual'
@@ -5275,11 +5630,19 @@ class TravelAdvanceViewSet(viewsets.ModelViewSet):
             return TravelAdvance.objects.none()
             
         is_admin = hasattr(user, 'role') and user.role.name.lower() in ['admin', 'superuser']
+        is_hr = _is_hr(user)
+        is_finance = _is_finance_executive(user) or _is_finance_head(user)
         
-        if is_admin:
+        if is_admin or is_hr or is_finance:
             queryset = self.queryset
         else:
-            q = Q(trip__user=user) & Q(requester_position=user.active_position_id)
+            q = (
+                (Q(trip__user=user) & Q(requester_position=user.active_position_id)) |
+                Q(current_approver=user) |
+                Q(approver_position=user.active_position_id) |
+                Q(trip__current_approver=user) |
+                Q(trip__approver_position=user.active_position_id)
+            )
             queryset = self.queryset.filter(q)
             
         trip_id = self.request.query_params.get('trip_id')
@@ -5956,7 +6319,7 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
             cell.font      = DATA_FONT
             cell.alignment = columns[col_idx - 1][2]
             cell.border    = BORDER
-            # Set explicit formats for A and B
+            # Set explicit formats
             if col_idx == 1: cell.number_format = 'YYYY-MM-DD'
             if col_idx == 2: cell.number_format = 'HH:MM'
 
@@ -6187,7 +6550,8 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
                     rows.append({
                         "date": date_val, "start_time": start_time_str, "reach_time": reach_time_str, "mode": "Bike",
                         "origin_route": origin, "destination_route": destination,
-                        "vehicle": "Own Bike", "visit_intent": str(row.get('Purpose', row.get('purpose', '')))
+                        "vehicle": "Own Bike", "visit_intent": str(row.get('Purpose', row.get('purpose', ''))),
+                        "daily_allowance": None
                     })
             else:
                  # Direct JSON submission (resubmitting rejected rows)
@@ -6656,7 +7020,7 @@ MASTER_GROUPS_CONFIG = {
                 'bus_allowed', 'bus_class', 'car_allowed', 'car_notes', 'local_conveyance_allowed', 
                 'local_conveyance_type', 'company_guest_house_status', 
                 'accommodation_state_hq', 'accommodation_districts', 'accommodation_others', 
-                'daily_allowance_amount', 'own_stay_state_hq_pct', 'own_stay_districts_pct', 
+                'daily_allowance_amount', 'monthly_tour_daily_allowance_amount', 'own_stay_state_hq_pct', 'own_stay_districts_pct', 
                 'own_stay_others_pct'
             ]}
         ]

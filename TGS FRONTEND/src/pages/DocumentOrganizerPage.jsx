@@ -22,6 +22,7 @@ import {
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
+import api from '../api/api';
 
 
 
@@ -68,19 +69,20 @@ const DocumentCard = ({
             </div>
 
             <div className="card-body">
+                {showInput && !isTripDoc && (
+                    <div className="input-group-premium" style={{ marginBottom: '1rem' }}>
+                        <label>{label} Number</label>
+                        <input
+                            type="text"
+                            placeholder={placeholder}
+                            value={doc?.val || ''}
+                            onChange={(e) => onTextChange(id, e.target.value)}
+                        />
+                    </div>
+                )}
+
                 {!doc?.file ? (
                     <div className="upload-container">
-                        {showInput && (
-                            <div className="input-group-premium" style={{ marginBottom: '1rem' }}>
-                                <label>{label} Number</label>
-                                <input
-                                    type="text"
-                                    placeholder={placeholder}
-                                    value={doc?.val || ''}
-                                    onChange={(e) => onTextChange(id, e.target.value)}
-                                />
-                            </div>
-                        )}
                         {(!isTripDoc && id === 'gstNo' && !isAdmin) ? (
                             <div className="upload-zone disabled">
                                 <ShieldCheck size={20} />
@@ -101,14 +103,6 @@ const DocumentCard = ({
                     </div>
                 ) : (
                     <div className="uploaded-success-body">
-                        {(doc.val || (isTripDoc && doc.title)) && (
-                            <div className="doc-number-preview-group">
-                                <span className="doc-number-label">
-                                    {isTripDoc ? (doc.title || 'Document') : label}
-                                </span>
-                                {doc.val && <div className="doc-number-value">{doc.val}</div>}
-                            </div>
-                        )}
                         <div className="preview-container">
                             {doc.file.startsWith('data:image/')
                                 ? <img src={doc.file} alt="Preview" />
@@ -148,32 +142,39 @@ const DocumentOrganizerPage = () => {
         drivingLicense: { val: '', file: null, fileName: '' },
         pan:            { val: '', file: null, fileName: '' },
         passport:       { val: '', file: null, fileName: '' },
-        gstNo:          { val: '', file: null, fileName: '' }
+        gstNo:          { val: '', file: null, fileName: '' },
+        rc:             { val: '', file: null, fileName: '' },
+        insurance:      { val: '', file: null, fileName: '' },
+        pollution:      { val: '', file: null, fileName: '' }
     });
+
     const [tripDocs, setTripDocs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
     const [viewingDoc, setViewingDoc] = useState(null);
 
     useEffect(() => {
         if (!user?.employee_id) return;
-        const userKey = `user_documents_${user.employee_id}`;
+
+        const fetchDocs = async () => {
+            try {
+                const response = await api.get('/api/auth/documents');
+                if (response.data) {
+                    setDocs(response.data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch documents from server, loading from cache", error);
+                const userKey = `user_documents_${user.employee_id}`;
+                const savedDocs = sessionStorage.getItem(userKey);
+                if (savedDocs) {
+                    try { setDocs(JSON.parse(savedDocs)); } catch (e) { console.error(e); }
+                }
+            }
+        };
+
+        fetchDocs();
+
         const tripKey = `user_trip_documents_${user.employee_id}`;
-        const savedDocs = sessionStorage.getItem(userKey);
         const savedTripDocs = sessionStorage.getItem(tripKey);
-
-        if (savedDocs) {
-            try { setDocs(JSON.parse(savedDocs)); } catch (e) { console.error(e); }
-        } else {
-            setDocs({
-                aadharId:       { val: '', file: null, fileName: '' },
-                companyId:      { val: '', file: null, fileName: '' },
-                drivingLicense: { val: '', file: null, fileName: '' },
-                pan:            { val: '', file: null, fileName: '' },
-                passport:       { val: '', file: null, fileName: '' },
-                gstNo:          { val: '', file: null, fileName: '' }
-            });
-        }
-
         if (savedTripDocs) {
             try { setTripDocs(JSON.parse(savedTripDocs)); } catch (e) { console.error(e); }
         } else {
@@ -181,14 +182,41 @@ const DocumentOrganizerPage = () => {
         }
     }, [user?.employee_id]);
 
+
     const handleTextChange = (key, value) => {
         setDocs(prev => {
             const next = { ...prev, [key]: { ...prev[key], val: value } };
-            if (user?.employee_id) {
-                sessionStorage.setItem(`user_documents_${user.employee_id}`, JSON.stringify(next));
-            }
+            safeSetDocCache(next);
             return next;
         });
+    };
+
+    // Safely persist documents to sessionStorage WITHOUT the base64 file data
+    // to avoid QuotaExceededError (sessionStorage limit ~5 MB).
+    // File blobs live only in React state; only val + fileName are cached.
+    const safeSetDocCache = (docsObj) => {
+        if (!user?.employee_id) return;
+        try {
+            const lightweight = {};
+            Object.keys(docsObj).forEach(k => {
+                const { file, ...rest } = docsObj[k];
+                lightweight[k] = rest; // strip base64 blob
+            });
+            sessionStorage.setItem(`user_documents_${user.employee_id}`, JSON.stringify(lightweight));
+        } catch (e) {
+            // QuotaExceededError or other storage errors — silently ignore
+            console.warn('sessionStorage quota exceeded; document metadata not cached:', e);
+        }
+    };
+
+    const safeSetTripDocCache = (tripDocsArr) => {
+        if (!user?.employee_id) return;
+        try {
+            const lightweight = tripDocsArr.map(({ file, ...rest }) => rest);
+            sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(lightweight));
+        } catch (e) {
+            console.warn('sessionStorage quota exceeded; trip document metadata not cached:', e);
+        }
     };
 
     const handleFileChange = (key, e, isTripDoc = false) => {
@@ -199,17 +227,13 @@ const DocumentOrganizerPage = () => {
             if (isTripDoc) {
                 setTripDocs(prev => {
                     const next = prev.map(d => d.id === key ? { ...d, file: reader.result, fileName: file.name } : d);
-                    if (user?.employee_id) {
-                        sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(next));
-                    }
+                    safeSetTripDocCache(next);
                     return next;
                 });
             } else {
                 setDocs(prev => {
                     const next = { ...prev, [key]: { ...prev[key], file: reader.result, fileName: file.name } };
-                    if (user?.employee_id) {
-                        sessionStorage.setItem(`user_documents_${user.employee_id}`, JSON.stringify(next));
-                    }
+                    safeSetDocCache(next);
                     return next;
                 });
             }
@@ -225,17 +249,13 @@ const DocumentOrganizerPage = () => {
         if (isTripDoc) {
             setTripDocs(prev => {
                 const next = prev.map(d => d.id === key ? { ...d, file: null, fileName: '' } : d);
-                if (user?.employee_id) {
-                    sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(next));
-                }
+                safeSetTripDocCache(next);
                 return next;
             });
         } else {
             setDocs(prev => {
                 const next = { ...prev, [key]: { ...prev[key], file: null, fileName: '' } };
-                if (user?.employee_id) {
-                    sessionStorage.setItem(`user_documents_${user.employee_id}`, JSON.stringify(next));
-                }
+                safeSetDocCache(next);
                 return next;
             });
         }
@@ -249,9 +269,7 @@ const DocumentOrganizerPage = () => {
     const updateTripTitle = (id, title) => {
         setTripDocs(prev => {
             const next = prev.map(d => d.id === id ? { ...d, title } : d);
-            if (user?.employee_id) {
-                sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(next));
-            }
+            safeSetTripDocCache(next);
             return next;
         });
     };
@@ -262,26 +280,32 @@ const DocumentOrganizerPage = () => {
 
         setTripDocs(prev => {
             const next = prev.filter(d => d.id !== id);
-            if (user?.employee_id) {
-                sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(next));
-            }
+            safeSetTripDocCache(next);
             return next;
         });
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         if (!user?.employee_id) {
             showToast('User session not found. Please log in again.', 'error');
             return;
         }
         setIsSaving(true);
-        setTimeout(() => {
-            sessionStorage.setItem(`user_documents_${user.employee_id}`, JSON.stringify(docs));
-            sessionStorage.setItem(`user_trip_documents_${user.employee_id}`, JSON.stringify(tripDocs));
+        try {
+            await api.post('/api/auth/documents', docs);
+            safeSetDocCache(docs);
+            safeSetTripDocCache(tripDocs);
+            showToast('Repository synchronized successfully with server!', 'success');
+        } catch (error) {
+            console.error("Failed to sync documents with server:", error);
+            showToast('Failed to sync repository with server. Saved to local cache.', 'warning');
+            safeSetDocCache(docs);
+            safeSetTripDocCache(tripDocs);
+        } finally {
             setIsSaving(false);
-            showToast('Repository synchronized!', 'success');
-        }, 1200);
+        }
     };
+
 
     // Shared props passed to every DocumentCard
     const cardProps = {
@@ -317,11 +341,20 @@ const DocumentOrganizerPage = () => {
                 </div>
 
                 <div className="doc-grid-section">
-                    <div className="section-title"><FileText className="icon-blue" size={20} /><h3>Additional Documents</h3></div>
+                    <div className="section-title"><Car style={{ color: '#E11D48' }} size={20} /><h3>Travel Compliance Documents</h3></div>
                     <div className="cards-wrapper triple">
-                        <DocumentCard id="drivingLicense" label="Driving License" icon={<Car size={20} />}        placeholder="License Number"  type="optional" doc={docs.drivingLicense} {...cardProps} />
-                        <DocumentCard id="pan"            label="PAN Card"        icon={<CreditCard size={20} />} placeholder="Alphanumeric PAN" type="optional" doc={docs.pan}            {...cardProps} />
-                        <DocumentCard id="passport"       label="Passport"        icon={<Globe size={20} />}      placeholder="Passport Number"  type="optional" doc={docs.passport}       {...cardProps} />
+                        <DocumentCard id="drivingLicense" label="Driving License" icon={<Car size={20} />} placeholder="License Number" type="mandatory" doc={docs.drivingLicense} {...cardProps} />
+                        <DocumentCard id="rc" label="RC Copy" icon={<FileText size={20} />} placeholder="RC Number" type="mandatory" doc={docs.rc} {...cardProps} />
+                        <DocumentCard id="insurance" label="Insurance Copy" icon={<ShieldCheck size={20} />} placeholder="Policy Number" type="mandatory" doc={docs.insurance} {...cardProps} />
+                        <DocumentCard id="pollution" label="Pollution Certificate" icon={<Globe size={20} />} placeholder="Certificate Number" type="mandatory" doc={docs.pollution} {...cardProps} />
+                    </div>
+                </div>
+
+                <div className="doc-grid-section">
+                    <div className="section-title"><FileText className="icon-blue" size={20} /><h3>Additional Documents</h3></div>
+                    <div className="cards-wrapper">
+                        <DocumentCard id="pan" label="PAN Card" icon={<CreditCard size={20} />} placeholder="Alphanumeric PAN" type="optional" doc={docs.pan} {...cardProps} />
+                        <DocumentCard id="passport" label="Passport" icon={<Globe size={20} />} placeholder="Passport Number" type="optional" doc={docs.passport} {...cardProps} />
                     </div>
                 </div>
 

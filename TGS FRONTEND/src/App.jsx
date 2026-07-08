@@ -134,7 +134,7 @@ const NotificationHandler = () => {
         window.location.hostname === '127.0.0.1';
 
       if (!isSecure && window.location.hostname !== 'localhost') {
-        console.warn('System Notifications (Push) registration skipped: Insecure HTTP context.');
+        console.log('System Notifications (Push) registration skipped: Insecure HTTP context.');
         return;
       }
 

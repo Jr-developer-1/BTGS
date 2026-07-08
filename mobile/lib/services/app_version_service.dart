@@ -25,19 +25,21 @@ class AppVersionService {
         final updateUrl = data['update_url'];
         
         PackageInfo packageInfo = await PackageInfo.fromPlatform();
-        String currentVersion = packageInfo.version;
-        
-        bool isForceUpdate = _isVersionLessThan(currentVersion, minVersion);
-        bool isOptionalUpdate = !isForceUpdate && _isVersionLessThan(currentVersion, latestVersion);
+        String currentVersion = '${packageInfo.version}+${packageInfo.buildNumber}';
+
+        // Only trigger update when the installed version is STRICTLY OLDER than the server version.
+        // Equal versions = user already has the latest, never prompt.
+        bool isBelowMin = _isVersionLessThan(currentVersion, minVersion);
+        bool isBelowLatest = _isVersionLessThan(currentVersion, latestVersion);
+
+        bool isForceUpdate = isBelowMin || (isBelowLatest && updateType == 'force');
+        bool isOptionalUpdate = !isForceUpdate && isBelowLatest;
 
         if (isForceUpdate) {
           _showUpdateDialog(context, message, updateUrl, true);
           return false; // Cannot proceed
-        } else if (isOptionalUpdate && updateType == 'optional') {
-           await _showUpdateDialog(context, message, updateUrl, false);
-        } else if (isOptionalUpdate && updateType == 'force') {
-           _showUpdateDialog(context, message, updateUrl, true);
-           return false; // Cannot proceed
+        } else if (isOptionalUpdate) {
+          await _showUpdateDialog(context, message, updateUrl, false);
         }
       }
     } catch (e) {
@@ -45,6 +47,14 @@ class AppVersionService {
       // If version check fails, allow normal app usage to not brick the app offline
     }
     return true; // Can proceed
+  }
+
+  static int _getBuildNumber(String v) {
+    final parts = v.split('+');
+    if (parts.length > 1) {
+      return int.tryParse(parts[1]) ?? 0;
+    }
+    return 0;
   }
 
   // Returns true if v1 < v2
@@ -62,7 +72,16 @@ class AppVersionService {
       if (p1 < p2) return true;
       if (p1 > p2) return false;
     }
-    return false; // Equal
+
+    // If version names are equal, compare build numbers
+    int build1 = _getBuildNumber(v1);
+    int build2 = _getBuildNumber(v2);
+    return build1 < build2;
+  }
+
+  // Returns true if v1 > v2 (strictly newer)
+  static bool _isVersionGreaterThan(String v1, String v2) {
+    return _isVersionLessThan(v2, v1);
   }
 
   static Future<void> _showUpdateDialog(BuildContext context, String message, String updateUrl, bool isForce) {

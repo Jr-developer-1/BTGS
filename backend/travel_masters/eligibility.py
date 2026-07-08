@@ -48,7 +48,7 @@ def compute_allowance_for_claim(claim):
     if not matched_cadre:
         matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
     if not matched_cadre:
-        matched_cadre = all_cadres.first()
+        matched_cadre = Cadre.objects.first()
 
     # Get global policy status
     try:
@@ -101,6 +101,7 @@ def compute_allowance_for_claim(claim):
             accommodation_districts = 500
             accommodation_others = 300
             daily_allowance_amount = 300
+            monthly_tour_daily_allowance_amount = 300
             own_stay_state_hq_pct = 50
             own_stay_districts_pct = 50
             own_stay_others_pct = 50
@@ -165,17 +166,9 @@ def compute_allowance_for_claim(claim):
 
     expense_allowances = []
     for exp in expenses:
-        category = (exp.category or '').strip().lower()
-        if category == 'others':
-            category = 'travel'
-        elif category == 'fuel':
-            category = 'local travel'
-        claimed = float(exp.amount)
-        allowed = None
-        exceeds = False
-        note = ""
+        raw_category = (exp.category or '').strip().lower()
 
-        # Parse description JSON if available
+        # Parse description JSON first so we can inspect 'nature' before remapping
         details = {}
         desc = exp.description or ''
         if desc.startswith('{'):
@@ -183,6 +176,25 @@ def compute_allowance_for_claim(claim):
                 details = json.loads(desc)
             except:
                 pass
+
+        # Smart category resolution for 'Others':
+        # If description contains nature='Daily Allowance', treat as daily_allowance.
+        # Otherwise fall back to legacy 'travel' remapping.
+        if raw_category == 'others':
+            nature = str(details.get('nature', '')).strip().lower()
+            if nature == 'daily allowance':
+                category = 'daily_allowance'
+            else:
+                category = 'travel'
+        elif raw_category == 'fuel':
+            category = 'local travel'
+        else:
+            category = raw_category
+
+        claimed = float(exp.amount)
+        allowed = None
+        exceeds = False
+        note = ""
 
         city_type_resolved = city_type
 
@@ -284,7 +296,11 @@ def compute_allowance_for_claim(claim):
                     note = f"Accommodation amount ₹{claimed} exceeds your policy limit of ₹{allowed} for {nights} night(s) in {city_type_acc} cities."
         
         elif category == 'food':
-            per_day_limit = float(rule.daily_allowance_amount)
+            is_local = claim.trip.consider_as_local if (claim and claim.trip) else False
+            if is_local:
+                per_day_limit = float(getattr(rule, 'monthly_tour_daily_allowance_amount', rule.daily_allowance_amount))
+            else:
+                per_day_limit = float(rule.daily_allowance_amount)
             
             # Sum all food expenses on the same date as this expense
             exp_date = str(exp.date)[:10] if exp.date else ''
@@ -301,7 +317,36 @@ def compute_allowance_for_claim(claim):
                     note = f"Daily food allowance for this date (₹{daily_food_total:.2f}) exceeds the limit of ₹{per_day_limit:.2f}/day."
                 else:
                     note = f"Daily allowance for this date (₹{daily_food_total:.2f}) exceeds the limit of ₹{per_day_limit:.2f}/day."
-                    
+
+        elif category == 'daily_allowance':
+            # DA entered manually under 'Others' with nature='Daily Allowance'
+            is_local = claim.trip.consider_as_local if (claim and claim.trip) else False
+            if is_local:
+                da_limit = float(getattr(rule, 'monthly_tour_daily_allowance_amount', rule.daily_allowance_amount))
+            else:
+                da_limit = float(rule.daily_allowance_amount)
+
+            # Sum all DA expenses on the same date to enforce per-day cap
+            exp_date = str(exp.date)[:10] if exp.date else ''
+            daily_da_total = sum(
+                float(e.amount)
+                for e in expenses
+                if (e.category or '').strip().lower() == 'others'
+                and str(e.date)[:10] == exp_date
+                and str(e.description or '').find('"nature": "Daily Allowance"') >= 0
+            )
+
+            # allowed_amount = full policy limit so HR can see the entitlement ceiling
+            # The "exceeds" flag captures when the claim actually breaches the limit
+            allowed = da_limit
+            exceeds = daily_da_total > da_limit or claimed > da_limit
+            if daily_da_total > da_limit:
+                note = f"Daily Allowance for this date ({daily_da_total:.2f}) exceeds the policy limit of {da_limit:.2f}/day."
+            elif claimed > da_limit:
+                note = f"DA amount {claimed:.2f} exceeds the policy limit of {da_limit:.2f}/day."
+            else:
+                note = f"DA policy limit: {da_limit:.2f}/day."
+
         elif category == 'travel':
             mode = details.get('mode', '')
             class_type = details.get('classType', details.get('class', ''))

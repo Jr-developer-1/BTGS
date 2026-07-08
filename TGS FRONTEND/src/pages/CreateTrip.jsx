@@ -811,7 +811,7 @@ const CreateTrip = () => {
             composition: formData.composition === 'Alone' ? 'Solo' : 'Group',
             purpose: formData.purpose ? formData.purpose.trim() : '',
             travel_mode: formData.travelMode,
-            vehicle_type: ['2 Wheeler', '3 Wheeler', '4 Wheeler'].includes(formData.travelMode)
+            vehicle_type: ['2 Wheeler', '3 Wheeler', 'Car / Jeep / Van'].includes(formData.travelMode)
                 ? (formData.vehicleType === 'Own' ? 'Own' : 'Service')
                 : null,
             start_odometer: formData.startOdometer,
@@ -837,9 +837,6 @@ const CreateTrip = () => {
                         <button className="btn-secondary" onClick={() => navigate('/trips')}>
                             Go to My Trips
                         </button>
-                        {/* <button className="btn-primary" onClick={() => navigate(`/${payload.consider_as_local ? 'travel-story' : 'trip-story'}/${encodeId(tripId)}`)}>
-                            View {payload.consider_as_local ? 'Travel Story' : 'Trip Story'}
-                        </button> */}
                     </div>
                 )
             });
@@ -848,12 +845,26 @@ const CreateTrip = () => {
             console.error("Error creating trip:", error);
             const errorMessage = error.response?.data?.detail || 'Failed to submit trip request. Please try again.';
             showToast(errorMessage, 'error');
+            
+            const isComplianceError = errorMessage.toLowerCase().includes("required travel documents");
             setModalState({
                 isOpen: true,
                 type: 'error',
-                title: 'Submission Failed',
+                title: isComplianceError ? 'Compliance Validation Failed' : 'Submission Failed',
                 message: errorMessage,
-                actions: null
+                actions: isComplianceError ? (
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <button className="btn-secondary" onClick={() => setModalState(prev => ({ ...prev, isOpen: false }))}>
+                            Cancel
+                        </button>
+                        <button className="btn-primary" onClick={() => {
+                            setModalState(prev => ({ ...prev, isOpen: false }));
+                            navigate('/documents');
+                        }}>
+                            Go to Document Organizer
+                        </button>
+                    </div>
+                ) : null
             });
         } finally {
             setIsSubmitting(false);

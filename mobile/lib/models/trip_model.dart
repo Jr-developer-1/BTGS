@@ -168,7 +168,9 @@ class Trip {
       totalApprovedAdvance: parseDouble(json['total_approved_advance']),
       totalExpenses: parseDouble(json['total_expenses']),
       walletBalance: parseDouble(json['wallet_balance']),
-      advances: (json['advances'] as List<dynamic>?)?.map((e) => Advance.fromJson(e)).toList(),
+      advances: (json['advances'] as List<dynamic>?)
+          ?.map((e) => Advance.fromJson(e))
+          .toList(),
       expenses: parseJsonField(json['expenses']),
       jobReports: parseJsonField(json['job_reports']),
       enRoute: json['en_route'],
@@ -271,7 +273,8 @@ class Trip {
       leaderEmployeeId: leaderEmployeeId ?? this.leaderEmployeeId,
       members: members ?? this.members,
       lifecycleEvents: lifecycleEvents ?? this.lifecycleEvents,
-      accommodationRequests: accommodationRequests ?? this.accommodationRequests,
+      accommodationRequests:
+          accommodationRequests ?? this.accommodationRequests,
       odometer: odometer ?? this.odometer,
       totalApprovedAdvance: totalApprovedAdvance ?? this.totalApprovedAdvance,
       totalExpenses: totalExpenses ?? this.totalExpenses,
@@ -324,11 +327,15 @@ class Advance {
     return Advance(
       id: json['id'] ?? 0,
       trip: json['trip']?.toString() ?? '',
-      requestedAmount: double.tryParse(json['requested_amount']?.toString() ?? '0') ?? 0.0,
+      requestedAmount:
+          double.tryParse(json['requested_amount']?.toString() ?? '0') ?? 0.0,
       purpose: json['purpose'] ?? '',
       status: json['status'] ?? 'Draft',
-      submittedAt: json['submitted_at'] != null ? DateTime.tryParse(json['submitted_at']) : null,
-      currentApprover: json['current_approver_name'] ?? json['current_approver']?.toString(),
+      submittedAt: json['submitted_at'] != null
+          ? DateTime.tryParse(json['submitted_at'])
+          : null,
+      currentApprover:
+          json['current_approver_name'] ?? json['current_approver']?.toString(),
     );
   }
 }

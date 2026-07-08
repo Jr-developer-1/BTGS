@@ -100,9 +100,106 @@ const ApprovalInbox = ({ enforceTab = null }) => {
         dept.includes('human resources') || desig.includes('human resources') || rawRole === 'human resources' ||
         dept.includes('human resource') || desig.includes('human resource') || rawRole === 'human resource';
 
+    const hasEditClaimPerm = isHR || isFinance || !!user?.role_permissions?.can_edit_submitted_claim;
+
     const [allowanceData, setAllowanceData] = useState(null);
     const [allowanceLoading, setAllowanceLoading] = useState(false);
     const [hrDecisions, setHrDecisions] = useState({});
+
+    const getHrSelectedAmountLabel = (exp, currentRole) => {
+        const role = exp.hr_selected_by_role;
+        if (role) {
+            if (role === 'HR') {
+                return currentRole === 'hr' ? 'HR Approved' : 'HR Recommended';
+            }
+            return currentRole === 'hr' ? `${role} Recommended` : `${role} Approved`;
+        }
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        if (isPendingHR) {
+            return 'Manager Recommended';
+        }
+        return currentRole === 'hr' ? 'HR Approved' : 'HR Recommended';
+    };
+
+    const getHrButtonLabel = (exp) => {
+        const role = exp.hr_selected_by_role;
+        if (role) {
+            if (role === 'HR') {
+                return `Use HR Approved (₹${parseFloat(exp.hr_selected_amount).toLocaleString()})`;
+            }
+            return `Use ${role} Approved (₹${parseFloat(exp.hr_selected_amount).toLocaleString()})`;
+        }
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        if (isPendingHR) {
+            return `Use Manager Approved (₹${parseFloat(exp.hr_selected_amount).toLocaleString()})`;
+        }
+        return `Use HR Approved (₹${parseFloat(exp.hr_selected_amount).toLocaleString()})`;
+    };
+
+    const getHrButtonTitle = (exp) => {
+        const role = exp.hr_selected_by_role;
+        if (role) {
+            if (role === 'HR') {
+                return `Use the amount previously recommended by HR: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`;
+            }
+            return `Use the amount previously recommended by ${role}: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`;
+        }
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        if (isPendingHR) {
+            return `Use the amount previously recommended by Manager: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`;
+        }
+        return `Use the amount previously recommended by HR: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`;
+    };
+
+    const getHrRecGridLabel = (exp) => {
+        const role = exp.hr_selected_by_role;
+        if (role) {
+            if (role === 'HR') return 'HR Rec';
+            if (role === 'Reporting Manager') return 'RM Rec';
+            return `${role} Rec`;
+        }
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        if (isPendingHR) {
+            return 'RM Rec';
+        }
+        return 'HR Rec';
+    };
+
+    const getHrRecGridTitle = (exp) => {
+        const role = exp.hr_selected_by_role;
+        if (role) {
+            if (role === 'HR') return 'HR recommended this amount — click row to confirm or adjust';
+            return `${role} recommended this amount — click row to confirm or adjust`;
+        }
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        if (isPendingHR) {
+            return 'Manager recommended this amount — click row to confirm or adjust';
+        }
+        return 'HR recommended this amount — click row to confirm or adjust';
+    };
+
+    const getHrGridBadgeProps = (exp) => {
+        const role = exp.hr_selected_by_role;
+        const isPendingHR = ['PENDING_HR', 'SUBMITTED', 'MANAGER APPROVED'].includes(selectedTask?.status?.toUpperCase());
+        
+        if (isPendingHR && role !== 'HR') {
+            const label = role === 'Reporting Manager' ? 'RM Rec' : (role ? `${role} Rec` : 'RM Rec');
+            return {
+                label: `${label}: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
+                color: '#b45309',
+                backgroundColor: '#fef3c7',
+                borderColor: '#fde68a'
+            };
+        }
+        
+        const label = role ? `${role} Approved` : 'Approved';
+        return {
+            label: `${label}: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
+            color: '#10b981',
+            backgroundColor: '#ecfdf5',
+            borderColor: '#a7f3d0'
+        };
+    };
 
     const getTaskApprovedAmount = (task) => {
         if (!task) return '';
@@ -130,7 +227,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
     useEffect(() => {
         const fetchAllowance = async () => {
-            if (selectedTask && selectedTask.type === 'Expense Claim' && (isHR || isFinance) && selectedTask.db_id) {
+            if (selectedTask && (selectedTask.type === 'Expense Claim' || selectedTask.type === 'Monthly Tour Plan') && hasEditClaimPerm && selectedTask.db_id) {
                 setAllowanceLoading(true);
                 try {
                     const resp = await api.get(`/api/claims/${selectedTask.db_id}/compute-allowance/`);
@@ -194,7 +291,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             }
         };
         fetchAllowance();
-    }, [selectedTask?.id, isHR, isFinance]);
+    }, [selectedTask?.id, hasEditClaimPerm]);
 
     const handleDecisionChange = (expenseId, field, value) => {
         setHrDecisions(prev => {
@@ -258,8 +355,19 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             return;
         }
 
-        if (dec.source !== 'claimed' && (!dec.note || !dec.note.trim())) {
-            showToast("Policy deviation note is mandatory for adjustments", "error");
+        const expense = selectedTask?.details?.expenses?.find(e => e.id === expenseId);
+        let hasDaDeviation = false;
+        if (expense && expense.description) {
+            try {
+                const parsed = typeof expense.description === 'string' ? JSON.parse(expense.description) : expense.description;
+                if (parsed.daily_allowance !== undefined && parsed.eligible_da !== undefined) {
+                    hasDaDeviation = parseFloat(parsed.daily_allowance) > parseFloat(parsed.eligible_da);
+                }
+            } catch (e) {}
+        }
+
+        if ((dec.source !== 'claimed' || hasDaDeviation) && (!dec.note || !dec.note.trim())) {
+            showToast("Policy deviation note is mandatory when applied DA exceeds eligible DA or for adjustments", "error");
             return;
         }
 
@@ -298,6 +406,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                 ...e,
                                 hr_selected_amount: isFinance ? e.hr_selected_amount : dec.amount,
                                 hr_amount_source: isFinance ? e.hr_amount_source : dec.source,
+                                hr_selected_by_role: isFinance ? e.hr_selected_by_role : (
+                                    isHR ? 'HR' : (
+                                        selectedTask.details?.reporting_manager_name === user?.name ? 'Reporting Manager' : (
+                                            user?.designation || 'Reporting Manager'
+                                        )
+                                    )
+                                ),
                                 finance_selected_amount: isFinance ? dec.amount : e.finance_selected_amount,
                                 finance_amount_source: isFinance ? dec.source : e.finance_amount_source,
                                 policy_note: dec.note
@@ -722,28 +837,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
         const hasRowWiseEditing = (() => {
             if (!task || task.type === 'Money Top-up / Advance') return false;
-            if (task.details?.is_local_travel || task.details?.is_bulk_upload || task.type === 'Monthly Tour Plan' || task.is_local) {
-                return false;
-            }
             const expenses = task.details?.expenses || [];
-            if (expenses.length === 0) return false;
-            return expenses.some(exp => {
-                const cat = (exp.category || '').toLowerCase();
-                const isLocal = cat.includes('local') || cat === 'fuel';
-                let isBulk = false;
-                if (exp.description && exp.description.startsWith('{')) {
-                    try {
-                        const parsed = JSON.parse(exp.description);
-                        isBulk = !!parsed.from_bulk_upload;
-                    } catch (e) { }
-                }
-                const isStandard = ['food', 'accommodation', 'travel', 'incidental', 'others'].includes(cat) && !isLocal && !isBulk;
-                if (!isStandard) return false;
-
-                const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
-                if (!ea) return false;
-                return true;
-            });
+            return expenses.length > 0;
         })();
 
         return (
@@ -801,11 +896,11 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             <span>Submitted Date</span>
                             <p>{task.date}</p>
                         </div>
-                        {isFinance && task.type !== 'Trip' && task.type !== 'Monthly Tour Plan' && (
+                        {isFinance && task.type !== 'Trip' && (
                             <div className="info-block highlight" style={{ minWidth: '220px' }}>
                                 <span>{task.details?.workflow_label || (task.details?.previous_approver_name ? `${task.details.previous_approver_name} Recommendation` : 'Executive Recommendation')}</span>
                                 <p className="text-blue-600 font-bold">₹{task.details?.executive_approved_amount || '0.00'}</p>
-                                {task.type === 'Expense Claim' && ((task.details?.total_advance_taken !== undefined && parseFloat(task.details?.total_advance_taken) > 0) || (task.details?.wallet_balance_used !== undefined && parseFloat(task.details?.wallet_balance_used) > 0)) && (
+                                {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && ((task.details?.total_advance_taken !== undefined && parseFloat(task.details?.total_advance_taken) > 0) || (task.details?.wallet_balance_used !== undefined && parseFloat(task.details?.wallet_balance_used) > 0)) && (
                                     <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #cbd5e1', fontSize: '0.85rem' }}>
                                         {parseFloat(task.details.total_advance_taken || 0) > 0 && (
                                             <div style={{ display: 'flex', justifyContent: 'space-between', color: '#64748b' }}>
@@ -1106,7 +1201,22 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                             return displayDesc || <span className="italic text-slate-400">No details</span>;
                                                                         }
                                                                         const category = (exp.category || '').toLowerCase();
-                                                                        if (category.includes('travel') || category === 'fuel' || category === 'others' || exp.travel_mode || parsedDetails.mode) {
+                                                                        if (category === 'others') {
+                                                                            const otherType = parsedDetails.nature || parsedDetails.incidentalType || exp.travel_mode || 'Others';
+                                                                            const otherDesc = [
+                                                                                parsedDetails.justification,
+                                                                                parsedDetails.notes,
+                                                                                parsedDetails.remarks || exp.remarks,
+                                                                                (!parsedDetails.nature && !parsedDetails.incidentalType && !parsedDetails.justification && !parsedDetails.notes) ? displayDesc : null
+                                                                            ].filter(Boolean).join(' · ');
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                                                                    <strong style={{ fontWeight: 600, color: '#1e293b', fontSize: '0.85rem' }}>{otherType}</strong>
+                                                                                    <span style={{ fontSize: '0.75rem', color: '#64748b' }}>{otherDesc || 'No details'}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        if (category.includes('travel') || category === 'fuel' || exp.travel_mode || parsedDetails.mode) {
                                                                             const mode = exp.travel_mode || parsedDetails.mode || exp.category || 'Travel';
                                                                             const subType = exp.vehicle_type || parsedDetails.subType || parsedDetails.vehicle_type || '';
                                                                             const classType = exp.class_type || parsedDetails.classType || parsedDetails.class_type || '';
@@ -1165,8 +1275,29 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                 </td>
                                                                 <td className="text-right mono" style={{ fontWeight: 700 }}>
                                                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                                                                        <span>₹{parseFloat(exp.amount).toLocaleString()}</span>
-                                                                        {(isHR || isFinance) && selectedTask.type === 'Expense Claim' && (() => {
+                                                                        {(() => {
+                                                                            const claimedAmt = parseFloat(exp.amount || 0);
+                                                                            const editedAmt = parseFloat(
+                                                                                exp.finance_selected_amount !== null && exp.finance_selected_amount !== undefined
+                                                                                    ? exp.finance_selected_amount
+                                                                                    : exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined
+                                                                                        ? exp.hr_selected_amount
+                                                                                        : exp.amount
+                                                                            );
+                                                                            const isEdited = Math.abs(claimedAmt - editedAmt) > 0.01;
+
+                                                                            return (
+                                                                                <>
+                                                                                    <span>₹{editedAmt.toLocaleString()}</span>
+                                                                                    {isEdited && (
+                                                                                        <span style={{ fontSize: '0.7rem', color: '#64748b', textDecoration: 'line-through', fontWeight: 'normal' }} title={`Original Claim: ₹${claimedAmt}`}>
+                                                                                            ₹{claimedAmt.toLocaleString()}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </>
+                                                                            );
+                                                                        })()}
+                                                                        {hasEditClaimPerm && (selectedTask.type === 'Expense Claim' || selectedTask.type === 'Monthly Tour Plan') && (() => {
                                                                             const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
                                                                             if (!ea) return null;
 
@@ -1215,9 +1346,9 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                 gap: '3px',
                                                                                                 whiteSpace: 'nowrap'
                                                                                             }}
-                                                                                                title="HR recommended this amount — click row to confirm or adjust"
+                                                                                                title={getHrRecGridTitle(exp)}
                                                                                             >
-                                                                                                ✏️ HR Rec: ₹{parseFloat(exp.hr_selected_amount).toLocaleString()}
+                                                                                                ✏️ {getHrRecGridLabel(exp)}: ₹{parseFloat(exp.hr_selected_amount).toLocaleString()}
                                                                                             </span>
                                                                                         ) : (
                                                                                             <span style={{
@@ -1244,18 +1375,18 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                         hasHrSelected ? (
                                                                                             <span style={{
                                                                                                 fontSize: '0.7rem',
-                                                                                                color: '#10b981',
-                                                                                                backgroundColor: '#ecfdf5',
+                                                                                                color: getHrGridBadgeProps(exp).color,
+                                                                                                backgroundColor: getHrGridBadgeProps(exp).backgroundColor,
                                                                                                 padding: '2px 6px',
                                                                                                 borderRadius: '4px',
-                                                                                                border: '1px solid #a7f3d0',
+                                                                                                border: `1px solid ${getHrGridBadgeProps(exp).borderColor}`,
                                                                                                 fontWeight: 700,
                                                                                                 marginTop: '2px',
                                                                                                 display: 'inline-flex',
                                                                                                 alignItems: 'center',
                                                                                                 gap: '3px'
                                                                                             }}>
-                                                                                                Approved: ₹{parseFloat(exp.hr_selected_amount).toLocaleString()}
+                                                                                                {getHrGridBadgeProps(exp).label}
                                                                                             </span>
                                                                                         ) : (
                                                                                             <span style={{
@@ -1287,7 +1418,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
                                                                         {/* Regular Receipts */}
                                                                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                                                                            {(() => {
+                                                                             {(() => {
                                                                                 let bills = [];
                                                                                 try {
                                                                                     if (Array.isArray(exp.receipt_image)) {
@@ -1305,9 +1436,14 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                 return (bills || []).filter(b => b).map((img, idx) => {
                                                                                     const path = (img && typeof img === 'object') ? img.path : img;
                                                                                     const fullUrl = getFullUrl(String(path).trim());
+                                                                                    const isPdf = fullUrl.startsWith('data:application/pdf') || fullUrl.toLowerCase().endsWith('.pdf');
                                                                                     return (
-                                                                                        <div key={`receipt-${idx}`} onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(fullUrl); }} title={`View Receipt ${idx + 1}`} style={{ width: '38px', height: '38px', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0', cursor: 'pointer', position: 'relative' }}>
-                                                                                            <img src={fullUrl} alt="Receipt" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.src = 'https://via.placeholder.com/40?text=Err'; }} />
+                                                                                        <div key={`receipt-${idx}`} onClick={(e) => { e.stopPropagation(); setPreviewImageUrl(fullUrl); }} title={`View Receipt ${idx + 1}`} style={{ width: '38px', height: '38px', borderRadius: '6px', overflow: 'hidden', border: '1px solid #e2e8f0', cursor: 'pointer', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPdf ? '#fef3c7' : undefined }}>
+                                                                                            {isPdf ? (
+                                                                                                <span style={{ fontSize: '10px', fontWeight: 700, color: '#92400e' }}>PDF</span>
+                                                                                            ) : (
+                                                                                                <img src={fullUrl} alt="Receipt" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.src = 'https://via.placeholder.com/40?text=Err'; }} />
+                                                                                            )}
                                                                                         </div>
                                                                                     );
                                                                                 });
@@ -1563,25 +1699,63 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                         </div>
                                                                                                     </div>
                                                                                                 )}
-                                                                                                <div style={{ display: 'flex', gap: '16px' }}>
+                                                                                                <div style={{ display: 'flex', gap: '16px', gridColumn: '1 / -1' }}>
                                                                                                     <div className="context-block" style={{ flex: 1 }}>
                                                                                                         <span className="context-label">Start Time</span>
                                                                                                         <div className="context-value">
-                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.boardingTime || 'N/A'}
+                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.boardingTime || parsedDetails.startTime || 'N/A'}
                                                                                                         </div>
                                                                                                     </div>
                                                                                                     <div className="context-block" style={{ flex: 1 }}>
                                                                                                         <span className="context-label">End Time</span>
                                                                                                         <div className="context-value">
-                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.actualTime || 'N/A'}
+                                                                                                            <Clock size={13} className="text-slate-400" /> {parsedDetails.time?.actualTime || parsedDetails.endTime || 'N/A'}
                                                                                                         </div>
                                                                                                     </div>
                                                                                                 </div>
+                                                                                                {(parsedDetails.daily_allowance !== undefined || parsedDetails.eligible_da !== undefined || parsedDetails.da_hours !== undefined) && (
+                                                                                                    <div className="context-block" style={{ gridColumn: '1 / -1', marginTop: '12px' }}>
+                                                                                                        <span className="context-label" style={{ color: '#4f46e5', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                                                            <ShieldAlert size={12} /> Daily Allowance Audit
+                                                                                                        </span>
+                                                                                                        <div style={{
+                                                                                                            display: 'grid',
+                                                                                                            gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                                                                                                            gap: '10px',
+                                                                                                            background: '#f5f3ff',
+                                                                                                            border: '1px solid #ddd6fe',
+                                                                                                            borderRadius: '8px',
+                                                                                                            padding: '10px',
+                                                                                                            marginTop: '4px'
+                                                                                                        }}>
+                                                                                                            <div>
+                                                                                                                <div style={{ fontSize: '0.65rem', color: '#6b21a8', fontWeight: 600 }}>DA Calculated Hours</div>
+                                                                                                                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#581c87' }}>
+                                                                                                                    {parsedDetails.da_hours !== undefined ? `${parseFloat(parsedDetails.da_hours).toFixed(2)} hrs` : 'N/A'}
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                            <div>
+                                                                                                                <div style={{ fontSize: '0.65rem', color: '#6b21a8', fontWeight: 600 }}>Eligible DA</div>
+                                                                                                                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#581c87' }}>
+                                                                                                                    {parsedDetails.eligible_da !== undefined ? `₹${parseFloat(parsedDetails.eligible_da).toLocaleString()}` : 'N/A'}
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                            <div>
+                                                                                                                <div style={{ fontSize: '0.65rem', color: '#6b21a8', fontWeight: 600 }}>Applied DA</div>
+                                                                                                                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: parseFloat(parsedDetails.daily_allowance || 0) > parseFloat(parsedDetails.eligible_da || 0) ? '#b91c1c' : '#1e3a8a' }}>
+                                                                                                                    {parsedDetails.daily_allowance !== undefined ? `₹${parseFloat(parsedDetails.daily_allowance).toLocaleString()}` : 'N/A'}
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                            <div style={{ gridColumn: '1 / -1', borderTop: '1px dashed #c084fc', paddingTop: '6px', fontSize: '0.75rem', fontWeight: 600, color: '#6b21a8' }}>
+                                                                                                                Status Note: <span style={{ color: '#4c1d95', fontStyle: 'italic' }}>{parsedDetails.da_message || 'N/A'}</span>
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                )}
                                                                                             </div>
                                                                                         </div>
                                                                                     </div>
                                                                                 )}
-
                                                                                 {/* Deviation Information Section */}
                                                                                 {isNotVisited ? (
                                                                                     <div className="exp-section" style={{ marginTop: '16px' }}>
@@ -1693,7 +1867,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                 )}
 
                                                                                 {/* HR / Finance Policy Decision Panel */}
-                                                                                {(isHR || isFinance) && selectedTask.type === 'Expense Claim' && (() => {
+                                                                                {hasEditClaimPerm && (selectedTask.type === 'Expense Claim' || selectedTask.type === 'Monthly Tour Plan') && (() => {
                                                                                     const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === exp.id);
                                                                                     const dec = hrDecisions[exp.id];
                                                                                     if (!ea || !dec) return null;
@@ -1756,7 +1930,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                                 };
                                                                                                             } else if (exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined) {
                                                                                                                 return {
-                                                                                                                    label: 'HR Recommended',
+                                                                                                                    label: getHrSelectedAmountLabel(exp, 'finance'),
                                                                                                                     value: `₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
                                                                                                                     color: '#f59e0b'
                                                                                                                 };
@@ -1764,7 +1938,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                         } else if (isHR) {
                                                                                                             if (exp.hr_selected_amount !== null && exp.hr_selected_amount !== undefined) {
                                                                                                                 return {
-                                                                                                                    label: 'HR Approved',
+                                                                                                                    label: getHrSelectedAmountLabel(exp, 'hr'),
                                                                                                                     value: `₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`,
                                                                                                                     color: '#10b981'
                                                                                                                 };
@@ -1791,8 +1965,33 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                 </div>
                                                                                             </div>
 
-                                                                                            {(
-                                                                                                <div>
+                                                                                            {(() => {
+                                                                                                const hasDaDeviation = parsedDetails.daily_allowance !== undefined &&
+                                                                                                    parsedDetails.eligible_da !== undefined &&
+                                                                                                    parseFloat(parsedDetails.daily_allowance) > parseFloat(parsedDetails.eligible_da);
+                                                                                                const isSaveDisabled = hasError || ((dec.source !== 'claimed' || hasDaDeviation) && (!dec.note || !dec.note.trim()));
+                                                                                                return (
+                                                                                                    <div>
+                                                                                                        {hasDaDeviation && (
+                                                                                                            <div style={{
+                                                                                                                backgroundColor: '#fffbeb',
+                                                                                                                border: '1px solid #fde68a',
+                                                                                                                borderRadius: '8px',
+                                                                                                                padding: '10px 12px',
+                                                                                                                marginBottom: '12px',
+                                                                                                                display: 'flex',
+                                                                                                                alignItems: 'center',
+                                                                                                                gap: '8px',
+                                                                                                                color: '#b45309',
+                                                                                                                fontSize: '0.75rem',
+                                                                                                                fontWeight: 600
+                                                                                                            }}>
+                                                                                                                <AlertTriangle size={14} className="text-amber-500" />
+                                                                                                                <span>
+                                                                                                                    <strong>Daily Allowance Deviation:</strong> Applied DA (₹{parseFloat(parsedDetails.daily_allowance).toFixed(2)}) exceeds eligible DA (₹{parseFloat(parsedDetails.eligible_da).toFixed(2)}) based on trip duration of {parseFloat(parsedDetails.da_hours || 0).toFixed(2)} hours.
+                                                                                                                </span>
+                                                                                                            </div>
+                                                                                                        )}
                                                                                                     <div style={{ marginBottom: '12px' }}>
                                                                                                         <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '6px' }}>Select Claim Approval Option:</span>
                                                                                                         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -1814,7 +2013,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                                     transition: 'all 0.2s'
                                                                                                                 }}
                                                                                                             >
-                                                                                                                Use Claimed (₹{ea.claimed_amount})
+                                                                                                                User Claimed (₹{ea.claimed_amount})
                                                                                                             </button>
                                                                                                             {isFinance ? (
                                                                                                                 exp.finance_selected_amount !== null && exp.finance_selected_amount !== undefined ? (
@@ -1857,9 +2056,9 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                                             cursor: 'pointer',
                                                                                                                             transition: 'all 0.2s'
                                                                                                                         }}
-                                                                                                                        title={`Use the amount previously recommended by HR: ₹${parseFloat(exp.hr_selected_amount).toLocaleString()}`}
+                                                                                                                        title={getHrButtonTitle(exp)}
                                                                                                                     >
-                                                                                                                        Use HR Approved (₹{parseFloat(exp.hr_selected_amount).toLocaleString()})
+                                                                                                                        {getHrButtonLabel(exp)}
                                                                                                                     </button>
                                                                                                                 ) : (
                                                                                                                     <button
@@ -1975,7 +2174,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                         <button
                                                                                                             type="button"
                                                                                                             onClick={() => saveExpenseDecision(exp.id)}
-                                                                                                            disabled={hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))}
+                                                                                                            disabled={isSaveDisabled}
                                                                                                             style={{
                                                                                                                 padding: '6px 16px',
                                                                                                                 fontSize: '0.75rem',
@@ -1984,8 +2183,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                                 color: '#ffffff',
                                                                                                                 border: 'none',
                                                                                                                 borderRadius: '6px',
-                                                                                                                cursor: (hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))) ? 'not-allowed' : 'pointer',
-                                                                                                                opacity: (hasError || (dec.source !== 'claimed' && (!dec.note || !dec.note.trim()))) ? 0.6 : 1,
+                                                                                                                cursor: isSaveDisabled ? 'not-allowed' : 'pointer',
+                                                                                                                opacity: isSaveDisabled ? 0.6 : 1,
                                                                                                                 transition: 'opacity 0.2s'
                                                                                                             }}
                                                                                                         >
@@ -1993,7 +2192,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                         </button>
                                                                                                     </div>
                                                                                                 </div>
-                                                                                            )}
+                                                                                            );
+                                                                                        })()}
                                                                                         </div>
                                                                                     );
                                                                                 })()}
@@ -2597,7 +2797,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                     </div>
                                                                     <div className="task-amount">
                                                                         {task.cost}
-                                                                        {task.type === 'Expense Claim' && parseFloat(task.details?.total_amount || 0) > parseFloat(task.details?.net_payout || 0) && (
+                                                                        {(task.type === 'Expense Claim' || task.type === 'Monthly Tour Plan') && parseFloat(task.details?.total_amount || 0) > parseFloat(task.details?.net_payout || 0) && (
                                                                             <div style={{ fontSize: '0.65rem', color: '#64748b', fontWeight: 'normal', marginTop: '2px' }}>
                                                                                 (Adjusted)
                                                                             </div>
@@ -2689,7 +2889,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                             </div>
                         </div>
                         <div className="preview-modal-body" style={{ overflow: 'auto', background: '#f1f5f9', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px' }}>
-                            {previewImageUrl.toLowerCase().endsWith('.pdf') ? (
+                            {(previewImageUrl.toLowerCase().endsWith('.pdf') || previewImageUrl.startsWith('data:application/pdf')) ? (
                                 <iframe src={previewImageUrl} style={{ width: '80vw', height: '80vh', border: 'none' }} title="PDF Preview" />
                             ) : (
                                 <img src={previewImageUrl} alt="Preview" style={{ maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }} />

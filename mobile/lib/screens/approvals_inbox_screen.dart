@@ -1045,9 +1045,9 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
   }
 
   Widget _buildTaskCard(Map<String, dynamic> task) {
-    if (task['type'] == 'Monthly Tour Plan' ||
+    if (task['type'] != 'Monthly Tour Plan' && (
         task['type'] == 'Bulk Upload' ||
-        task['id']?.toString().startsWith('BATCH-') == true) {
+        task['id']?.toString().startsWith('BATCH-') == true)) {
       return _buildBulkBatchSection(task);
     }
     final bool isHistory = _activeTab == 'history';
@@ -1381,28 +1381,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
       final details = task['details'] ?? {};
 
       if (type == 'Money Top-up / Advance') return false;
-      if (details['is_local_travel'] == true ||
-          details['is_bulk_upload'] == true ||
-          type == 'Monthly Tour Plan' ||
-          task['is_local'] == true) {
-        return false;
-      }
       final List expenses = details['expenses'] is List ? details['expenses'] : [];
-      if (expenses.isEmpty) return false;
-      return expenses.any((exp) {
-        final String cat = (exp['category'] ?? '').toString().toLowerCase();
-        final bool isLocal = cat.contains('local') || cat == 'fuel';
-        bool isBulk = false;
-        final String desc = (exp['description'] ?? '').toString();
-        if (desc.trim().startsWith('{')) {
-          try {
-            final parsed = jsonDecode(desc.trim());
-            isBulk = parsed['from_bulk_upload'] == true;
-          } catch (_) {}
-        }
-        const standardCats = ['food', 'accommodation', 'travel', 'incidental', 'others'];
-        return standardCats.contains(cat) && !isLocal && !isBulk;
-      });
+      return expenses.isNotEmpty;
     })();
 
     final bool canEdit =
@@ -2812,7 +2792,20 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                           '')
                                       .toString();
 
-                              if (origin.isNotEmpty || dest.isNotEmpty) {
+                              final String category = (exp['category'] ?? '').toString().toLowerCase();
+                              if (category == 'others' || category == 'other') {
+                                final String nature = (d['nature'] ?? d['incidentalType'] ?? '').toString();
+                                final String justification = (d['justification'] ?? d['notes'] ?? d['remarks'] ?? d['purpose'] ?? '').toString();
+                                if (nature.isNotEmpty && justification.isNotEmpty) {
+                                  description = "$nature: $justification";
+                                } else if (nature.isNotEmpty) {
+                                  description = nature;
+                                } else if (justification.isNotEmpty) {
+                                  description = justification;
+                                } else {
+                                  description = "Others";
+                                }
+                              } else if (origin.isNotEmpty || dest.isNotEmpty) {
                                 description =
                                     origin.isNotEmpty && dest.isNotEmpty
                                     ? "$origin → $dest"
@@ -3490,6 +3483,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
   bool isHR = false;
   bool isFinance = false;
 
+  bool get canEditAmount => (widget.task['details']?['permissions']?['can_edit_amount'] ?? widget.task['permissions']?['can_edit_amount']) == true;
+
   // allowance compliance state
   Map<String, dynamic>? allowanceData;
   bool allowanceLoading = false;
@@ -3571,7 +3566,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
   Future<void> _fetchAllowance() async {
     final dbId = widget.task['db_id'] ?? widget.task['id'];
-    if (widget.task['type'] == 'Expense Claim' && (isHR || isFinance) && dbId != null) {
+    if ((widget.task['type'] == 'Expense Claim' || widget.task['type'] == 'Monthly Tour Plan') && (isHR || isFinance || canEditAmount) && dbId != null) {
       setState(() {
         allowanceLoading = true;
       });
@@ -3795,6 +3790,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   } else {
                     e['hr_selected_amount'] = double.tryParse(dec['amount'].toString());
                     e['hr_amount_source'] = dec['source'];
+                    e['hr_selected_by_role'] = isHR 
+                        ? 'HR' 
+                        : (widget.task['details']?['reporting_manager_name'] == _currentUser?['name'] 
+                            ? 'Reporting Manager' 
+                            : (_currentUser?['designation'] ?? 'Reporting Manager'));
                   }
                   e['policy_note'] = dec['note'];
                 });
@@ -3977,46 +3977,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     final task = widget.task;
     final String type = task['type'] ?? '';
     final details = task['details'] ?? {};
+    final Set<String> renderedBatchIds = {};
 
     final bool hasRowWiseEditing = (() {
       if (type == 'Money Top-up / Advance') return false;
-      if (details['is_local_travel'] == true ||
-          details['is_bulk_upload'] == true ||
-          type == 'Monthly Tour Plan' ||
-          task['is_local'] == true) {
-        return false;
-      }
       final List expenses = details['expenses'] is List ? details['expenses'] : [];
-      if (expenses.isEmpty) return false;
-      return expenses.any((exp) {
-        final String cat = (exp['category'] ?? '').toString().toLowerCase();
-        final bool isLocal = cat.contains('local') || cat == 'fuel';
-        bool isBulk = false;
-        final String desc = (exp['description'] ?? '').toString();
-        if (desc.trim().startsWith('{')) {
-          try {
-            final parsed = jsonDecode(desc.trim());
-            isBulk = parsed['from_bulk_upload'] == true;
-          } catch (_) {}
-        }
-        final bool isStandard = const ['food', 'accommodation', 'travel', 'incidental', 'others'].contains(cat) && !isLocal && !isBulk;
-        if (!isStandard) return false;
-
-        final List? expenseAllowances = allowanceData?['expense_allowances'] as List?;
-        if (expenseAllowances == null) return false;
-        final ea = expenseAllowances.firstWhere(
-          (a) => a['expense_id'].toString() == exp['id'].toString(),
-          orElse: () => null,
-        );
-        if (ea == null) return false;
-
-        final double claimedAmount = double.tryParse(ea['claimed_amount']?.toString() ?? '0') ?? 0.0;
-        final double? allowedAmount = ea['allowed_amount'] != null ? (double.tryParse(ea['allowed_amount'].toString()) ?? 0.0) : null;
-        final bool exceedsLimit = ea['exceeds_limit'] == true;
-        
-        final bool isWithinLimit = (allowedAmount == null || claimedAmount <= allowedAmount) && !exceedsLimit;
-        return !isWithinLimit;
-      });
+      return expenses.isNotEmpty;
     })();
 
     return Column(
@@ -4340,7 +4306,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                         double.infinity,
                       );
 
-                      if (totalDeductions > 0 && type == 'Expense Claim') {
+                      if (totalDeductions > 0 && (type == 'Expense Claim' || type == 'Monthly Tour Plan')) {
                         return Container(
                           margin: const EdgeInsets.only(top: 8),
                           padding: const EdgeInsets.all(12),
@@ -4479,10 +4445,15 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                   ),
                 ),
 
-                // ── Monthly Tour Plan (Bulk Batch) ───────────────────────────
+                 // ── Monthly Tour Plan (Bulk Batch) ───────────────────────────
                 // Hide daily activities on Expense Claims as requested (already validated in bulk flow)
                 if (type == 'Monthly Tour Plan' ||
                     task['data_json'] != null) ...[
+                  (() {
+                    final bId = (task['db_id'] ?? task['id'])?.toString();
+                    if (bId != null) renderedBatchIds.add(bId);
+                    return const SizedBox.shrink();
+                  })(),
                   const SizedBox(height: 32),
                   _buildBulkBatchSection(task),
                 ],
@@ -4492,8 +4463,32 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 if (details['activity_batches'] != null &&
                     (details['activity_batches'] as List).isNotEmpty) ...[
                   for (var batch in (details['activity_batches'] as List)) ...[
-                    const SizedBox(height: 32),
-                    _buildBulkBatchSection(Map<String, dynamic>.from(batch)),
+                    if (() {
+                      final bId = (batch['db_id'] ?? batch['id'])?.toString();
+                      if (bId != null) {
+                        if (renderedBatchIds.contains(bId) ||
+                            renderedBatchIds.contains('BATCH-$bId') ||
+                            renderedBatchIds.any((id) => id.toString().contains(bId))) {
+                          return false;
+                        }
+                        renderedBatchIds.add(bId);
+                      }
+                      final fName = batch['file_name']?.toString().toLowerCase();
+                      final taskFile = task['file_name']?.toString().toLowerCase();
+                      final taskPurpose = task['purpose']?.toString().toLowerCase();
+                      if (fName != null) {
+                        if (taskFile != null && (taskFile.contains(fName) || fName.contains(taskFile))) {
+                          return false;
+                        }
+                        if (taskPurpose != null && (taskPurpose.contains(fName) || fName.contains(taskPurpose))) {
+                          return false;
+                        }
+                      }
+                      return true;
+                    }()) ...[
+                      const SizedBox(height: 32),
+                      _buildBulkBatchSection(Map<String, dynamic>.from(batch)),
+                    ],
                   ],
                 ],
 
@@ -5867,7 +5862,20 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                           '')
                                       .toString();
 
-                              if (origin.isNotEmpty || dest.isNotEmpty) {
+                              final String category = (exp['category'] ?? '').toString().toLowerCase();
+                              if (category == 'others' || category == 'other') {
+                                final String nature = (d['nature'] ?? d['incidentalType'] ?? '').toString();
+                                final String justification = (d['justification'] ?? d['notes'] ?? d['remarks'] ?? d['purpose'] ?? '').toString();
+                                if (nature.isNotEmpty && justification.isNotEmpty) {
+                                  description = "$nature: $justification";
+                                } else if (nature.isNotEmpty) {
+                                  description = nature;
+                                } else if (justification.isNotEmpty) {
+                                  description = justification;
+                                } else {
+                                  description = "Others";
+                                }
+                              } else if (origin.isNotEmpty || dest.isNotEmpty) {
                                 description =
                                     origin.isNotEmpty && dest.isNotEmpty
                                     ? "$origin → $dest"
@@ -6429,7 +6437,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       ),
                     );
                   }(),
-                  if (widget.task['type'] == 'Expense Claim' && (isHR || isFinance)) ...[
+                  if ((widget.task['type'] == 'Expense Claim' || widget.task['type'] == 'Monthly Tour Plan') && (isHR || isFinance || canEditAmount)) ...[
                     if (allowanceLoading)
                       const Center(
                         child: Padding(
@@ -6456,19 +6464,22 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       String allowedValueText = allowedVal != null ? '₹${allowedVal.toStringAsFixed(2)}' : 'No Cap';
                       Color allowedColor = exceedsLimit ? const Color(0xFFF59E0B) : const Color(0xFF10B981);
 
+                      final String hrRole = exp['hr_selected_by_role']?.toString() ?? 'HR';
+                      final String hrRoleLabel = hrRole == 'HR' ? 'HR Approved' : '$hrRole Recommended';
+
                       if (isFinance) {
                         if (exp['finance_selected_amount'] != null) {
                           allowedLabel = isFinanceHead ? 'Finance Exec Rec' : 'Finance Approved';
                           allowedValueText = '₹${double.parse(exp['finance_selected_amount'].toString()).toStringAsFixed(2)}';
                           allowedColor = const Color(0xFF10B981);
                         } else if (exp['hr_selected_amount'] != null) {
-                          allowedLabel = 'HR Recommended';
+                          allowedLabel = hrRoleLabel;
                           allowedValueText = '₹${double.parse(exp['hr_selected_amount'].toString()).toStringAsFixed(2)}';
                           allowedColor = const Color(0xFFF59E0B);
                         }
                       } else if (isHR) {
                         if (exp['hr_selected_amount'] != null) {
-                          allowedLabel = 'HR Approved';
+                          allowedLabel = hrRoleLabel;
                           allowedValueText = '₹${double.parse(exp['hr_selected_amount'].toString()).toStringAsFixed(2)}';
                           allowedColor = const Color(0xFF10B981);
                         }
@@ -6676,9 +6687,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                       padding: const EdgeInsets.symmetric(vertical: 8),
                                     ),
                                     child: Text(
-                                      'Claimed (₹${claimedVal.toStringAsFixed(0)})',
+                                      'Use Claimed (₹${claimedVal.toStringAsFixed(0)})',
                                       style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 11,
+                                        fontSize: 10,
                                         fontWeight: FontWeight.w800,
                                         color: dec['source'] == 'claimed' ? Colors.white : const Color(0xFF475569),
                                       ),
@@ -6690,7 +6701,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                   child: OutlinedButton(
                                     onPressed: () {
                                       handleDecisionChange(exp['id'], 'source', 'allowed');
-                                      handleDecisionChange(exp['id'], 'amount', (allowedVal ?? claimedVal).toString());
+                                      if (isFinance && exp['hr_selected_amount'] != null) {
+                                        handleDecisionChange(exp['id'], 'amount', exp['hr_selected_amount'].toString());
+                                      } else {
+                                        handleDecisionChange(exp['id'], 'amount', (allowedVal ?? claimedVal).toString());
+                                      }
                                     },
                                     style: OutlinedButton.styleFrom(
                                       backgroundColor: dec['source'] == 'allowed' ? const Color(0xFF1E293B) : Colors.white,
@@ -6699,9 +6714,11 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                       padding: const EdgeInsets.symmetric(vertical: 8),
                                     ),
                                     child: Text(
-                                      'Allowed (₹${(allowedVal ?? claimedVal).toStringAsFixed(0)})',
+                                      isFinance && exp['hr_selected_amount'] != null
+                                          ? 'Use $hrRoleLabel (₹${double.parse(exp['hr_selected_amount'].toString()).toStringAsFixed(0)})'
+                                          : 'Use Allowed (₹${(allowedVal ?? claimedVal).toStringAsFixed(0)})',
                                       style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 11,
+                                        fontSize: 10,
                                         fontWeight: FontWeight.w800,
                                         color: dec['source'] == 'allowed' ? Colors.white : const Color(0xFF475569),
                                       ),
@@ -6721,9 +6738,9 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                                       padding: const EdgeInsets.symmetric(vertical: 8),
                                     ),
                                     child: Text(
-                                      'Manual',
+                                      'Manual Adjust',
                                       style: GoogleFonts.plusJakartaSans(
-                                        fontSize: 11,
+                                        fontSize: 10,
                                         fontWeight: FontWeight.w800,
                                         color: dec['source'] == 'manual' ? Colors.white : const Color(0xFF475569),
                                       ),

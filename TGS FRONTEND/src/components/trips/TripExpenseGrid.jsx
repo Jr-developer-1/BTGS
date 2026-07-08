@@ -33,6 +33,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { useToast } from '../../context/ToastContext';
 import { useEligibility } from '../../utils/useEligibility';
+import { useAuth } from '../../context/AuthContext';
 
 
 const NATURE_OPTIONS = [
@@ -265,6 +266,9 @@ const TripExpenseGrid = ({
     hasAdditionalLuggage = false,
     isBulkUpload = false
 }) => {
+    const { user } = useAuth();
+    const [isForceUnlocked, setIsForceUnlocked] = useState(false);
+
     // Master data states
     const [travelModes, setTravelModes] = useState([]);
     const [bookedByOptions, setBookedByOptions] = useState([]);
@@ -1559,6 +1563,18 @@ const TripExpenseGrid = ({
                 // Mileage limit warning check
                 if (odoStart && odoEnd) {
                     const distance = parseFloat(odoEnd) - parseFloat(odoStart);
+                    const lowerSubType = (subType || '').toLowerCase();
+                    if (distance > 0) {
+                        if (lowerSubType.includes('bike') && distance > 500) {
+                            showToast(`Item #${rowNum}: Travel distance not allowed`, "error");
+                            return false;
+                        }
+                        if ((lowerSubType.includes('car') || lowerSubType.includes('rental')) && distance > 1200) {
+                            showToast(`Item #${rowNum}: Travel distance not allowed`, "error");
+                            return false;
+                        }
+                    }
+
                     const mileageCheck = checkMileage(distance);
                     if (mileageCheck.exceeds) {
                         const confirmMileage = await confirm(
@@ -2642,6 +2658,16 @@ const TripExpenseGrid = ({
                     const start = parseFloat(newDetails.odoStart || 0);
                     const end = parseFloat(newDetails.odoEnd || 0);
                     newDetails.totalKm = end >= start ? (end - start).toFixed(2) : 0;
+
+                    const distance = end - start;
+                    const lowerSubType = (newDetails.subType || '').toLowerCase();
+                    if (start > 0 && end > start) {
+                        if (lowerSubType.includes('bike') && distance > 500) {
+                            showToast("Travel distance not allowed", "error");
+                        } else if ((lowerSubType.includes('car') || lowerSubType.includes('rental')) && distance > 1200) {
+                            showToast("Travel distance not allowed", "error");
+                        }
+                    }
 
                     // KM Reimbursement for Own vehicles based on state rates
                     if (row.nature === 'Local Travel' && ['Own Car', 'Own Bike'].includes(newDetails.subType)) {
@@ -4844,7 +4870,7 @@ const TripExpenseGrid = ({
         }
     };
 
-    const isLocked = claimStatus && !['Draft', 'Rejected'].includes(claimStatus);
+    const isLocked = claimStatus && !['Draft', 'Rejected'].includes(claimStatus) && !isForceUnlocked;
 
     const renderCategoryTable = (nature, title, icon) => {
         const categoryRows = displayRows.filter(r => r.nature === nature);
@@ -6268,8 +6294,32 @@ const TripExpenseGrid = ({
         <div className={`smart-grid-container categorized ${isLocked ? 'registry-locked' : ''}`}>
             <div className="grid-master-header">
                 <div className="m-left">
-                    <div className="registry-title-row">
+                    <div className="registry-title-row" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <h3>{isLocked ? 'Finalized Journey Ledger' : 'Dynamic Journey Ledger'}</h3>
+                        {claimStatus && !['Draft', 'Rejected'].includes(claimStatus) && user?.role_permissions?.can_edit_submitted_claim && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 700,
+                                    background: isForceUnlocked ? '#dc2626' : '#2563eb',
+                                    color: 'white',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    height: '32px',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                                }}
+                                onClick={() => setIsForceUnlocked(!isForceUnlocked)}
+                            >
+                                {isForceUnlocked ? 'Lock Claims' : 'Edit Claim'}
+                            </button>
+                        )}
                     </div>
                     {(!isLocalOnly || activeCategory === 'Review') && (
                         <>

@@ -217,17 +217,20 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
         if g_cached['data'] and now - g_cached['timestamp'] < GLOBAL_CACHE_TIMEOUT:
             for item in g_cached['data']:
                 if item.get('employee', {}).get('employee_code') == employee_code:
-                    # Overwrite/promote to persistent cache to heal/update it, then return
-                    safe_cache_set(cache_key, item, timeout=2592000)
-                    return item
+                    if item.get('positions_details'):
+                        # Overwrite/promote to persistent cache to heal/update it, then return
+                        safe_cache_set(cache_key, item, timeout=2592000)
+                        return item
 
     # 2. Check Persistent Cache (fallback/individual cached entries)
     if not force_fresh:
         persistent_data = safe_cache_get(cache_key)
         if persistent_data:
-            if isinstance(persistent_data, dict) and persistent_data.get('not_found'):
-                return None
-            return persistent_data
+            if isinstance(persistent_data, dict):
+                if persistent_data.get('not_found'):
+                    return None
+                if persistent_data.get('positions_details'):
+                    return persistent_data
 
     # 3. Fetch from API (Cold start fallback - executed max once per hour per employee)
     data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)

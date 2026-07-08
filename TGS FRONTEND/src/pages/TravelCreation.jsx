@@ -298,6 +298,7 @@ const TravelCreation = () => {
                 composition: 'Solo',
                 purpose: formData.purpose,
                 travel_mode: 'Car / Jeep / Van',
+                vehicle_type: 'Own',
                 project_code: formData.project,
                 is_tour_plan: true,
                 // reporting_manager is determined on the server from the logged-in user
@@ -348,6 +349,7 @@ const TravelCreation = () => {
             if (errData) {
                 if (typeof errData === 'string') msg = errData;
                 else if (errData.error) msg = errData.error;
+                else if (errData.detail) msg = errData.detail;
                 else {
                     // flatten first field message
                     const firstKey = Object.keys(errData)[0];
@@ -355,9 +357,31 @@ const TravelCreation = () => {
                 }
             }
             showToast(msg, "error");
+
+            const isComplianceError = msg.toLowerCase().includes("required travel documents");
+            setModalState({
+                isOpen: true,
+                type: 'error',
+                title: isComplianceError ? 'Compliance Validation Failed' : 'Submission Failed',
+                message: msg,
+                actions: isComplianceError ? (
+                    <div className="flex gap-2 justify-center">
+                        <button className="btn-secondary" onClick={() => setModalState(prev => ({ ...prev, isOpen: false }))}>
+                            Cancel
+                        </button>
+                        <button className="btn-primary" onClick={() => {
+                            setModalState(prev => ({ ...prev, isOpen: false }));
+                            navigate('/documents');
+                        }}>
+                            Go to Document Organizer
+                        </button>
+                    </div>
+                ) : null
+            });
         } finally {
             setSubmitting(false);
         }
+
     };
 
     return (

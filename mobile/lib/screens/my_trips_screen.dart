@@ -541,143 +541,149 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => TripSummaryScreen(trip: t)),
-          ),
-          child: Stack(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: isLocal ? const Color(0xFFEEF2FF) : const Color(0xFFF0FDFA),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            isLocal ? 'LOCAL TRAVEL' : 'BUSINESS TRIP',
-                            style: GoogleFonts.plusJakartaSans(
-                              color: isLocal ? const Color(0xFF4F46E5) : const Color(0xFF0D9488),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.5,
+        child: Stack(
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                InkWell(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => TripSummaryScreen(trip: t)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: isLocal ? const Color(0xFFEEF2FF) : const Color(0xFFF0FDFA),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    isLocal ? 'LOCAL TRAVEL' : 'BUSINESS TRIP',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: isLocal ? const Color(0xFF4F46E5) : const Color(0xFF0D9488),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    _getDisplayStatus(t.status).toUpperCase(),
+                                    style: GoogleFonts.inter(
+                                      color: statusColor,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: statusColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            _getDisplayStatus(t.status).toUpperCase(),
-                            style: GoogleFonts.inter(
-                              color: statusColor,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
+                            const SizedBox(height: 16),
+                            Text(
+                              t.purpose,
+                              style: GoogleFonts.outfit(
+                                fontSize: 19,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF134E4A),
+                                letterSpacing: -0.5,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'ID: ${t.id}',
+                              style: GoogleFonts.plusJakartaSans(
+                                color: const Color(0xFF94A3B8),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      t.purpose,
-                      style: GoogleFonts.outfit(
-                        fontSize: 19,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF134E4A),
-                        letterSpacing: -0.5,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'ID: ${t.id}',
-                      style: GoogleFonts.plusJakartaSans(
-                        color: const Color(0xFF94A3B8),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                      Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 20),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          children: [
+                            if (!isLocal) ...[
+                              _buildInfoBlock(Icons.location_on_rounded, 'DESTINATION', t.destination),
+                              const SizedBox(width: 12),
+                              Container(width: 1, height: 30, color: const Color(0xFFCCFBF1)),
+                              const SizedBox(width: 12),
+                            ],
+                            _buildInfoBlock(Icons.calendar_month_rounded, isLocal ? 'MONTH' : 'DATES', t.dates),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    if (!isLocal) ...[
-                      _buildInfoBlock(Icons.location_on_rounded, 'DESTINATION', t.destination),
-                      const SizedBox(width: 12),
-                      Container(width: 1, height: 30, color: const Color(0xFFCCFBF1)),
-                      const SizedBox(width: 12),
                     ],
-                    _buildInfoBlock(Icons.calendar_month_rounded, isLocal ? 'MONTH' : 'DATES', t.dates),
-                  ],
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    if (!isLocal) ...[
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Row(
+                    children: [
+                      if (!isLocal) ...[
+                        Expanded(
+                          child: _buildSecondaryButton(
+                            'Timeline',
+                            Icons.history_toggle_off_rounded,
+                            () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => TripTimelineScreen(tripId: t.id),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                      ],
                       Expanded(
-                        child: _buildSecondaryButton(
-                          'Timeline',
-                          Icons.history_toggle_off_rounded,
+                        child: _buildPrimaryButton(
+                          'View Story',
+                          Icons.auto_awesome_rounded,
                           () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => TripTimelineScreen(tripId: t.id),
+                              builder: (_) => isLocal
+                                  ? TravelStoryScreen(tripId: t.id)
+                                  : TripStoryScreen(tripId: t.id),
                             ),
                           ),
                         ),
                       ),
-                      const SizedBox(width: 12),
                     ],
-                    Expanded(
-                      child: _buildPrimaryButton(
-                        'View Story',
-                        Icons.auto_awesome_rounded,
-                        () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => isLocal
-                                ? TravelStoryScreen(tripId: t.id)
-                                : TripStoryScreen(tripId: t.id),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-                ],
-              ),
-              if (_getDisplayStatus(t.status).toLowerCase() == 'settled')
-                Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.5),
+              ],
+            ),
+            if (_getDisplayStatus(t.status).toLowerCase() == 'settled')
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.5),
                       borderRadius: BorderRadius.circular(24),
                     ),
                     child: Center(
@@ -710,8 +716,7 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildInfoBlock(IconData icon, String label, String value) {

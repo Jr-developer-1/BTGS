@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../services/api_service.dart';
 import 'login_screen.dart';
 import '../services/frs_service.dart';
@@ -25,11 +26,12 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic>? _profileData;
   Map<String, dynamic>? _userData;
   final FrsService _frsService = FrsService();
-  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
+  String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
 
   @override
   void initState() {
     super.initState();
+    _loadAppVersion();
     _userData = _apiService.getUser();
     // Show UI immediately if we have ANY basic data from the session
     if (_userData != null) {
@@ -39,6 +41,19 @@ class _ProfilePageState extends State<ProfilePage> {
       }
     }
     _initProfile();
+  }
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          _appVersion = 'v${packageInfo.version} (${packageInfo.buildNumber})';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading app version: $e');
+    }
   }
 
   Future<void> _initProfile() async {

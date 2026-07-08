@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../constants/api_constants.dart';
 import '../services/api_service.dart';
@@ -11,6 +12,8 @@ import 'role_based_dashboard.dart';
 import 'forgot_password_screen.dart';
 import 'change_password_screen.dart';
 import 'frs_enrollment_screen.dart';
+import 'security_pin_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -27,11 +30,13 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
-  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
+  String _appVersion =
+      'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
 
   @override
   void initState() {
     super.initState();
+    _loadAppVersion();
     _videoController = VideoPlayerController.asset('assets/logo_video.mp4')
       ..initialize().then((_) {
         _videoController.setVolume(0.0);
@@ -51,6 +56,19 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  Future<void> _loadAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          _appVersion = 'v${packageInfo.version} (${packageInfo.buildNumber})';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading app version: $e');
+    }
+  }
+
   Future<void> _signIn() async {
     setState(() => _errorMessage = null);
     final username = _usernameController.text.trim();
@@ -67,14 +85,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final apiService = ApiService();
+      String appVer = ApiConstants.appVersion;
+      String buildNum = ApiConstants.buildNumber;
+      try {
+        final packageInfo = await PackageInfo.fromPlatform();
+        appVer = packageInfo.version;
+        buildNum = packageInfo.buildNumber;
+      } catch (_) {}
+
       final response = await apiService.post(
         ApiConstants.authLogin,
         body: {
           'employee_id': username,
           'password': password,
           'is_mobile': true,
-          'app_version': ApiConstants.appVersion,
-          'build_number': ApiConstants.buildNumber,
+          'app_version': appVer,
+          'build_number': buildNum,
         },
       );
 
@@ -113,6 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       final userEmail = (userDetails['email'] ?? '').toString();
+      final empId = (userDetails['employee_id'] ?? response['employee_id'] ?? username).toString();
       final isFaceEnrolled = userDetails['is_face_enrolled'] == true;
       final bool requiresChange =
           response['requires_password_change'] == true ||
@@ -131,13 +158,25 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         );
       } else {
+        // Check if user already has a PIN set in the DB
+        bool hasPin = false;
+        try {
+          final pinCheck = await apiService.get(ApiConstants.authHasPin, includeAuth: true);
+          hasPin = pinCheck['has_pin'] == true;
+        } catch (_) {
+          hasPin = false;
+        }
+
+        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => RoleBasedDashboard(
+            builder: (context) => SecurityPinScreen(
+              mode: hasPin ? PinMode.verify : PinMode.setup,
               username: userName,
               userRole: role,
               email: userEmail.isNotEmpty ? userEmail : null,
+              employeeId: empId,
             ),
           ),
         );

@@ -24,6 +24,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     'pan': {'val': '', 'file': null, 'fileName': ''},
     'passport': {'val': '', 'file': null, 'fileName': ''},
     'gstNo': {'val': '', 'file': null, 'fileName': ''},
+    'rc': {'val': '', 'file': null, 'fileName': ''},
+    'insurance': {'val': '', 'file': null, 'fileName': ''},
+    'pollution': {'val': '', 'file': null, 'fileName': ''},
   };
 
   List<dynamic> _tripDocs = [];
@@ -64,6 +67,22 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         }
       }
     });
+
+    try {
+      final response = await _apiService.get('/api/auth/documents', includeAuth: true);
+      if (response != null && response is Map<String, dynamic>) {
+        setState(() {
+          response.forEach((key, value) {
+            if (_docs.containsKey(key)) {
+              _docs[key] = Map<String, dynamic>.from(value);
+            }
+          });
+        });
+        await prefs.setString('user_documents_$employeeId', jsonEncode(_docs));
+      }
+    } catch (e) {
+      debugPrint("Failed to fetch documents from server: $e");
+    }
   }
 
   Future<void> _saveDocuments() async {
@@ -79,6 +98,17 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
     setState(() => _isSaving = true);
 
     try {
+      try {
+        await _apiService.post('/api/auth/documents', body: _docs, includeAuth: true);
+      } catch (e) {
+        debugPrint("Failed to sync documents with server: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Sync with server failed. Saving locally.")),
+          );
+        }
+      }
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('user_documents_$employeeId', jsonEncode(_docs));
       await prefs.setString(
@@ -86,7 +116,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         jsonEncode(_tripDocs),
       );
 
-      await Future.delayed(const Duration(milliseconds: 1500));
+      await Future.delayed(const Duration(milliseconds: 1000));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -107,7 +137,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       if (mounted) setState(() => _isSaving = false);
     }
   }
-
   Future<void> _pickFile(
     String key, {
     bool isTripDoc = false,
@@ -257,16 +286,43 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                       ),
 
                       _buildSectionTitle(
-                        "Additional Documents",
-                        Icons.description_outlined,
-                        const Color(0xFF3B82F6),
+                        "Travel Compliance Credentials",
+                        Icons.directions_car_filled_outlined,
+                        const Color(0xFFE11D48),
                       ),
                       _buildDocCard(
                         "drivingLicense",
                         "Driving License",
-                        Icons.directions_car_filled_outlined,
+                        Icons.badge_outlined,
                         "License Number",
-                        "optional",
+                        "mandatory",
+                      ),
+                      _buildDocCard(
+                        "rc",
+                        "RC Number",
+                        Icons.description_outlined,
+                        "Registration Number",
+                        "mandatory",
+                      ),
+                      _buildDocCard(
+                        "insurance",
+                        "Insurance Policy",
+                        Icons.security_outlined,
+                        "Policy Number",
+                        "mandatory",
+                      ),
+                      _buildDocCard(
+                        "pollution",
+                        "Pollution Certificate",
+                        Icons.eco_outlined,
+                        "Certificate Number",
+                        "mandatory",
+                      ),
+
+                      _buildSectionTitle(
+                        "Additional Documents",
+                        Icons.description_outlined,
+                        const Color(0xFF3B82F6),
                       ),
                       _buildDocCard(
                         "pan",

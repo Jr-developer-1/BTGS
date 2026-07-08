@@ -1,0 +1,6 @@
+{
+  "Description": "\"Hide 'Reason for non-default travel' and 'Daily Allowance' inputs on standard trip local travel forms, restricting them to monthly/bulk uploads only.\"",
+  "Instruction": "\"Wrap Reason and DA inputs in conditional checks based on _isFixedLocal, and update aggregation logic to treat DA as 0.0 for standard trips.\"",
+  "ReplacementChunks": "[{\"AllowMultiple\":false,\"EndLine\":355,\"ReplacementContent\":\"        endDate: _endDate,\\n        isLocal: true,\\n      );\\n      final double eligibleDa = _isFixedLocal ? daResult['eligibleAmount'] : 0.0;\\n\\n      if (_isFixedLocal && _lastEligibleDa != eli\n<truncated 24574 bytes>",
+  "TargetFile": "\"c:\\\\Users\\\\Usha\\\\Desktop\\\\TGS_LIVE\\\\mobile\\\\lib\\\\screens\\\\trip_expense_form_detailed.dart\""
+}

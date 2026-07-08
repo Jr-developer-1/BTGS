@@ -11,6 +11,7 @@ const AppVersionManagement = () => {
         message: '',
         update_url: ''
     });
+    const [apkFile, setApkFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const { showToast } = useToast();
@@ -35,7 +36,7 @@ const AppVersionManagement = () => {
     };
 
     const handleSave = async (e) => {
-        e.preventDefault();
+        if (e && e.preventDefault) e.preventDefault();
         
         if (!versionData.latest_version || !versionData.minimum_supported_version) {
             showToast("Please provide both latest and minimum supported versions", "warning");
@@ -44,8 +45,25 @@ const AppVersionManagement = () => {
 
         setSaving(true);
         try {
-            await api.post('/api/app-version', versionData);
+            const formData = new FormData();
+            formData.append('latest_version', versionData.latest_version);
+            formData.append('minimum_supported_version', versionData.minimum_supported_version);
+            formData.append('update_type', versionData.update_type);
+            formData.append('message', versionData.message);
+            
+            if (apkFile) {
+                formData.append('apk_file', apkFile);
+            } else {
+                formData.append('update_url', versionData.update_url);
+            }
+
+            await api.post('/api/app-version', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
             showToast("App version updated successfully!", "success");
+            setApkFile(null); // Clear file selection
             fetchVersionData();
         } catch (error) {
             console.error("Failed to save app version", error);
@@ -171,7 +189,29 @@ const AppVersionManagement = () => {
 
                             <div className="form-group" style={{ marginBottom: '1.5rem', gridColumn: '1 / -1' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#1e293b' }}>
-                                    Update URL (Play Store / App Store)
+                                    Upload New APK File
+                                </label>
+                                <input
+                                    type="file"
+                                    accept=".apk"
+                                    onChange={(e) => setApkFile(e.target.files[0])}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.75rem 1rem',
+                                        borderRadius: '12px',
+                                        border: '1px solid #e2e8f0',
+                                        fontSize: '0.95rem',
+                                        backgroundColor: '#f8fafc'
+                                    }}
+                                />
+                                <span style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                                    {apkFile ? `Selected file: ${apkFile.name}` : "Upload a compiled .apk file directly to host it on the server."}
+                                </span>
+                            </div>
+
+                            <div className="form-group" style={{ marginBottom: '1.5rem', gridColumn: '1 / -1' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '600', color: '#1e293b' }}>
+                                    Update URL (Play Store / App Store / Self Hosted)
                                 </label>
                                 <input
                                     type="url"
@@ -186,6 +226,9 @@ const AppVersionManagement = () => {
                                         fontSize: '0.95rem'
                                     }}
                                 />
+                                <span style={{ fontSize: '0.8rem', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                                    If you upload an APK, this URL will be set automatically. Otherwise, you can type an external link.
+                                </span>
                             </div>
 
                             <div className="form-group" style={{ marginBottom: '1.5rem', gridColumn: '1 / -1' }}>

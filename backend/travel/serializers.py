@@ -237,7 +237,7 @@ def is_global_policy_enabled():
     except Exception:
         return True
 
-def get_user_max_mileage(user):
+def get_user_max_mileage(user, travel_mode=None, vehicle_type=None):
     if not is_global_policy_enabled():
         return 0.0
     from travel_masters.models import Cadre, EligibilityRule
@@ -290,6 +290,14 @@ def get_user_max_mileage(user):
     rule = EligibilityRule.objects.filter(cadre=matched_cadre, is_active=True).first()
     if not rule:
         return 0.0
+
+    mode = (travel_mode or '').strip().lower()
+    sub_type = (vehicle_type or '').strip().lower()
+
+    if mode == 'bike' and sub_type == 'own bike':
+        return float(rule.max_mileage_bike_km if rule.max_mileage_bike_km is not None else rule.max_mileage_km or 0.0)
+    elif mode == 'car' and sub_type == 'own car':
+        return float(rule.max_mileage_car_km if rule.max_mileage_car_km is not None else rule.max_mileage_km or 0.0)
 
     return float(rule.max_mileage_km or 0.0)
 
@@ -569,22 +577,74 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
         if dist is not None:
             if trip and trip.user:
-                max_mileage = get_user_max_mileage(trip.user)
+                t_mode = attrs.get('travel_mode')
+                v_type = attrs.get('vehicle_type')
+                if t_mode is None and self.instance:
+                    t_mode = self.instance.travel_mode
+                if v_type is None and self.instance:
+                    v_type = self.instance.vehicle_type
+                max_mileage = get_user_max_mileage(trip.user, t_mode, v_type)
                 if max_mileage > 0.0 and dist > max_mileage:
                     is_deviated = attrs.get('is_deviated', False)
+                    has_start_img = False
+                    has_end_img = False
+                    has_approval_doc = False
                     description_str = attrs.get('description', '')
-                    if not is_deviated and description_str and isinstance(description_str, str) and description_str.strip().startswith('{'):
+                    if description_str and isinstance(description_str, str) and description_str.strip().startswith('{'):
                         try:
                             desc_json = json.loads(description_str)
                             if desc_json.get('is_deviated') is True:
                                 is_deviated = True
+                            if desc_json.get('odoStartImg'):
+                                has_start_img = True
+                            if desc_json.get('odoEndImg'):
+                                has_end_img = True
+                            if desc_json.get('approvalDocImg'):
+                                has_approval_doc = True
                         except:
                             pass
                     if not is_deviated:
-                        field = "odo_end" if odo_end is not None else "distance"
-                        raise serializers.ValidationError({
-                            field: f"Odometer reading distance ({dist:.2f} km) exceeds your cadre entitlement limit of {max_mileage:.2f} km."
-                        })
+                        if not has_start_img:
+                            raise serializers.ValidationError({
+                                "odo_start": "Start odometer image is required when exceeding the cadre mileage limit."
+                            })
+                        if not has_end_img:
+                            raise serializers.ValidationError({
+                                "odo_end": "End odometer image is required when exceeding the cadre mileage limit."
+                            })
+                        if not has_approval_doc:
+                            field = "odo_end" if odo_end is not None else "distance"
+                            raise serializers.ValidationError({
+                                field: f"Odometer reading distance ({dist:.2f} km) exceeds your cadre entitlement limit of {max_mileage:.2f} km. Handwritten approval document from your reporting manager should be uploaded."
+                            })
+
+        # Mandatory document validation for Own vehicle type
+        v_type = attrs.get('vehicle_type')
+        if v_type is None and self.instance:
+            v_type = self.instance.vehicle_type
+
+        if v_type and (v_type == 'Own' or 'own' in str(v_type).lower()) and trip and trip.user:
+            from core.models import UserDocument
+            dl_doc = UserDocument.objects.filter(user=trip.user, document_type='drivingLicense').first()
+            rc_doc = UserDocument.objects.filter(user=trip.user, document_type='rc').first()
+            ins_doc = UserDocument.objects.filter(user=trip.user, document_type='insurance').first()
+            pol_doc = UserDocument.objects.filter(user=trip.user, document_type='pollution').first()
+
+            missing = []
+            if not dl_doc or not dl_doc.file_name:
+                missing.append("Driving License")
+            if not rc_doc or not rc_doc.file_name:
+                missing.append("Vehicle RC")
+            if not ins_doc or not ins_doc.file_name:
+                missing.append("Insurance Copy")
+            if not pol_doc or not pol_doc.file_name:
+                missing.append("Pollution Certificate")
+
+            if missing:
+                missing_str = ", ".join(missing[:-1]) + " and " + missing[-1] if len(missing) > 1 else missing[0]
+                raise serializers.ValidationError({
+                    "detail": f"Required travel documents ({missing_str}) are missing. Please upload them in the documents section before claiming Own Vehicle expenses."
+                })
 
         return attrs
 
@@ -803,6 +863,40 @@ class TripSerializer(serializers.ModelSerializer):
                 "to": "Source and Destination cannot be the same.",
                 "from": "Source and Destination cannot be the same."
             })
+
+        # Mandatory document validation for Own vehicle type
+        vehicle_type = attrs.get('vehicle_type')
+        if vehicle_type is None and self.instance:
+            vehicle_type = self.instance.vehicle_type
+
+        if vehicle_type and (vehicle_type == 'Own' or 'own' in str(vehicle_type).lower()):
+            request = self.context.get('request')
+            user = getattr(request, 'custom_user', None) if request else None
+            if not user and self.instance:
+                user = self.instance.user
+
+            if user:
+                from core.models import UserDocument
+                dl_doc = UserDocument.objects.filter(user=user, document_type='drivingLicense').first()
+                rc_doc = UserDocument.objects.filter(user=user, document_type='rc').first()
+                ins_doc = UserDocument.objects.filter(user=user, document_type='insurance').first()
+                pol_doc = UserDocument.objects.filter(user=user, document_type='pollution').first()
+
+                missing = []
+                if not dl_doc or not dl_doc.file_name:
+                    missing.append("Driving License")
+                if not rc_doc or not rc_doc.file_name:
+                    missing.append("Vehicle RC")
+                if not ins_doc or not ins_doc.file_name:
+                    missing.append("Insurance Copy")
+                if not pol_doc or not pol_doc.file_name:
+                    missing.append("Pollution Certificate")
+
+                if missing:
+                    missing_str = ", ".join(missing[:-1]) + " and " + missing[-1] if len(missing) > 1 else missing[0]
+                    raise serializers.ValidationError({
+                        "detail": f"Required travel documents ({missing_str}) are missing. Please upload them in the documents section before submitting an Own Vehicle request."
+                    })
 
         return attrs
 

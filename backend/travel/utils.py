@@ -197,6 +197,11 @@ def build_approval_chain(user):
         if not mgr_user:
             break
             
+        if mgr_user.employee_id == user.employee_id and str(next_pos_id) == str(current_pos_id):
+            current_pos_id = next_pos_id
+            current_user = mgr_user
+            continue
+            
         # Resolve manager's human-readable name from cache
         mgr_name = mgr_user.name
         if not mgr_name or mgr_name == mgr_user.employee_id:

@@ -4,7 +4,8 @@ import hashlib
 import base64
 from django.conf import settings
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.decorators import api_view, permission_classes, action, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import re
 import string
 import random
@@ -256,7 +257,8 @@ def login_view(request):
                 'active_position_id': user.active_position_id,
                 'available_positions': available_positions,
                 'can_view_reports': check_user_can_view_reports(user),
-                'can_view_claim_report': check_user_can_view_claim_report(user)
+                'can_view_claim_report': check_user_can_view_claim_report(user),
+                'is_face_enrolled': user.is_face_enrolled
             }
         })
         
@@ -491,7 +493,8 @@ def me_view(request):
             'active_position_id': user.active_position_id,
             'available_positions': user.get_available_positions(force_fresh=True),
             'can_view_reports': check_user_can_view_reports(user),
-            'can_view_claim_report': check_user_can_view_claim_report(user)
+            'can_view_claim_report': check_user_can_view_claim_report(user),
+            'is_face_enrolled': user.is_face_enrolled
         })
     except Exception as e:
         import traceback
@@ -618,7 +621,8 @@ def switch_position_view(request):
                 'active_position_id': user.active_position_id,
                 'available_positions': available,
                 'can_view_reports': check_user_can_view_reports(user),
-                'can_view_claim_report': check_user_can_view_claim_report(user)
+                'can_view_claim_report': check_user_can_view_claim_report(user),
+                'is_face_enrolled': user.is_face_enrolled
             }
         })
     except Exception as e:
@@ -1497,8 +1501,23 @@ def verify_face_view(request):
             status='Recorded'
         )
         
-        # Notify Reporting Manager
-        if user.reporting_manager:
+        # Notify Reporting Position Users
+        reporting_pos_id = user.reporting_manager_position
+        notified = False
+        if reporting_pos_id:
+            from travel.views import get_users_by_position
+            managers = get_users_by_position(reporting_pos_id)
+            for mgr in managers:
+                Notification.objects.create(
+                    user=mgr,
+                    title="FRS Attendance Capture",
+                    message=f"{user.name} (ID: {user.employee_id}) captured attendance via FRS at {address or 'captured location'}.",
+                    type="info"
+                )
+                notified = True
+        
+        # Fallback to direct reporting manager if no position-based managers were notified
+        if not notified and user.reporting_manager:
             Notification.objects.create(
                 user=user.reporting_manager,
                 title="FRS Attendance Capture",
@@ -1689,14 +1708,24 @@ def get_face_registration_requests_view(request):
     manager = request.custom_user
     
     # Check if user is HR
-    is_hr = 'hr' in manager.role.name.lower() or manager.role.name.lower() == 'hr' or manager.employee_id.lower().startswith('hr')
+    from travel.utils import _is_hr
+    is_hr = _is_hr(manager)
     
     if is_hr:
         # HR sees all pending registration requests
-        requests = FaceRegistrationRequest.objects.filter(status='Pending')
+        requests = FaceRegistrationRequest.objects.filter(status='Pending').select_related('user', 'reporting_manager')
     else:
-        # Manager sees pending requests for their subordinates
-        requests = FaceRegistrationRequest.objects.filter(reporting_manager=manager, status='Pending')
+        # Manager sees pending requests for their subordinates based on position or manager mapping
+        from travel.views import _get_user_all_position_ids
+        manager_pos_ids = _get_user_all_position_ids(manager)
+        
+        all_pending = FaceRegistrationRequest.objects.filter(status='Pending').select_related('user', 'reporting_manager')
+        requests = []
+        for r in all_pending:
+            reporting_pos_id = r.user.reporting_manager_position
+            is_reporting_position = str(reporting_pos_id) in manager_pos_ids if reporting_pos_id else (r.user.reporting_manager == manager)
+            if is_reporting_position:
+                requests.append(r)
     
     data = []
     for r in requests:
@@ -1707,7 +1736,7 @@ def get_face_registration_requests_view(request):
             'photo_url': r.face_photo, # Base64 from DB
             'created_at': r.created_at,
             'status': r.status,
-            'reporting_manager': r.reporting_manager.name
+            'reporting_manager': r.reporting_manager.name if r.reporting_manager else 'N/A'
         })
     return Response(data)
 
@@ -1720,15 +1749,21 @@ def handle_face_registration_request_view(request):
     remarks = request.data.get('remarks', '')
     
     # Check if user is HR
-    is_hr = 'hr' in manager.role.name.lower() or manager.role.name.lower() == 'hr' or manager.employee_id.lower().startswith('hr')
+    from travel.utils import _is_hr
+    is_hr = _is_hr(manager)
     
-    if is_hr:
-        reg_request = FaceRegistrationRequest.objects.filter(id=request_id, status='Pending').first()
-    else:
-        reg_request = FaceRegistrationRequest.objects.filter(id=request_id, reporting_manager=manager, status='Pending').first()
-        
+    reg_request = FaceRegistrationRequest.objects.filter(id=request_id, status='Pending').select_related('user').first()
     if not reg_request:
-        return Response({'error': 'Registration request not found or unauthorized.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'error': 'Registration request not found or already processed.'}, status=status.HTTP_404_NOT_FOUND)
+        
+    if not is_hr:
+        from travel.views import _get_user_all_position_ids
+        manager_pos_ids = _get_user_all_position_ids(manager)
+        reporting_pos_id = reg_request.user.reporting_manager_position
+        is_reporting_position = str(reporting_pos_id) in manager_pos_ids if reporting_pos_id else (reg_request.user.reporting_manager == manager)
+        
+        if not is_reporting_position:
+            return Response({'error': 'Unauthorized to handle this registration request.'}, status=status.HTTP_403_FORBIDDEN)
         
     if action == 'approve':
         reg_request.status = 'Approved'
@@ -1772,17 +1807,22 @@ def get_pending_frs_approvals_view(request):
     # Fetch all recently recorded attendance logs (matches only as per user request)
     attendance_qs = AttendanceFRS.objects.filter(status='Recorded', is_matched=True).select_related('user').order_by('-timestamp')
     
+    from travel.views import _get_user_all_position_ids
+    manager_pos_ids = _get_user_all_position_ids(manager)
+    from travel.utils import _is_hr
+    is_hr = _is_hr(manager)
+    
     data = []
     import pytz
     local_tz = pytz.timezone(settings.TIME_ZONE)
     
     for a in attendance_qs:
-        # Check if user reports to this manager
-        if a.user.reporting_manager != manager:
-            # Check if this person IS HR (they can see all logs)
-            is_hr = 'hr' in manager.role.name.lower() or manager.role.name.lower() == 'hr' or manager.employee_id.lower().startswith('hr')
-            if not is_hr:
-                continue
+        # Check if user reports to this manager position or manager direct User
+        reporting_pos_id = a.user.reporting_manager_position
+        is_reporting_position = str(reporting_pos_id) in manager_pos_ids if reporting_pos_id else (a.user.reporting_manager == manager)
+        
+        if not is_reporting_position and not is_hr:
+            continue
             
         # Format timestamp to local for better display
         local_dt = a.timestamp.astimezone(local_tz)
@@ -1816,8 +1856,18 @@ def handle_frs_approval_view(request):
         status='Pending'
     ).select_related('user').first()
     
-    if not attendance or attendance.user.reporting_manager != manager:
-        return Response({'error': 'Attendance record not found or unauthorized'}, status=status.HTTP_404_NOT_FOUND)
+    if not attendance:
+        return Response({'error': 'Attendance record not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+    from travel.views import _get_user_all_position_ids
+    manager_pos_ids = _get_user_all_position_ids(manager)
+    from travel.utils import _is_hr
+    is_hr = _is_hr(manager)
+    reporting_pos_id = attendance.user.reporting_manager_position
+    is_reporting_position = str(reporting_pos_id) in manager_pos_ids if reporting_pos_id else (attendance.user.reporting_manager == manager)
+    
+    if not is_reporting_position and not is_hr:
+        return Response({'error': 'Unauthorized to handle this attendance record'}, status=status.HTTP_403_FORBIDDEN)
         
     attendance.status = 'Approved' if action == 'approve' else 'Rejected'
     attendance.remarks = remarks
@@ -1954,7 +2004,54 @@ def update_theme_view(request):
     
     return Response({'message': 'Theme updated successfully', 'theme': theme})
 
+@api_view(['POST'])
+@permission_classes([IsCustomAuthenticated])
+def set_security_pin_view(request):
+    """Set or update the security PIN for the authenticated user. PIN is stored as a SHA-256 hash."""
+    import hashlib
+    user = request.custom_user
+    pin = request.data.get('pin', '')
+
+    if not pin or len(str(pin)) != 4 or not str(pin).isdigit():
+        return Response({'error': 'PIN must be a 4-digit number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    pin_hash = hashlib.sha256(str(pin).encode()).hexdigest()
+    user.security_pin_hash = pin_hash
+    user.save(update_fields=['security_pin_hash'])
+    return Response({'message': 'Security PIN updated successfully.'})
+
+
+@api_view(['POST'])
+@permission_classes([IsCustomAuthenticated])
+def verify_security_pin_view(request):
+    """Verify the security PIN for the authenticated user."""
+    import hashlib
+    user = request.custom_user
+    pin = request.data.get('pin', '')
+
+    if not pin:
+        return Response({'error': 'PIN is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not user.security_pin_hash:
+        return Response({'error': 'No PIN configured.'}, status=status.HTTP_404_NOT_FOUND)
+
+    pin_hash = hashlib.sha256(str(pin).encode()).hexdigest()
+    if pin_hash == user.security_pin_hash:
+        return Response({'valid': True})
+    else:
+        return Response({'valid': False, 'error': 'Incorrect PIN.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+@api_view(['GET'])
+@permission_classes([IsCustomAuthenticated])
+def has_security_pin_view(request):
+    """Check if the authenticated user has a security PIN set."""
+    user = request.custom_user
+    return Response({'has_pin': bool(user.security_pin_hash)})
+
+
 @api_view(['GET', 'POST'])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 @permission_classes([AllowAny]) # Allow anyone to GET, but ideally POST is admin. Doing both for now because auth is needed for admin.
 def app_version_view(request):
     if request.method == 'GET':
@@ -1968,17 +2065,61 @@ def app_version_view(request):
                 "update_url": "https://example.com"
             })
         serializer = AppVersionSerializer(version)
-        return Response(serializer.data)
+        data = serializer.data
+        
+        # Dynamically replace localhost/127.0.0.1 in the update_url with the request's actual host/IP
+        update_url = data.get('update_url', '')
+        if update_url and ('127.0.0.1' in update_url or 'localhost' in update_url):
+            request_host = request.get_host()
+            if '127.0.0.1' in request_host or 'localhost' in request_host:
+                import socket
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                    port = request_host.split(':')[1] if ':' in request_host else '4567'
+                    request_host = f"{local_ip}:{port}"
+                except Exception:
+                    pass
+            import re
+            update_url = re.sub(r'https?://(127\.0\.0\.1|localhost)(:\d+)?', f"{request.scheme}://{request_host}", update_url)
+            data['update_url'] = update_url
+            
+        return Response(data)
         
     elif request.method == 'POST':
-        # Should be protected, but for demo let's allow or rely on frontend auth logic
-        # Actually better to enforce IsCustomAuthenticated or just trust since it's an internal system.
+        # Handle file upload if present
+        apk_file = request.FILES.get('apk_file')
+        
+        # Manually extract key-value pairs to avoid deepcopying file streams (fixes cannot pickle error)
+        data = {k: v for k, v in request.data.items() if k != 'apk_file'}
+        
+        if apk_file:
+            import os
+            from django.conf import settings
+            # Ensure media folder exists
+            os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
+            # Use original filename or standardized one
+            filename = apk_file.name
+            file_path = os.path.join(settings.MEDIA_ROOT, filename)
+            
+            # Write file chunks to disk
+            with open(file_path, 'wb+') as destination:
+                for chunk in apk_file.chunks():
+                    destination.write(chunk)
+            
+            # Construct download URL (using request scheme and host)
+            base_url = f"{request.scheme}://{request.get_host()}"
+            data['update_url'] = f"{base_url}{settings.MEDIA_URL}{filename}"
+
         version = AppVersion.objects.first()
-        serializer = AppVersionSerializer(version, data=request.data) if version else AppVersionSerializer(data=request.data)
+        serializer = AppVersionSerializer(version, data=data) if version else AppVersionSerializer(data=data)
         
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
+        print("AppVersion validation failed:", serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 class ReportAccessControlViewSet(viewsets.ModelViewSet):
     queryset = ReportAccessControl.objects.all()
@@ -2059,5 +2200,51 @@ class ReportAccessControlViewSet(viewsets.ModelViewSet):
                     
         # Limit results to top 50
         return Response(results[:50])
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([IsCustomAuthenticated])
+def user_documents_view(request):
+    user = request.custom_user
+    from .models import UserDocument
+    if request.method == 'GET':
+        docs = UserDocument.objects.filter(user=user)
+        doc_dict = {}
+        for d in docs:
+            doc_dict[d.document_type] = {
+                'val': d.document_number or '',
+                'file': d.file_data or None,
+                'fileName': d.file_name or ''
+            }
+        expected_keys = ['aadharId', 'companyId', 'drivingLicense', 'pan', 'passport', 'gstNo', 'rc', 'insurance', 'pollution']
+        for k in expected_keys:
+            if k not in doc_dict:
+                doc_dict[k] = {'val': '', 'file': None, 'fileName': ''}
+        return Response(doc_dict)
+    
+    elif request.method == 'POST':
+        data = request.data
+        if not isinstance(data, dict):
+            return Response({'error': 'Invalid request format'}, status=400)
+            
+        for doc_type, doc_info in data.items():
+            if not isinstance(doc_info, dict):
+                continue
+            val = doc_info.get('val', '')
+            file_data = doc_info.get('file', None)
+            file_name = doc_info.get('fileName', '')
+            
+            # Save or update UserDocument
+            UserDocument.objects.update_or_create(
+                user=user,
+                document_type=doc_type,
+                defaults={
+                    'document_number': val,
+                    'file_data': file_data,
+                    'file_name': file_name
+                }
+            )
+        return Response({'message': 'Documents synchronized successfully'})
+
 
 

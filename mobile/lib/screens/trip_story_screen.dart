@@ -63,8 +63,13 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 decoration: InputDecoration(
                   hintText: 'e.g., 5 kg',
                   hintStyle: GoogleFonts.plusJakartaSans(fontSize: 13),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -83,8 +88,13 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 decoration: InputDecoration(
                   hintText: 'Add any additional notes...',
                   hintStyle: GoogleFonts.plusJakartaSans(fontSize: 13),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
               ),
             ],
@@ -136,7 +146,9 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                       remarksController.text.trim().isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text('Please enter both luggage weight and remarks.'),
+                        content: Text(
+                          'Please enter both luggage weight and remarks.',
+                        ),
                         backgroundColor: Colors.red,
                       ),
                     );
@@ -157,11 +169,15 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFDB2777),
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 child: Text(
                   'SAVE',
-                  style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.bold),
+                  style: GoogleFonts.plusJakartaSans(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ],
@@ -170,6 +186,7 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
       ),
     );
   }
+
   bool _isLoading = true;
   bool _isActionLoading = false;
   Trip? _trip;
@@ -181,30 +198,42 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
   }
 
   Future<void> _fetchDetails({bool showLoader = true}) async {
+    debugPrint('STORY_SCREEN: _fetchDetails started, showLoader=$showLoader');
     if (showLoader) setState(() => _isLoading = true);
     try {
       final cleanId = widget.tripId.trim();
+      debugPrint('STORY_SCREEN: Calling fetchTripDetails for id: $cleanId');
       final trip = await _tripService.fetchTripDetails(cleanId);
+      debugPrint('STORY_SCREEN: fetchTripDetails returned. Trip ID: ${trip.id}');
+      
       List<dynamic> manualExpenses = [];
       try {
+        debugPrint('STORY_SCREEN: Calling fetchExpenses...');
         manualExpenses = await _tripService.fetchExpenses(tripId: cleanId);
+        debugPrint('STORY_SCREEN: fetchExpenses returned ${manualExpenses.length} items');
       } catch (e) {
-        debugPrint('Manual expenses fetch failed: $e');
+        debugPrint('STORY_SCREEN: fetchExpenses failed: $e');
         manualExpenses = trip.expenses ?? [];
       }
 
       if (mounted) {
+        debugPrint('STORY_SCREEN: Setting state with trip and expenses.');
         setState(() {
           _trip = trip.copyWith(expenses: manualExpenses);
           _isLoading = false;
         });
+        debugPrint('STORY_SCREEN: setState complete.');
+      } else {
+        debugPrint('STORY_SCREEN: Not mounted after fetch.');
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('STORY_SCREEN: EXCEPTION in _fetchDetails: $e');
+      debugPrint('STORY_SCREEN: STACK TRACE: $stack');
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading trip story: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading trip story: $e')));
       }
     }
   }
@@ -453,11 +482,11 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                               final refresh = await Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (context) =>
-                                      TripExpenseGridScreen(
-                                        tripId: widget.tripId,
-                                        hasAdditionalLuggage: _luggageWeight.isNotEmpty,
-                                      ),
+                                  builder: (context) => TripExpenseGridScreen(
+                                    tripId: widget.tripId,
+                                    hasAdditionalLuggage:
+                                        _luggageWeight.isNotEmpty,
+                                  ),
                                 ),
                               );
                               if (refresh == true)
@@ -1409,9 +1438,11 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _buildSectionHeader(
-              Icons.currency_rupee_rounded,
-              'FINANCIAL SUMMARY',
+            Expanded(
+              child: _buildSectionHeader(
+                Icons.currency_rupee_rounded,
+                'FINANCIAL SUMMARY',
+              ),
             ),
             if (!_isApprover() &&
                 [
@@ -2274,7 +2305,8 @@ class _TripStoryScreenState extends State<TripStoryScreen> {
                                         category: displayNature,
                                         tripId: widget.tripId,
                                         expenseData: exp,
-                                        hasAdditionalLuggage: _luggageWeight.isNotEmpty,
+                                        hasAdditionalLuggage:
+                                            _luggageWeight.isNotEmpty,
                                       ),
                                 ),
                               );

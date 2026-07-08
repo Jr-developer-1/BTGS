@@ -95,6 +95,7 @@ export default function AdminMasterManagement() {
     const [editingItem, setEditingItem] = useState(null);
     const [formData, setFormData] = useState({});
     const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+    const [designationsList, setDesignationsList] = useState([]);
 
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
@@ -256,7 +257,10 @@ export default function AdminMasterManagement() {
                 accommodation_others: ruleData.accommodation_others,
                 others_clusters: ruleData.others_clusters,
                 daily_allowance_amount: ruleData.daily_allowance_amount,
+                monthly_tour_daily_allowance_amount: ruleData.monthly_tour_daily_allowance_amount,
                 max_mileage_km: ruleData.max_mileage_km,
+                max_mileage_bike_km: ruleData.max_mileage_bike_km,
+                max_mileage_car_km: ruleData.max_mileage_car_km,
                 laundry_days_threshold: ruleData.laundry_days_threshold,
                 own_stay_state_hq_pct: ruleData.own_stay_state_hq_pct,
                 own_stay_districts_pct: ruleData.own_stay_districts_pct,
@@ -294,6 +298,15 @@ export default function AdminMasterManagement() {
         try {
             let url = `/api/${activeTab.endpoint}/`;
             if (showDeleted) url += '?include_deleted=true';
+
+            if (activeTab.id === 'roles' && designationsList.length === 0) {
+                try {
+                    const desigRes = await api.get('/api/masters/eligibility-rules/designations/');
+                    setDesignationsList(desigRes.data || []);
+                } catch (e) {
+                    console.error("Failed to fetch designations for roles select", e);
+                }
+            }
 
             // Try fetching field metadata
             try {
@@ -439,7 +452,7 @@ export default function AdminMasterManagement() {
                     <div>
                         <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '8px', letterSpacing: '-0.02em' }}>Master Management</h1>
                     </div>
-                    {activeGroup.id !== 'access' && activeGroup.id !== 'entitlement' && (
+                    {activeGroup.id !== 'access' && (
                         <div style={{ display: 'flex', gap: '12px' }}>
                             <button
                                 onClick={handleBulkExport}
@@ -572,6 +585,7 @@ export default function AdminMasterManagement() {
                                         accommodation_others: 0,
                                         others_clusters: ['Others'],
                                         daily_allowance_amount: 0,
+                                        monthly_tour_daily_allowance_amount: 0,
                                         max_mileage_km: 0,
                                         own_stay_state_hq_pct: 50,
                                         own_stay_districts_pct: 50,
@@ -602,6 +616,7 @@ export default function AdminMasterManagement() {
                                         accommodation_others: 0,
                                         others_clusters: ['Others'],
                                         daily_allowance_amount: 0,
+                                        monthly_tour_daily_allowance_amount: 0,
                                         max_mileage_km: 0,
                                         own_stay_state_hq_pct: 50,
                                         own_stay_districts_pct: 50,
@@ -883,6 +898,33 @@ export default function AdminMasterManagement() {
                                                             </>
                                                         )}
                                                     </div>
+                                                ) : activeTab.id === 'roles' && field === 'name' ? (
+                                                    <select
+                                                        className="form-input"
+                                                        value={formData[field] || ''}
+                                                        onChange={e => setFormData({ ...formData, [field]: e.target.value })}
+                                                        required
+                                                        style={{
+                                                            appearance: 'none',
+                                                            background: 'white',
+                                                            backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")',
+                                                            backgroundRepeat: 'no-repeat',
+                                                            backgroundPosition: 'right 16px center',
+                                                            backgroundSize: '16px',
+                                                            paddingRight: '40px'
+                                                        }}
+                                                    >
+                                                        <option value="">Select Role/Designation...</option>
+                                                        {(() => {
+                                                            const opts = [...designationsList];
+                                                            if (formData[field] && !opts.includes(formData[field])) {
+                                                                opts.unshift(formData[field]);
+                                                            }
+                                                            return opts.map(desig => (
+                                                                <option key={desig} value={desig}>{desig}</option>
+                                                            ));
+                                                        })()}
+                                                    </select>
                                                 ) : (
                                                     <input
                                                         type="text"
@@ -942,7 +984,8 @@ export default function AdminMasterManagement() {
                                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                                                         {[
                                                             { key: 'can_create_trip', label: 'New Trip Request' },
-                                                            { key: 'can_create_tour_plan', label: 'New Tour Plan' }
+                                                            { key: 'can_create_tour_plan', label: 'New Tour Plan' },
+                                                            { key: 'can_edit_submitted_claim', label: 'Edit Submitted Claims' }
                                                         ].map(perm => (
                                                             <div key={perm.key} className="checkbox-field" style={{
                                                                 background: '#fff',
@@ -1320,10 +1363,10 @@ function EntitlementDashboard({ cadres, rules, loading, globalPolicyEnabled, onT
 
                                         <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
                                             <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', display: 'block', textTransform: 'uppercase', marginBottom: '4px' }}>
-                                                Daily Allowance
+                                                Daily Allowance (Travel / Tour)
                                             </span>
                                             <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
-                                                ₹ {rule?.daily_allowance_amount || 0}
+                                                ₹ {rule?.daily_allowance_amount || 0} / ₹ {rule?.monthly_tour_daily_allowance_amount || 0}
                                             </span>
                                         </div>
 
@@ -1338,10 +1381,10 @@ function EntitlementDashboard({ cadres, rules, loading, globalPolicyEnabled, onT
 
                                         <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: '12px', border: '1px solid #f1f5f9' }}>
                                             <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#94a3b8', display: 'block', textTransform: 'uppercase', marginBottom: '4px' }}>
-                                                Max Mileage Limit
+                                                Mileage Limits (Global / Bike / Car)
                                             </span>
                                             <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>
-                                                {rule?.max_mileage_km !== undefined ? `${rule.max_mileage_km} KM` : '0 KM'}
+                                                {rule?.max_mileage_km || 0} / {rule?.max_mileage_bike_km || 0} / {rule?.max_mileage_car_km || 0} KM
                                             </span>
                                         </div>
 
@@ -1466,7 +1509,10 @@ function EntitlementEditorModal({ cadre, rule, isOpen, onClose, onSave }) {
     const [othersClusters, setOthersClusters] = useState(['Others']);
 
     const [dailyAllowanceAmount, setDailyAllowanceAmount] = useState(0);
+    const [monthlyTourDailyAllowanceAmount, setMonthlyTourDailyAllowanceAmount] = useState(0);
     const [maxMileageKm, setMaxMileageKm] = useState(0);
+    const [maxMileageBikeKm, setMaxMileageBikeKm] = useState(0);
+    const [maxMileageCarKm, setMaxMileageCarKm] = useState(0);
 
     const [ownStayStateHqPct, setOwnStayStateHqPct] = useState(50);
     const [ownStayDistrictsPct, setOwnStayDistrictsPct] = useState(50);
@@ -1498,7 +1544,10 @@ function EntitlementEditorModal({ cadre, rule, isOpen, onClose, onSave }) {
             setAccommodationOthers(rule?.accommodation_others || 0);
             setOthersClusters(rule?.others_clusters || ['Others']);
             setDailyAllowanceAmount(rule?.daily_allowance_amount || 0);
+            setMonthlyTourDailyAllowanceAmount(rule?.monthly_tour_daily_allowance_amount || 0);
             setMaxMileageKm(rule?.max_mileage_km || 0);
+            setMaxMileageBikeKm(rule?.max_mileage_bike_km || 0);
+            setMaxMileageCarKm(rule?.max_mileage_car_km || 0);
             setLaundryDaysThreshold(rule?.laundry_days_threshold !== undefined ? rule.laundry_days_threshold : 4);
             setOwnStayStateHqPct(rule?.own_stay_state_hq_pct || 50);
             setOwnStayDistrictsPct(rule?.own_stay_districts_pct || 50);
@@ -1713,7 +1762,10 @@ function EntitlementEditorModal({ cadre, rule, isOpen, onClose, onSave }) {
             accommodation_others: Number(accommodationOthers),
             others_clusters: othersClusters,
             daily_allowance_amount: Number(dailyAllowanceAmount),
+            monthly_tour_daily_allowance_amount: Number(monthlyTourDailyAllowanceAmount),
             max_mileage_km: Number(maxMileageKm),
+            max_mileage_bike_km: Number(maxMileageBikeKm),
+            max_mileage_car_km: Number(maxMileageCarKm),
             laundry_days_threshold: Number(laundryDaysThreshold),
             own_stay_state_hq_pct: Number(ownStayStateHqPct),
             own_stay_districts_pct: Number(ownStayDistrictsPct),
@@ -2230,18 +2282,30 @@ function EntitlementEditorModal({ cadre, rule, isOpen, onClose, onSave }) {
 
                         {/* SECTION C — DAILY ALLOWANCE */}
                         <div>
-                            <h3 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#334155', margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.02em', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+                            <h3 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#334155', margin: '0 0 16px 0', textTransform: 'uppercase', letterSpacing: '0.02em', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
                                 C — DAILY ALLOWANCE
                             </h3>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <input
-                                    type="number"
-                                    className="form-input"
-                                    value={dailyAllowanceAmount}
-                                    onChange={e => setDailyAllowanceAmount(e.target.value)}
-                                    style={{ width: '200px', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
-                                />
-                                <span style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: '500' }}>* per day</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '6px' }}>Outstation Travel DA (₹/Day)</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={dailyAllowanceAmount}
+                                        onChange={e => setDailyAllowanceAmount(e.target.value)}
+                                        style={{ width: '100%', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '6px' }}>Monthly Tour DA (₹/Day)</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={monthlyTourDailyAllowanceAmount}
+                                        onChange={e => setMonthlyTourDailyAllowanceAmount(e.target.value)}
+                                        style={{ width: '100%', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
+                                    />
+                                </div>
                             </div>
                         </div>
 
@@ -2303,18 +2367,46 @@ function EntitlementEditorModal({ cadre, rule, isOpen, onClose, onSave }) {
                             <h3 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#334155', margin: '0 0 12px 0', textTransform: 'uppercase', letterSpacing: '0.02em', borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
                                 E — ODOMETER / MILEAGE LIMIT
                             </h3>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <input
-                                    type="number"
-                                    className="form-input"
-                                    value={maxMileageKm}
-                                    onChange={e => setMaxMileageKm(e.target.value)}
-                                    style={{ width: '200px', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
-                                    placeholder="Enter limit in KM"
-                                    min="0"
-                                    step="0.01"
-                                />
-                                <span style={{ color: '#64748b', fontSize: '0.85rem', fontWeight: '500' }}>* max km allowed per trip</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '6px' }}>Global Limit (KM)</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={maxMileageKm}
+                                        onChange={e => setMaxMileageKm(e.target.value)}
+                                        style={{ width: '180px', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
+                                        placeholder="Enter limit in KM"
+                                        min="0"
+                                        step="0.01"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '6px' }}>Bike Limit (KM)</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={maxMileageBikeKm}
+                                        onChange={e => setMaxMileageBikeKm(e.target.value)}
+                                        style={{ width: '180px', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
+                                        placeholder="Enter limit in KM"
+                                        min="0"
+                                        step="0.01"
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#64748b', marginBottom: '6px' }}>Car Limit (KM)</label>
+                                    <input
+                                        type="number"
+                                        className="form-input"
+                                        value={maxMileageCarKm}
+                                        onChange={e => setMaxMileageCarKm(e.target.value)}
+                                        style={{ width: '180px', borderRadius: '10px', padding: '10px 14px', border: '1.5px solid #cbd5e1' }}
+                                        placeholder="Enter limit in KM"
+                                        min="0"
+                                        step="0.01"
+                                    />
+                                </div>
                             </div>
                         </div>
 

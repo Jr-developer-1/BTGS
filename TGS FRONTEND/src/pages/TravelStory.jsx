@@ -786,7 +786,7 @@ const TravelStory = () => {
                             onUpdate={fetchTravelStory}
                             tripStatus={travel.status}
                             claimStatus={travel.claim?.status}
-                            allowedNatures={['Local Travel']}
+                            allowedNatures={travel?.consider_as_local ? ['Local Travel', 'Daily Allowance'] : ['Travel', 'Local Travel', 'Food', 'Daily Allowance', 'Accommodation', 'Incidental']}
                             dateFilter={dateFilter}
                             onFilterChange={setDateFilter}
                             // only show bulk button for full travel requests (TRP-)

@@ -136,6 +136,11 @@ class _TripExpenseFormDetailedScreenState
       TextEditingController();
   final TextEditingController _baseFareController = TextEditingController();
   final TextEditingController _reasonController = TextEditingController();
+  final TextEditingController _appliedDaController = TextEditingController();
+  final TextEditingController _daJustificationController =
+      TextEditingController();
+  List<String> _daBills = [];
+  double? _lastEligibleDa;
   bool _isPublicTransport = false;
 
   // Dropdown States
@@ -159,6 +164,7 @@ class _TripExpenseFormDetailedScreenState
   bool _isSharedMeal = false;
   String? _odoStartImg;
   String? _odoEndImg;
+  String? _approvalDocImg;
   String? _incidentalCategory;
   String? _incidentalBill;
   double? _odoStartLat;
@@ -287,6 +293,7 @@ class _TripExpenseFormDetailedScreenState
     _odoEndController.addListener(_updateFormTotal);
     _odoRateController.addListener(_updateFormTotal);
     _amountController.addListener(_updateFormTotal);
+    _appliedDaController.addListener(_updateFormTotal);
 
     if (widget.category == 'Accommodation') {
       _baseFareController.addListener(_updateFormTotal);
@@ -330,10 +337,28 @@ class _TripExpenseFormDetailedScreenState
           ) ??
           0;
 
+      final daResult = _calculateDAEligibility(
+        startTime: _startTime,
+        endTime: _endTime,
+        startDate: _startDate,
+        endDate: _endDate,
+        isLocal: true,
+      );
+      final double eligibleDa = _isTravelo ? daResult['eligibleAmount'] : 0.0;
+
+      if (_lastEligibleDa != eligibleDa) {
+        _lastEligibleDa = eligibleDa;
+        _appliedDaController.text = eligibleDa.toStringAsFixed(2);
+      }
+
+      final double appliedDa = _isTravelo
+          ? (double.tryParse(_appliedDaController.text) ?? eligibleDa)
+          : 0.0;
+
       if (isOwnVehicle && end > start) {
         final total = (end - start) * rate;
-        final finalAmount = total + incidentalSum;
-        // For Local Travel, the _amountController reflects the FINAL TOTAL (odo + inc)
+        final finalAmount = total + incidentalSum + appliedDa;
+        // For Local Travel, the _amountController reflects the FINAL TOTAL (odo + inc + da)
         if (_amountController.text != finalAmount.toStringAsFixed(2)) {
           _amountController.removeListener(_updateFormTotal);
           _amountController.text = finalAmount.toStringAsFixed(2);
@@ -660,6 +685,28 @@ class _TripExpenseFormDetailedScreenState
         _masterClasses = classes;
       });
     }
+  }
+
+  bool _isTravelModeNonEligible() {
+    if (_travelMode == null || _travelMode!.trim().isEmpty) return false;
+    final modeClean = _travelMode!.trim().toLowerCase();
+    final subClean = (_travelSubType ?? '').trim().toLowerCase();
+
+    // Walk and Public Transport are always allowed/eligible
+    if (modeClean == 'walk' ||
+        modeClean == 'public transport' ||
+        _isPublicTransport)
+      return false;
+
+    // If we have eligibility rules, check if it triggers a policy warning
+    if (_eligibility != null && _eligibility!['error'] == null) {
+      return _getPolicyWarning() != null;
+    }
+
+    // Default Fallback Policy if eligibility is not loaded yet/error:
+    // Only "Bike / Own Bike" or "Walk" is allowed/eligible by default.
+    if (modeClean == 'bike' && subClean == 'own bike') return false;
+    return true; // Any other mode/subtype requires a reason
   }
 
   String? _getPolicyWarning() {
@@ -1348,6 +1395,16 @@ class _TripExpenseFormDetailedScreenState
         : '';
     _odoStartImg = details['odoStartImg'];
     _odoEndImg = details['odoEndImg'];
+    _approvalDocImg = details['approvalDocImg'];
+    _appliedDaController.text = (details['daily_allowance'] ?? '').toString();
+    _daJustificationController.text = (details['da_justification'] ?? '')
+        .toString();
+    final daBillsRaw = details['da_bills'];
+    if (daBillsRaw is List) {
+      _daBills = List<String>.from(daBillsRaw.map((e) => e.toString()));
+    } else {
+      _daBills = [];
+    }
     _odoStartLat = double.tryParse(details['odoStartLat']?.toString() ?? '');
     _odoStartLong = double.tryParse(details['odoStartLong']?.toString() ?? '');
     _odoEndLat = double.tryParse(details['odoEndLat']?.toString() ?? '');
@@ -1514,7 +1571,15 @@ class _TripExpenseFormDetailedScreenState
       _incidentalBill = details['incidentalBill'];
 
       // Load multi-incidentals if present
-      if (details['incidentals'] is List) {
+      if (details['localIncidentals'] is List) {
+        _incidentals = List<Map<String, dynamic>>.from(
+          details['localIncidentals'],
+        );
+      } else if (details['travelIncidentals'] is List) {
+        _incidentals = List<Map<String, dynamic>>.from(
+          details['travelIncidentals'],
+        );
+      } else if (details['incidentals'] is List) {
         _incidentals = List<Map<String, dynamic>>.from(details['incidentals']);
       } else if (_incidentalCategory != null &&
           _incidentalAmountController.text.isNotEmpty) {
@@ -1528,16 +1593,10 @@ class _TripExpenseFormDetailedScreenState
         ];
       }
 
-      // Outstation Travel Incidentals (Parity with Web)
-      if (details['travelIncidentals'] is List) {
-        _incidentals = List<Map<String, dynamic>>.from(
-          details['travelIncidentals'],
-        );
-      }
-
       // If incidentals are included in the main amount, subtract them for the fare field display
-      if (_incidentals.isNotEmpty &&
-          _travelSubType?.toUpperCase() != 'OWN CAR' &&
+      double dailyAllowance =
+          double.tryParse(details['daily_allowance']?.toString() ?? '0') ?? 0.0;
+      if (_travelSubType?.toUpperCase() != 'OWN CAR' &&
           _travelSubType?.toUpperCase() != 'OWN BIKE') {
         double totalAmount =
             double.tryParse(exp['amount']?.toString() ?? '0') ?? 0.0;
@@ -1546,7 +1605,7 @@ class _TripExpenseFormDetailedScreenState
           incidentalSum +=
               double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
         }
-        double baseAmount = totalAmount - incidentalSum;
+        double baseAmount = totalAmount - incidentalSum - dailyAllowance;
         _amountController.text = baseAmount > 0
             ? baseAmount.toStringAsFixed(2)
             : '0.00';
@@ -1670,6 +1729,8 @@ class _TripExpenseFormDetailedScreenState
       case 'Travel':
       case 'Outstation Travel':
         return 'Others';
+      case 'Daily Allowance':
+        return 'Others'; // Web stores DA under 'Others' with nature='Daily Allowance' in description
       case 'Food':
         return 'Food';
       case 'Accommodation':
@@ -1758,6 +1819,20 @@ class _TripExpenseFormDetailedScreenState
         );
         return;
       }
+      // --- origin == destination check ---
+      if (_originController.text.trim().toLowerCase() ==
+          _destController.text.trim().toLowerCase()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Origin and Destination cannot be the same.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      // --- Mode-specific mandatory fields (web parity) ---
+      final _alnum = RegExp(r'^[A-Za-z0-9]+$');
       if (_travelMode == 'Flight') {
         if (_travelNoController.text.trim().isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1771,7 +1846,78 @@ class _TripExpenseFormDetailedScreenState
         if (_travelClass == null || _travelClass!.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Travel Class is required'),
+              content: Text('Travel Class is required for Flight.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        // Airline / provider mandatory for Flight
+        if (_carrierController.text.trim().isEmpty &&
+            _providerController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Airline Name is mandatory for Flight.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        // PNR mandatory + alphanumeric + length 5-15
+        if (_pnrController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR is mandatory for Flight.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final pnr = _pnrController.text.trim();
+        if (!_alnum.hasMatch(pnr)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR may only contain letters and numbers.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (pnr.length < 5 || pnr.length > 15) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR must be 5–15 characters long.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        // Ticket number mandatory + alphanumeric + max 25
+        if (_ticketNoController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ticket Number is mandatory for Flight.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final ticketNo = _ticketNoController.text.trim();
+        if (!_alnum.hasMatch(ticketNo)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Ticket Number may only contain letters and numbers.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (ticketNo.length > 25) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ticket Number cannot exceed 25 characters.'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -1781,22 +1927,139 @@ class _TripExpenseFormDetailedScreenState
         if (_travelClass == null || _travelClass!.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Travel Class is required'),
+              content: Text('Travel Class is required for Train.'),
               backgroundColor: Colors.orange,
             ),
           );
           return;
         }
-      } else if (_travelMode == 'Bus') {
+        // Train name (carrier) mandatory
+        if (_carrierController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Train Name is mandatory for Train.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        // PNR mandatory + alphanumeric + length 5-15
+        if (_pnrController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR is mandatory for Train.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final pnr = _pnrController.text.trim();
+        if (!_alnum.hasMatch(pnr)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR may only contain letters and numbers.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (pnr.length < 5 || pnr.length > 15) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('PNR must be 5–15 characters long.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        // Ticket number mandatory + alphanumeric + max 25
+        if (_ticketNoController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ticket Number is mandatory for Train.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final ticketNo = _ticketNoController.text.trim();
+        if (!_alnum.hasMatch(ticketNo)) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Ticket Number may only contain letters and numbers.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (ticketNo.length > 25) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ticket Number cannot exceed 25 characters.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else if (_travelMode == 'Intercity Bus' || _travelMode == 'Bus') {
         if (_travelClass == null || _travelClass!.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Bus Type/Class is required'),
+              content: Text('Bus Type/Class is required.'),
               backgroundColor: Colors.orange,
             ),
           );
           return;
         }
+        // Bus Operator (carrier) mandatory
+        if (_carrierController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Bus Operator is mandatory.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      } else if (_travelMode == 'Intercity Cab') {
+        // Provider mandatory for Intercity Cab
+        if (_providerController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Provider / Vendor (Ola/Uber etc.) is mandatory for Intercity Cab.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+
+      // --- 5-minute time increment check for departure/arrival (web parity) ---
+      if (_startTime.minute % 5 != 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Departure time must be in 5-minute increments (e.g. ${_startTime.hour}:${(_startTime.minute ~/ 5 * 5).toString().padLeft(2, '0')}).',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_endTime.minute % 5 != 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Arrival time must be in 5-minute increments (e.g. ${_endTime.hour}:${(_endTime.minute ~/ 5 * 5).toString().padLeft(2, '0')}).',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
       }
 
       if (_bookedBy != 'Company Booked') {
@@ -2250,14 +2513,47 @@ class _TripExpenseFormDetailedScreenState
         }
       }
     } else if (widget.category == 'Local Travel') {
-      final modeUpper = _travelMode?.toUpperCase() ?? '';
-      final subTypeUpper = _travelSubType?.toUpperCase() ?? '';
-      final isNonDefault =
-          !_isPublicTransport &&
-          (modeUpper.isNotEmpty &&
-              (modeUpper != 'BIKE' || subTypeUpper != 'OWN BIKE'));
+      // --- Origin == Destination check (web parity) ---
+      if (_originController.text.trim().isNotEmpty &&
+          _destController.text.trim().isNotEmpty &&
+          _originController.text.trim().toLowerCase() ==
+              _destController.text.trim().toLowerCase()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('From and To locations cannot be the same.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
 
-      if (isNonDefault && _reasonController.text.trim().isEmpty) {
+      // --- 5-minute time increment check for start/end times (web parity) ---
+      if (_startTime.minute % 5 != 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Start time must be in 5-minute increments (e.g. ${_startTime.hour}:${(_startTime.minute ~/ 5 * 5).toString().padLeft(2, '0')}).',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_endTime.minute % 5 != 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'End time must be in 5-minute increments (e.g. ${_endTime.hour}:${(_endTime.minute ~/ 5 * 5).toString().padLeft(2, '0')}).',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final isNonDefault = _isTravelModeNonEligible();
+
+      if (_isTravelo && isNonDefault && _reasonController.text.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -2384,33 +2680,68 @@ class _TripExpenseFormDetailedScreenState
         }
       }
 
-      // --- Cadre max-mileage validation (fetched dynamically from admin eligibility rules) ---
-      final double _maxMileageKm =
-          double.tryParse(
-            (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
-          ) ??
-          0.0;
-      if (_maxMileageKm > 0.0) {
-        final String _startOdoVal = _odoStartController.text.trim();
-        final String _endOdoVal = _odoEndController.text.trim();
-        if (_startOdoVal.isNotEmpty && _endOdoVal.isNotEmpty) {
-          final double? _parsedStart = double.tryParse(_startOdoVal);
-          final double? _parsedEnd = double.tryParse(_endOdoVal);
-          if (_parsedStart != null && _parsedEnd != null) {
-            final double _travelledKm = _parsedEnd - _parsedStart;
-            if (_travelledKm > _maxMileageKm) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'Odometer distance (${_travelledKm.toStringAsFixed(2)} km) exceeds '
-                    'your cadre entitlement limit of ${_maxMileageKm.toStringAsFixed(2)} km. '
-                    'Please correct the end odometer reading.',
+      // --- Vehicle-type-specific mileage validation (web parity: max_mileage_bike_km vs max_mileage_car_km) ---
+      {
+        final subTypeLowerCheck = _travelSubType?.toLowerCase() ?? '';
+        // Determine the correct mileage limit based on mode/subtype
+        double _maxMileageKm;
+        if (subTypeLowerCheck == 'own bike') {
+          // Prefer bike-specific limit, fall back to generic
+          final bikeLimit =
+              double.tryParse(
+                (_eligibility?['max_mileage_bike_km'] ?? 0.0).toString(),
+              ) ??
+              0.0;
+          final genericLimit =
+              double.tryParse(
+                (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+              ) ??
+              0.0;
+          _maxMileageKm = bikeLimit > 0 ? bikeLimit : genericLimit;
+        } else if (subTypeLowerCheck == 'own car') {
+          // Prefer car-specific limit, fall back to generic
+          final carLimit =
+              double.tryParse(
+                (_eligibility?['max_mileage_car_km'] ?? 0.0).toString(),
+              ) ??
+              0.0;
+          final genericLimit =
+              double.tryParse(
+                (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+              ) ??
+              0.0;
+          _maxMileageKm = carLimit > 0 ? carLimit : genericLimit;
+        } else {
+          _maxMileageKm =
+              double.tryParse(
+                (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+              ) ??
+              0.0;
+        }
+
+        if (_maxMileageKm > 0.0) {
+          final String _startOdoVal = _odoStartController.text.trim();
+          final String _endOdoVal = _odoEndController.text.trim();
+          if (_startOdoVal.isNotEmpty && _endOdoVal.isNotEmpty) {
+            final double? _parsedStart = double.tryParse(_startOdoVal);
+            final double? _parsedEnd = double.tryParse(_endOdoVal);
+            if (_parsedStart != null && _parsedEnd != null) {
+              final double _travelledKm = _parsedEnd - _parsedStart;
+              if (_travelledKm > _maxMileageKm &&
+                  (_approvalDocImg == null || _approvalDocImg!.isEmpty)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Odometer distance (${_travelledKm.toStringAsFixed(2)} km) exceeds '
+                      'your cadre entitlement limit of ${_maxMileageKm.toStringAsFixed(2)} km. '
+                      'Please upload a manager approval document to proceed.',
+                    ),
+                    backgroundColor: Colors.red[700],
+                    duration: const Duration(seconds: 4),
                   ),
-                  backgroundColor: Colors.red[700],
-                  duration: const Duration(seconds: 4),
-                ),
-              );
-              return;
+                );
+                return;
+              }
             }
           }
         }
@@ -2507,12 +2838,37 @@ class _TripExpenseFormDetailedScreenState
     // --- INCIDENTAL OTHERS & PORTER CHARGES VALIDATION ---
     for (var inc in _incidentals) {
       final category = (inc['category'] ?? '').toString().toLowerCase();
+      final amtStr = (inc['amount'] ?? '').toString().trim();
+      final amt = double.tryParse(amtStr) ?? 0.0;
+      if (amt <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Incidental item cost must be greater than 0."),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
       if (category == 'others' || category == 'other') {
         final otherDesc = (inc['otherDescription'] ?? '').toString().trim();
         if (otherDesc.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text("Please specify the incidental type for 'Others'."),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        final descText = (inc['description'] ?? inc['notes'] ?? '')
+            .toString()
+            .trim();
+        if (descText.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Description is required for 'Others' expense type.",
+              ),
               backgroundColor: Colors.orange,
             ),
           );
@@ -2541,6 +2897,103 @@ class _TripExpenseFormDetailedScreenState
           SnackBar(
             content: Text(
               'Laundry charges are only allowed for Guest House / Bavya Guest House stays of at least $threshold nights.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    }
+
+    // --- INCIDENTAL CATEGORY VALIDATION (web parity) ---
+    if (widget.category == 'Incidental' || widget.category == 'Others') {
+      // Incidental type mandatory
+      if (_incidentalType == null || _incidentalType!.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select an Incidental Type.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      // Location mandatory (web parity)
+      if (_cityController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location is mandatory for incidental expenses.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      // Amount must be > 0
+      final double incidentalAmt =
+          double.tryParse(_amountController.text) ?? 0.0;
+      if (incidentalAmt <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Amount must be greater than 0 for incidental expenses.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      // 'Others' type requires reason
+      if (_incidentalType!.toLowerCase() == 'others') {
+        if (_reasonController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Reason is required for 'Others' expense type."),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (_jobReportController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Description/Remarks is required for 'Others' expense type.",
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    // --- DAILY ALLOWANCE VALIDATION (web parity) ---
+    if (widget.category == 'Daily Allowance') {
+      final double daAmt = double.tryParse(_amountController.text) ?? 0.0;
+      if (daAmt <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Daily Allowance amount must be greater than 0.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_jobReportController.text.trim().isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Justification / Basis is mandatory for Daily Allowance claims.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      if (_expenseBills.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Receipt/Bill upload is mandatory for Daily Allowance.',
             ),
             backgroundColor: Colors.orange,
           ),
@@ -2700,10 +3153,69 @@ class _TripExpenseFormDetailedScreenState
       }
     }
 
+    // --- DAILY ALLOWANCE VALIDATION: justification & receipts when appliedDa > 0 ---
+    if (_isTravelo && widget.category == 'Local Travel') {
+      final double appliedDa =
+          double.tryParse(_appliedDaController.text) ?? 0.0;
+      if (appliedDa > 0.0) {
+        if (_daJustificationController.text.trim().isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Justification is required for the claimed Daily Allowance.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+        if (_daBills.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Receipt/Bill upload is mandatory for Daily Allowance.',
+              ),
+              backgroundColor: Colors.orange,
+            ),
+          );
+          return;
+        }
+      }
+    }
+
     // --- ODO VALIDATION: If reading exists, image must exist ---
     if (widget.category == 'Local Travel' && !_isPublicTransport) {
       final startVal = _odoStartController.text.trim();
       final endVal = _odoEndController.text.trim();
+
+      // Check distance range limit
+      if (startVal.isNotEmpty && endVal.isNotEmpty) {
+        final double startOdo = double.tryParse(startVal.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+        final double endOdo = double.tryParse(endVal.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0.0;
+        final double distance = (endOdo - startOdo).clamp(0.0, double.infinity);
+        final String subTypeStr = (_travelSubType ?? '').toLowerCase();
+        final bool isBike = subTypeStr.contains('bike');
+        final bool isCar = subTypeStr.contains('car') || subTypeStr.contains('rental');
+
+        if (isBike && distance > 500) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Travel distance not allowed'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        if (isCar && distance > 1200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Travel distance not allowed'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
 
       if (startVal.isNotEmpty && _odoStartImg == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2728,8 +3240,15 @@ class _TripExpenseFormDetailedScreenState
 
     setState(() => _isProcessing = true);
     try {
-      double amount = double.tryParse(_amountController.text) ?? 0.0;
+      double travelAmount = 0.0;
       double odoTotal = 0.0;
+      double incidentalSum = 0.0;
+      double appliedDa = 0.0;
+
+      for (var inc in _incidentals) {
+        incidentalSum +=
+            double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+      }
 
       if (widget.category == 'Local Travel') {
         final isOwnVehicle =
@@ -2748,11 +3267,28 @@ class _TripExpenseFormDetailedScreenState
             0;
         double dist = (endOdo - startOdo).clamp(0, 99999);
 
-        // Sum up all incidentals to add to the main record's total amount
-        double incidentalSum = 0.0;
-        for (var inc in _incidentals) {
-          incidentalSum +=
-              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
+        final daResult = _calculateDAEligibility(
+          startTime: _startTime,
+          endTime: _endTime,
+          startDate: _startDate,
+          endDate: _endDate,
+          isLocal: true,
+        );
+        final double eligibleDa = _isTravelo ? daResult['eligibleAmount'] : 0.0;
+        appliedDa = _isTravelo
+            ? (double.tryParse(_appliedDaController.text) ?? eligibleDa)
+            : 0.0;
+
+        if (_isTravelo && appliedDa > eligibleDa) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Warning: Applied DA (₹${appliedDa.toStringAsFixed(2)}) exceeds the eligible limit of ₹${eligibleDa.toStringAsFixed(2)} based on travel hours.',
+              ),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
         }
 
         if (isOwnVehicle) {
@@ -2760,28 +3296,25 @@ class _TripExpenseFormDetailedScreenState
               ? (_rate4W ?? double.tryParse(_odoRateController.text) ?? 0.0)
               : (_rate2W ?? double.tryParse(_odoRateController.text) ?? 0.0);
 
-          odoTotal = dist * rate;
-          amount = odoTotal + incidentalSum; // Sum them up for the grid card
+          travelAmount = (dist * rate) + incidentalSum;
         } else {
           // For Ride Hailing/PT etc., _amountController is the base fare/cost
-          amount =
+          travelAmount =
               (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
         }
       } else if (widget.category == 'Travel' ||
           widget.category == 'Outstation Travel') {
-        double incidentalSum = 0.0;
-        for (var inc in _incidentals) {
-          incidentalSum +=
-              double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
-        }
-        amount =
+        travelAmount =
+            (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
+      } else {
+        travelAmount =
             (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
       }
 
       final payload = {
         'trip': widget.tripId,
         'category': _mapCategory(widget.category),
-        'amount': amount,
+        'amount': travelAmount,
         'date': DateFormat('yyyy-MM-dd').format(_startDate),
         'description': jsonEncode(_buildDescription()),
         'receipt_image': jsonEncode(_expenseBills),
@@ -2818,9 +3351,22 @@ class _TripExpenseFormDetailedScreenState
         final batchId = widget.expenseData['batch_id'].toString();
         final rowIndex = widget.expenseData['row_index'];
 
+        final daResult = _calculateDAEligibility(
+          startTime: _startTime,
+          endTime: _endTime,
+          startDate: _startDate,
+          endDate: _endDate,
+          isLocal: true,
+        );
+        final double appliedDa =
+            double.tryParse(_appliedDaController.text) ??
+            daResult['eligibleAmount'];
+
         final rowUpdate = {
           ..._buildDescription(),
-          'amount': amount,
+          'amount':
+              travelAmount +
+              (widget.category == 'Local Travel' ? appliedDa : 0.0),
           'date': DateFormat('yyyy-MM-dd').format(_startDate),
           'remarks': _jobReportController.text,
           '_status': 'Validated',
@@ -2850,6 +3396,74 @@ class _TripExpenseFormDetailedScreenState
         );
       } else {
         await _tripService.addExpense(payload);
+      }
+
+      // Parity: Handle separate Daily Allowance record for standard Local Travel expenses
+      if (widget.category == 'Local Travel') {
+        final String formattedDate = DateFormat(
+          'yyyy-MM-dd',
+        ).format(_startDate);
+        final daResult = _calculateDAEligibility(
+          startTime: _startTime,
+          endTime: _endTime,
+          startDate: _startDate,
+          endDate: _endDate,
+          isLocal: true,
+        );
+        final double appliedDa = _isTravelo
+            ? (double.tryParse(_appliedDaController.text) ??
+                daResult['eligibleAmount'])
+            : 0.0;
+
+        Map<String, dynamic>? existingDaExp;
+        for (var exp in _existingExpenses) {
+          final cat = exp['category']?.toString().toLowerCase();
+          final expDate = exp['date']?.toString();
+          if ((cat == 'others' || cat == 'daily allowance') &&
+              expDate == formattedDate) {
+            dynamic descData;
+            if (exp['description'] is String) {
+              try {
+                descData = jsonDecode(exp['description']);
+              } catch (_) {}
+            } else if (exp['description'] is Map) {
+              descData = exp['description'];
+            }
+            if (descData != null && descData['nature'] == 'Daily Allowance') {
+              existingDaExp = exp;
+              break;
+            }
+          }
+        }
+
+        if (appliedDa > 0) {
+          final Map<String, dynamic> daPayload = {
+            'trip': widget.tripId,
+            'category': 'Others',
+            'amount': appliedDa,
+            'date': formattedDate,
+            'description': jsonEncode({
+              'nature': 'Daily Allowance',
+              'justification': _daJustificationController.text,
+              'remarks': _jobReportController.text,
+              'date': formattedDate,
+            }),
+            'receipt_image': jsonEncode(_daBills),
+          };
+
+          if (existingDaExp != null) {
+            await _tripService.updateExpense(
+              existingDaExp['id'].toString(),
+              daPayload,
+            );
+          } else {
+            await _tripService.addExpense(daPayload);
+          }
+        } else {
+          if (existingDaExp != null) {
+            await _tripService.deleteExpense(existingDaExp['id'].toString());
+          }
+        }
       }
 
       Navigator.pop(context, true);
@@ -2951,6 +3565,7 @@ class _TripExpenseFormDetailedScreenState
         'quotaType': _quotaType,
         'seatNo': _seatNoController.text,
         'travelIncidentals': _incidentals,
+        'incidentals': _incidentals,
 
         // Scheduled Timings (Parity with Web)
         'scheduledDepDate': DateFormat(
@@ -2965,6 +3580,42 @@ class _TripExpenseFormDetailedScreenState
         'auditTrail': _auditTrail,
       });
     } else if (widget.category == 'Local Travel') {
+      final isOwnVehicle =
+          _travelSubType?.toUpperCase() == 'OWN CAR' ||
+          _travelSubType?.toUpperCase() == 'OWN BIKE';
+      final double odoStartVal =
+          double.tryParse(
+            _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0.0;
+      final double odoEndVal =
+          double.tryParse(
+            _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0.0;
+      final double dist = (odoEndVal - odoStartVal).clamp(0.0, 99999.0);
+      final double rateVal =
+          double.tryParse(
+            _odoRateController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+          ) ??
+          0.0;
+      final double odoTotal = dist * rateVal;
+      final double fareOrFuel = isOwnVehicle
+          ? odoTotal
+          : (double.tryParse(_amountController.text) ?? 0.0);
+
+      final daResult = _calculateDAEligibility(
+        startTime: _startTime,
+        endTime: _endTime,
+        startDate: _startDate,
+        endDate: _endDate,
+        isLocal: true,
+      );
+      final double eligibleDa = _isTravelo ? daResult['eligibleAmount'] : 0.0;
+      final double appliedDa = _isTravelo
+          ? (double.tryParse(_appliedDaController.text) ?? eligibleDa)
+          : 0.0;
+
       desc.addAll({
         'origin': _originController.text,
         'destination': _destController.text,
@@ -2975,7 +3626,7 @@ class _TripExpenseFormDetailedScreenState
         'mode': _travelMode,
         'subType': _travelSubType,
         'isPublicTransport': _isPublicTransport,
-        'otherReason': _reasonController.text,
+        'otherReason': _isTravelo ? _reasonController.text : '',
         'remainingRoute': _remainingRouteController.text,
         'odoStart': _isPublicTransport ? '' : _odoStartController.text,
         'odoEnd': _isPublicTransport ? '' : _odoEndController.text,
@@ -2991,15 +3642,32 @@ class _TripExpenseFormDetailedScreenState
           'boardingTime': _startTime.format(context),
           'actualTime': _endTime.format(context),
         },
+        'daily_allowance': appliedDa,
+        'eligible_da': eligibleDa,
+        'da_hours': _isTravelo ? daResult['hours'] : 0.0,
+        'da_message': _isTravelo ? daResult['message'] : '',
+        'fare_or_fuel': fareOrFuel,
+        'approvalDocImg': _approvalDocImg,
+        'da_justification': _isTravelo ? _daJustificationController.text : '',
+        'da_bills': _isTravelo ? _daBills : [],
       });
 
       if (!_isTravelo) {
         desc['bookedBy'] = _bookedBy;
       } else {
         desc['vehicleNo'] = _vehicleNoController.text;
-        desc['incidentals'] = _incidentals;
         desc['nightTravel'] = _nightTravel;
       }
+      desc['localIncidentals'] = _incidentals;
+      desc['incidentals'] = _incidentals;
+    } else if (widget.category == 'Daily Allowance') {
+      // Store nature flag so web can identify DA rows from 'Others' category (web parity)
+      desc.addAll({
+        'nature': 'Daily Allowance',
+        'justification': _jobReportController.text,
+        'amount': _amountController.text,
+        'date': DateFormat('yyyy-MM-dd').format(_startDate),
+      });
     }
 
     desc['jobReport'] = _jobReportController.text;
@@ -3065,6 +3733,8 @@ class _TripExpenseFormDetailedScreenState
               if (widget.category == 'Incidental' ||
                   widget.category == 'Others')
                 _buildIncidentalForm(),
+              if (widget.category == 'Daily Allowance')
+                _buildDailyAllowanceForm(),
 
               if (!(widget.category == 'Local Travel' &&
                       _isTravelo &&
@@ -3904,6 +4574,8 @@ class _TripExpenseFormDetailedScreenState
                     ),
                   ],
                   const SizedBox(height: 8),
+                  _buildIncidentalNotesField('DESCRIPTION', index),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
@@ -3992,9 +4664,22 @@ class _TripExpenseFormDetailedScreenState
       incidentalSum += double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
     }
 
+    final daResult = _calculateDAEligibility(
+      startTime: _startTime,
+      endTime: _endTime,
+      startDate: _startDate,
+      endDate: _endDate,
+      isLocal: true,
+    );
+    final double displayedDa = daResult['eligibleAmount'];
+    final double daHours = daResult['hours'];
+    final String daMessage = daResult['message'];
+
     final totalAmount = isOwnVehicle
-        ? (odoTotal + incidentalSum)
-        : (double.tryParse(_amountController.text) ?? 0.0) + incidentalSum;
+        ? (odoTotal + incidentalSum + displayedDa)
+        : (double.tryParse(_amountController.text) ?? 0.0) +
+              incidentalSum +
+              displayedDa;
 
     return Column(
       children: [
@@ -4098,18 +4783,14 @@ class _TripExpenseFormDetailedScreenState
                 ),
               ],
             ],
-            if (!_isPublicTransport &&
-                (_travelMode?.toUpperCase() != 'BIKE' ||
-                    _travelSubType?.toUpperCase() != 'OWN BIKE') &&
-                _travelMode != null &&
-                _travelMode!.isNotEmpty) ...[
+            if (_isTravelo && _isTravelModeNonEligible()) ...[
               const SizedBox(height: 20),
               _buildTextFieldMini(
-                'REASON FOR NON-DEFAULT TRAVEL MODE/SUBTYPE *',
+                'REASON FOR NON-DEFAULT *',
                 _reasonController,
                 maxLines: 2,
                 icon: Icons.edit_note_rounded,
-                onChanged: (v) => setState(() {}),
+                hint: 'Provide reason for non-default travel mode...',
               ),
             ],
             if (_getPolicyWarning() != null) ...[
@@ -4147,42 +4828,43 @@ class _TripExpenseFormDetailedScreenState
         ),
         const SizedBox(height: 20),
 
-        // 2. LOCATION
+        // 2. JOURNEY LOGS
         _buildWebCard(
-          title: 'LOCATION',
+          title: 'JOURNEY LOGS',
           icon: Icons.map_rounded,
-          color: const Color(0xFF0EA5E9),
-          children: [
-            _buildTextFieldMini(
-              _travelSubType?.toLowerCase() == 'ride hailing' ||
-                      _travelMode?.toLowerCase() == 'walk'
-                  ? 'FROM LOCATION *'
-                  : 'FROM LOCATION',
-              _originController,
-              icon: Icons.location_on_rounded,
-              enabled: !_fromBulkUpload,
-              onChanged: (v) => setState(() {}),
-            ),
-            const SizedBox(height: 20),
-            _buildTextFieldMini(
-              _travelSubType?.toLowerCase() == 'ride hailing' ||
-                      _travelMode?.toLowerCase() == 'walk'
-                  ? 'TO LOCATION *'
-                  : 'TO LOCATION',
-              _destController,
-              icon: Icons.flag_rounded,
-              enabled: !_fromBulkUpload,
-              onChanged: (v) => setState(() {}),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        // 3. DATE & TIME
-        _buildWebCard(
-          title: 'DATE & TIME',
-          icon: Icons.calendar_today_rounded,
           color: const Color(0xFF8B5CF6),
           children: [
+            Row(
+              children: [
+                Expanded(
+                  child: SearchableDropdown(
+                    label: 'ORIGIN *',
+                    value: _originController.text,
+                    hint: 'Origin',
+                    icon: Icons.location_on_outlined,
+                    enabled: !_fromBulkUpload,
+                    isLocation: true,
+                    initialOptions: _masterLocations,
+                    onChanged: (v) =>
+                        setState(() => _originController.text = v),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SearchableDropdown(
+                    label: 'DESTINATION *',
+                    value: _destController.text,
+                    hint: 'Destination',
+                    icon: Icons.location_on,
+                    enabled: !_fromBulkUpload,
+                    isLocation: true,
+                    initialOptions: _masterLocations,
+                    onChanged: (v) => setState(() => _destController.text = v),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
@@ -4225,9 +4907,7 @@ class _TripExpenseFormDetailedScreenState
           ],
         ),
         const SizedBox(height: 20),
-        // START SECTION — only if own vehicle (ODO is needed)
-        // For hired rides (Ride Bike, Ride Hailing, etc.) show bill upload instead
-        // 4. TRACKING (ODO) - Only for own/company vehicles
+        // 3. TRACKING (ODO) - Only for own/company vehicles
         if (showOdoCard) ...[
           _buildWebCard(
             title: 'TRACKING (ODO)',
@@ -4300,9 +4980,8 @@ class _TripExpenseFormDetailedScreenState
           ),
           const SizedBox(height: 20),
         ],
-        const SizedBox(height: 20),
 
-        // 5. EXPENSE & BILLING
+        // 4. EXPENSE & BILLING
         _buildWebCard(
           title: 'EXPENSE & BILLING',
           icon: Icons.currency_rupee_rounded,
@@ -4328,6 +5007,204 @@ class _TripExpenseFormDetailedScreenState
                   ),
                 ],
               ),
+              const Divider(height: 24),
+            ],
+
+            // Daily Allowance details
+            if (_isTravelo) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'APPLIED DA (₹) *',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF4F46E5),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              SizedBox(
+                                height: 38,
+                                child: TextField(
+                                  controller: _appliedDaController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF1E293B),
+                                  ),
+                                  decoration: InputDecoration(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFFCBD5E1),
+                                      ),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF4F46E5),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    prefixText: '₹ ',
+                                    prefixStyle: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          flex: 6,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'DA ELIGIBILITY DETAILS',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Eligible DA:',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                  Text(
+                                    '₹${displayedDa.toStringAsFixed(2)}',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Trip Hours:',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${daHours.toStringAsFixed(1)} hrs',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (daMessage.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFDCFCE7)),
+                        ),
+                        child: Text(
+                          daMessage,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF166534),
+                          ),
+                        ),
+                      ),
+                    ],
+                    Builder(
+                      builder: (context) {
+                        final double appliedDa =
+                            double.tryParse(_appliedDaController.text) ?? 0.0;
+                        if (appliedDa <= 0) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Divider(height: 24),
+                            _buildTextFieldMini(
+                              'DA Justification / Basis *',
+                              _daJustificationController,
+                              hint:
+                                  'Provide justification/basis for claiming Daily Allowance',
+                              maxLines: 2,
+                              icon: Icons.article_rounded,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildDaAttachmentSection(),
+                          ],
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 24),
+            ],
+
+            if (_isMileageExceeded()) ...[
+              _buildApprovalDocUploadSection(),
               const Divider(height: 24),
             ],
 
@@ -4549,7 +5426,17 @@ class _TripExpenseFormDetailedScreenState
     for (var inc in _incidentals) {
       incidentalSum += double.tryParse(inc['amount']?.toString() ?? '0') ?? 0.0;
     }
-    double dayTotal = odoTotal + incidentalSum;
+
+    final daResult = _calculateDAEligibility(
+      startTime: _startTime,
+      endTime: _endTime,
+      startDate: _startDate,
+      endDate: _endDate,
+      isLocal: true,
+    );
+    final double displayedDa = daResult['eligibleAmount'];
+
+    double dayTotal = odoTotal + incidentalSum + displayedDa;
 
     return Column(
       children: [
@@ -4820,11 +5707,7 @@ class _TripExpenseFormDetailedScreenState
                 ),
               ],
             ),
-            if (!_isPublicTransport &&
-                (_travelMode?.toUpperCase() != 'BIKE' ||
-                    _travelSubType?.toUpperCase() != 'OWN BIKE') &&
-                _travelMode != null &&
-                _travelMode!.isNotEmpty) ...[
+            if (_isTravelModeNonEligible()) ...[
               const SizedBox(height: 20),
               _buildTextFieldMini(
                 'REASON FOR NON-DEFAULT TRAVEL MODE/SUBTYPE *',
@@ -5370,6 +6253,215 @@ class _TripExpenseFormDetailedScreenState
           },
         ),
 
+        // DAILY ALLOWANCE (DA) & MILEAGE APPROVAL
+        _buildWebCard(
+          title: 'DAILY ALLOWANCE & POLICY ENFORCEMENT',
+          icon: Icons.security_rounded,
+          color: const Color(0xFF4F46E5),
+          children: [
+            Builder(
+              builder: (context) {
+                final daResult = _calculateDAEligibility(
+                  startTime: _startTime,
+                  endTime: _endTime,
+                  startDate: _startDate,
+                  endDate: _endDate,
+                  isLocal: true,
+                );
+                final double displayedDa = daResult['eligibleAmount'];
+                final double hours = daResult['hours'];
+                final String daMessage = daResult['message'];
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'APPLIED DA (₹) *',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF4F46E5),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              SizedBox(
+                                height: 38,
+                                child: TextField(
+                                  controller: _appliedDaController,
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                        decimal: true,
+                                      ),
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: const Color(0xFF1E293B),
+                                  ),
+                                  decoration: InputDecoration(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFFCBD5E1),
+                                      ),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      borderSide: const BorderSide(
+                                        color: Color(0xFF4F46E5),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    prefixText: '₹ ',
+                                    prefixStyle: GoogleFonts.plusJakartaSans(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          flex: 6,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'DA ELIGIBILITY DETAILS',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF64748B),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Eligible DA:',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                  Text(
+                                    '₹${displayedDa.toStringAsFixed(2)}',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Trip Hours:',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${hours.toStringAsFixed(1)} hrs',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (daMessage.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0FDF4),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFDCFCE7)),
+                        ),
+                        child: Text(
+                          daMessage,
+                          style: GoogleFonts.plusJakartaSans(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF166534),
+                          ),
+                        ),
+                      ),
+                    ],
+                    Builder(
+                      builder: (context) {
+                        final double appliedDa =
+                            double.tryParse(_appliedDaController.text) ?? 0.0;
+                        if (appliedDa <= 0) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Divider(height: 24),
+                            _buildTextFieldMini(
+                              'DA Justification / Basis *',
+                              _daJustificationController,
+                              hint:
+                                  'Provide justification/basis for claiming Daily Allowance',
+                              maxLines: 2,
+                              icon: Icons.article_rounded,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildDaAttachmentSection(),
+                          ],
+                        );
+                      },
+                    ),
+                    if (_isMileageExceeded()) ...[
+                      const Divider(height: 24),
+                      _buildApprovalDocUploadSection(),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 24),
+
         // INCIDENTAL SECTION
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -5573,6 +6665,8 @@ class _TripExpenseFormDetailedScreenState
                         ),
                       ],
                       const SizedBox(height: 8),
+                      _buildIncidentalNotesField('DESCRIPTION', index),
+                      const SizedBox(height: 8),
                       Row(
                         children: [
                           Expanded(
@@ -5675,6 +6769,54 @@ class _TripExpenseFormDetailedScreenState
           },
           decoration: InputDecoration(
             hintText: 'Specify incidental type (mandatory)',
+            filled: true,
+            fillColor: const Color(0xFFF8FAFC),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIncidentalNotesField(String label, int index) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF64748B),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          initialValue:
+              _incidentals[index]['description']?.toString() ??
+              _incidentals[index]['notes']?.toString() ??
+              '',
+          keyboardType: TextInputType.text,
+          maxLines: 2,
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+          onChanged: (v) {
+            setState(() {
+              _incidentals[index]['description'] = v;
+              _incidentals[index]['notes'] = v;
+            });
+          },
+          decoration: InputDecoration(
+            hintText: 'Enter description/remarks',
             filled: true,
             fillColor: const Color(0xFFF8FAFC),
             border: OutlineInputBorder(
@@ -5877,7 +7019,33 @@ class _TripExpenseFormDetailedScreenState
                 child: Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton.icon(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          setState(() {
+                            _incidentals[index]['bill'] = null;
+                          });
+                          Navigator.pop(context);
+                        },
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.redAccent),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: Text(
+                          'REMOVE',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
                         onPressed: () async {
                           Navigator.pop(context);
                           final result = await Navigator.push(
@@ -5897,25 +7065,24 @@ class _TripExpenseFormDetailedScreenState
                             );
                           }
                         },
-                        icon: const Icon(Icons.camera_alt_rounded, size: 16),
-                        label: Text(
-                          'RECAPTURE',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 11,
-                          ),
-                        ),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.redAccent,
-                          side: const BorderSide(color: Colors.redAccent),
+                          side: const BorderSide(color: Color(0xFF4F46E5)),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
+                        child: Text(
+                          'RECAPTURE',
+                          style: GoogleFonts.plusJakartaSans(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 11,
+                            color: const Color(0xFF4F46E5),
+                          ),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () => Navigator.pop(context),
@@ -5930,7 +7097,7 @@ class _TripExpenseFormDetailedScreenState
                           'CLOSE',
                           style: GoogleFonts.plusJakartaSans(
                             fontWeight: FontWeight.w800,
-                            fontSize: 12,
+                            fontSize: 11,
                             color: Colors.white,
                           ),
                         ),
@@ -7254,6 +8421,82 @@ class _TripExpenseFormDetailedScreenState
     );
   }
 
+  Widget _buildDailyAllowanceForm() {
+    return _buildWebCard(
+      title: 'DAILY ALLOWANCE',
+      icon: Icons.currency_rupee_rounded,
+      color: const Color(0xFFC62828),
+      children: [
+        // Date picker
+        _buildDatePickerMini(
+          'DATE',
+          _startDate,
+          (d) => setState(() => _startDate = d),
+        ),
+        const SizedBox(height: 20),
+        // Eligibility info banner (if eligibility data is available)
+        if (_eligibility != null && _eligibility!['error'] == null) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3E0),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFF57C00), width: 1),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline_rounded,
+                  color: Color(0xFFF57C00),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'DA Limit: ₹${_eligibility!['daily_allowance'] ?? _eligibility!['monthly_tour_daily_allowance'] ?? 'N/A'}  |  '
+                    '50% for 12–18 hrs, 100% for >18 hrs',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 12,
+                      color: const Color(0xFFF57C00),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        // Amount field
+        _buildTextFieldMini(
+          'AMOUNT (₹) *',
+          _amountController,
+          prefix: '₹',
+          keyboardType: TextInputType.number,
+          icon: Icons.payments_outlined,
+        ),
+        const SizedBox(height: 20),
+        // Justification / Basis (mandatory per web parity)
+        _buildTextFieldMini(
+          'JUSTIFICATION / BASIS *',
+          _jobReportController,
+          maxLines: 3,
+          icon: Icons.edit_note_rounded,
+          hint: 'Enter justification for claiming Daily Allowance...',
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '* Bill upload is mandatory for Daily Allowance',
+          style: GoogleFonts.plusJakartaSans(
+            fontSize: 11,
+            color: Colors.red[700],
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ],
+    );
+  }
+
   // UI HELPERS
   Widget _buildWebCard({
     required String title,
@@ -7309,13 +8552,15 @@ class _TripExpenseFormDetailedScreenState
                   child: Icon(icon, color: color, size: 16),
                 ),
                 const SizedBox(width: 14),
-                Text(
-                  title.toUpperCase(),
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                    color: const Color(0xFF134E4A),
-                    letterSpacing: 1,
+                Expanded(
+                  child: Text(
+                    title.toUpperCase(),
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF134E4A),
+                      letterSpacing: 1,
+                    ),
                   ),
                 ),
               ],
@@ -7578,6 +8823,324 @@ class _TripExpenseFormDetailedScreenState
           ),
         ),
       ],
+    );
+  }
+
+  Map<String, dynamic> _calculateDAEligibility({
+    required TimeOfDay startTime,
+    required TimeOfDay endTime,
+    required DateTime startDate,
+    required DateTime endDate,
+    required bool isLocal,
+  }) {
+    final startDt = DateTime(
+      startDate.year,
+      startDate.month,
+      startDate.day,
+      startTime.hour,
+      startTime.minute,
+    );
+    var endDt = DateTime(
+      endDate.year,
+      endDate.month,
+      endDate.day,
+      endTime.hour,
+      endTime.minute,
+    );
+
+    var diffMs = endDt.difference(startDt).inMilliseconds;
+    if (diffMs < 0) {
+      if (startDate.year == endDate.year &&
+          startDate.month == endDate.month &&
+          startDate.day == endDate.day) {
+        // Correct to next day if times cross midnight on same date selection
+        endDt = endDt.add(const Duration(days: 1));
+        diffMs = endDt.difference(startDt).inMilliseconds;
+      } else {
+        return {
+          'hours': 0.0,
+          'eligiblePct': 0,
+          'eligibleAmount': 0.0,
+          'message': "no DA is allowed for you based on hours",
+        };
+      }
+    }
+
+    final double hours = diffMs / (1000 * 60 * 60);
+    final String limitKey = isLocal
+        ? 'monthly_tour_daily_allowance'
+        : 'daily_allowance';
+    final double limit =
+        double.tryParse((_eligibility?[limitKey] ?? 0.0).toString()) ?? 0.0;
+
+    int eligiblePct = 0;
+    String message = "";
+    if (hours < 12) {
+      eligiblePct = 0;
+      message = "no DA is allowed for you based on hours";
+    } else if (hours >= 12 && hours <= 18) {
+      eligiblePct = 50;
+      message = "50% based on hours";
+    } else {
+      eligiblePct = 100;
+      message = "100% based on hours";
+    }
+
+    final double eligibleAmount = (limit * eligiblePct) / 100.0;
+    return {
+      'hours': hours,
+      'eligiblePct': eligiblePct,
+      'eligibleAmount': eligibleAmount,
+      'message': message,
+    };
+  }
+
+  double _getMaxMileageKm() {
+    final subTypeLowerCheck = _travelSubType?.toLowerCase() ?? '';
+    if (subTypeLowerCheck == 'own bike') {
+      final bikeLimit =
+          double.tryParse(
+            (_eligibility?['max_mileage_bike_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+      final genericLimit =
+          double.tryParse(
+            (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+      return bikeLimit > 0 ? bikeLimit : genericLimit;
+    } else if (subTypeLowerCheck == 'own car') {
+      final carLimit =
+          double.tryParse(
+            (_eligibility?['max_mileage_car_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+      final genericLimit =
+          double.tryParse(
+            (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+      return carLimit > 0 ? carLimit : genericLimit;
+    } else {
+      return double.tryParse(
+            (_eligibility?['max_mileage_km'] ?? 0.0).toString(),
+          ) ??
+          0.0;
+    }
+  }
+
+  bool _isMileageExceeded() {
+    if (widget.category != 'Local Travel') return false;
+    final start =
+        double.tryParse(
+          _odoStartController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ) ??
+        0.0;
+    final end =
+        double.tryParse(
+          _odoEndController.text.replaceAll(RegExp(r'[^0-9.]'), ''),
+        ) ??
+        0.0;
+    final dist = (end - start).clamp(0.0, 99999.0);
+    final limit = _getMaxMileageKm();
+    return limit > 0.0 && dist > limit;
+  }
+
+  Widget _buildApprovalDocUploadSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFCA5A5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.warning_amber_rounded,
+                color: Color(0xFFDC2626),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'APPROVAL DOCUMENT REQUIRED *',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFFDC2626),
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your mileage exceeds the cadre limit. Please upload the written approval from your reporting manager.',
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 11,
+              color: const Color(0xFF7F1D1D),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    showModalBottomSheet(
+                      context: context,
+                      backgroundColor: Colors.transparent,
+                      builder: (context) => Container(
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(32),
+                          ),
+                        ),
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 4,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE2E8F0),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Text(
+                              'UPLOAD MANAGER APPROVAL',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF7F1D1D),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _pickerOption(
+                                    icon: Icons.camera_alt_rounded,
+                                    label: 'Camera',
+                                    color: const Color(0xFFDC2626),
+                                    onTap: () async {
+                                      Navigator.pop(context);
+                                      final XFile? image = await picker
+                                          .pickImage(
+                                            source: ImageSource.camera,
+                                            imageQuality: 70,
+                                          );
+                                      if (image != null) {
+                                        final bytes = await image.readAsBytes();
+                                        setState(() {
+                                          _approvalDocImg =
+                                              'data:image/jpeg;base64,${base64Encode(bytes)}';
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: _pickerOption(
+                                    icon: Icons.photo_library_rounded,
+                                    label: 'Gallery',
+                                    color: const Color(0xFFDC2626),
+                                    onTap: () async {
+                                      Navigator.pop(context);
+                                      final XFile? image = await picker
+                                          .pickImage(
+                                            source: ImageSource.gallery,
+                                            imageQuality: 70,
+                                          );
+                                      if (image != null) {
+                                        final bytes = await image.readAsBytes();
+                                        setState(() {
+                                          _approvalDocImg =
+                                              'data:image/jpeg;base64,${base64Encode(bytes)}';
+                                        });
+                                      }
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 24),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 16,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _approvalDocImg != null
+                          ? const Color(0xFFDCFCE7)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _approvalDocImg != null
+                            ? const Color(0xFF10B981)
+                            : const Color(0xFFFCA5A5),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _approvalDocImg != null
+                              ? Icons.check_circle_rounded
+                              : Icons.cloud_upload_outlined,
+                          color: _approvalDocImg != null
+                              ? const Color(0xFF10B981)
+                              : const Color(0xFFDC2626),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            _approvalDocImg != null
+                                ? 'Approval Document Uploaded'
+                                : 'Upload Approval Document',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: _approvalDocImg != null
+                                  ? const Color(0xFF10B981)
+                                  : const Color(0xFFDC2626),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (_approvalDocImg != null) ...[
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => setState(() => _approvalDocImg = null),
+                  icon: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: Colors.red,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -8205,6 +9768,218 @@ class _TripExpenseFormDetailedScreenState
                           padding: const EdgeInsets.all(4),
                           decoration: const BoxDecoration(
                             color: Color(0xFF0D9488),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _addDaAttachment() async {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE2E8F0),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'ADD DAILY ALLOWANCE RECEIPT',
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF4F46E5),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: _pickerOption(
+                    icon: Icons.camera_alt_rounded,
+                    label: 'Camera',
+                    color: const Color(0xFF4F46E5),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const ForensicCamera(),
+                        ),
+                      );
+                      if (result != null &&
+                          result is Map &&
+                          result['path'] != null) {
+                        final bytes = await File(result['path']).readAsBytes();
+                        setState(() {
+                          _daBills.add(
+                            'data:image/jpeg;base64,${base64Encode(bytes)}',
+                          );
+                        });
+                      }
+                    },
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _pickerOption(
+                    icon: Icons.photo_library_rounded,
+                    label: 'Gallery',
+                    color: const Color(0xFF4F46E5),
+                    onTap: () async {
+                      Navigator.pop(context);
+                      final XFile? image = await picker.pickImage(
+                        source: ImageSource.gallery,
+                        imageQuality: 70,
+                      );
+                      if (image != null) {
+                        final bytes = await image.readAsBytes();
+                        setState(() {
+                          _daBills.add(
+                            'data:image/jpeg;base64,${base64Encode(bytes)}',
+                          );
+                        });
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDaAttachmentSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                'DA SUPPORTING RECEIPTS *',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF94A3B8),
+                  letterSpacing: 1,
+                ),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _addDaAttachment,
+              icon: const Icon(
+                Icons.add_a_photo_rounded,
+                size: 16,
+                color: Color(0xFF4F46E5),
+              ),
+              label: Text(
+                'ADD RECEIPT',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF4F46E5),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_daBills.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(24),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F3FF),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFDDD6FE)),
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.receipt_long_rounded,
+                  color: Color(0xFF4F46E5),
+                  size: 32,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'No DA receipts uploaded.',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: const Color(0xFF94A3B8),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          SizedBox(
+            height: 100,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _daBills.length,
+              itemBuilder: (context, index) {
+                return Stack(
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(right: 12),
+                      width: 100,
+                      height: 100,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFDDD6FE)),
+                        image: DecorationImage(
+                          image: MemoryImage(
+                            base64Decode(
+                              _daBills[index].contains(',')
+                                  ? _daBills[index].split(',').last
+                                  : _daBills[index],
+                            ),
+                          ),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4,
+                      right: 16,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _daBills.removeAt(index)),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF4F46E5),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(

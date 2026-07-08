@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../services/trip_service.dart';
 import 'policy_center_screen.dart';
 import 'location_codes_screen.dart';
@@ -22,7 +23,27 @@ class _HelpSupportScreenState extends State<HelpSupportScreen> {
   final TripService _tripService = TripService();
   
   bool _isChatOpen = false;
-  final String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
+  String _appVersion = 'v${ApiConstants.appVersion} (${ApiConstants.buildNumber})';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppVersion();
+  }
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (mounted) {
+        setState(() {
+          _appVersion = 'v${packageInfo.version} (${packageInfo.buildNumber})';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading app version: $e');
+    }
+  }
+
   final List<Map<String, String>> _messages = [
     {'sender': 'bot', 'text': 'Hi there! I am your TGS Virtual Support Assistant. How can I help you today?'}
   ];

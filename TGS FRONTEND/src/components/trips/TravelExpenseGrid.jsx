@@ -32,12 +32,14 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/api';
 import { useToast } from '../../context/ToastContext';
 import { useEligibility } from '../../utils/useEligibility';
+import { useAuth } from '../../context/AuthContext';
 
 
 const NATURE_OPTIONS = [
     { value: 'Travel', label: 'Travel', icon: <Plane size={14} /> },
     { value: 'Local Travel', label: 'Local Travel', icon: <Car size={14} /> },
     { value: 'Food', label: 'Food & Refreshments', icon: <Coffee size={14} /> },
+    { value: 'Daily Allowance', label: 'Daily Allowance', icon: <IndianRupee size={14} /> },
     { value: 'Accommodation', label: 'Accommodation', icon: <Hotel size={14} /> },
     { value: 'Incidental', label: 'Incidental Expenses', icon: <Receipt size={14} /> },
     { value: 'Review', label: 'Final Review', icon: <CheckCircle2 size={14} /> }
@@ -136,6 +138,9 @@ const TravelExpenseGrid = ({
     dateFilter = 'Last 7 Days',
     onFilterChange
 }) => {
+    const { user } = useAuth();
+    const [isForceUnlocked, setIsForceUnlocked] = useState(false);
+
     // Master data states
     const [travelModes, setTravelModes] = useState(FALLBACK_TRAVEL_MODES);
     const [bookedByOptions, setBookedByOptions] = useState(FALLBACK_BOOKED_BY_OPTIONS);
@@ -163,15 +168,19 @@ const TravelExpenseGrid = ({
     // Food Masters
     const [mealCategories, setMealCategories] = useState(['Self Meal', 'Working Meal', 'Client Hosted']);
     const [mealTypes, setMealTypes] = useState([]);
+    const [mealSources, setMealSources] = useState(['RESTAURANT', 'HOTEL', 'ONLINE']);
+    const [mealProviders, setMealProviders] = useState([]);
 
     // Incidental Masters
     const [incidentalTypes, setIncidentalTypes] = useState(FALLBACK_INCIDENTAL_TYPES);
 
-    const [rows, setRows] = useState([]);
+    const [rows, setRowsState] = useState([]);
     // when trip id doesn't start with TRP, entries are treated as bike/self-booked and locked
     const isFixedLocal = tripId && !tripId.toLowerCase().startsWith('trp');
     const [errors, setErrors] = useState({}); // { rowId: { fieldKey: message } }
-    const enabledNatures = allowedNatures || NATURE_OPTIONS.map(o => o.value);
+    const enabledNatures = allowedNatures
+        ? (allowedNatures.includes('Review') ? allowedNatures : [...allowedNatures, 'Review'])
+        : NATURE_OPTIONS.map(o => o.value);
     const [activeCategory, setActiveCategory] = useState(enabledNatures[0] || 'Travel'); // default to first allowed
     const isLocalOnly = enabledNatures.length === 1 && enabledNatures[0] === 'Local Travel';
     // rows filtered to allowed natures for display/calculations
@@ -203,7 +212,215 @@ const TravelExpenseGrid = ({
     const [bulkHistory, setBulkHistory] = useState([]);
     const [resubmitModal, setResubmitModal] = useState({ visible: false, batchId: null, rows: [], submitting: false });
 
-    const { eligibility, checkMileage } = useEligibility();
+    const { eligibility, checkMileage, checkTravel, checkLocalTravel, calculateDAEligibility } = useEligibility();
+
+    const [daDrafts, setDaDrafts] = useState({});
+
+    const getDaDraft = (date, defaultAmt) => {
+        if (!daDrafts[date]) {
+            return { justification: '', amount: '', bills: [] };
+        }
+        return daDrafts[date];
+    };
+
+    const updateDaDraft = (date, key, val) => {
+        setDaDrafts(prev => ({
+            ...prev,
+            [date]: {
+                ...getDaDraft(date, 0),
+                [key]: val
+            }
+        }));
+    };
+
+    const handleDaDraftFileUpload = (date, file) => {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setDaDrafts(prev => {
+                const currentDraft = prev[date] || { justification: '', amount: 0, bills: [] };
+                return {
+                    ...prev,
+                    [date]: {
+                        ...currentDraft,
+                        bills: [...(currentDraft.bills || []), reader.result]
+                    }
+                };
+            });
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const removeDaDraftBill = (date, index) => {
+        setDaDrafts(prev => {
+            const currentDraft = prev[date];
+            if (!currentDraft) return prev;
+            const newBills = [...(currentDraft.bills || [])];
+            newBills.splice(index, 1);
+            return {
+                ...prev,
+                [date]: {
+                    ...currentDraft,
+                    bills: newBills
+                }
+            };
+        });
+    };
+
+    const recalculateDA = (currentRows) => {
+        if (!currentRows || currentRows.length === 0) return currentRows;
+
+        // Group Local Travel rows by date
+        const localRowsByDate = {};
+        currentRows.forEach(r => {
+            if (r.nature === 'Local Travel') {
+                const d = r.date || 'Pending';
+                if (!localRowsByDate[d]) {
+                    localRowsByDate[d] = [];
+                }
+                localRowsByDate[d].push(r);
+            }
+        });
+
+        // Map of date -> aggregated DA calculation results
+        const aggResults = {};
+        Object.keys(localRowsByDate).forEach(d => {
+            const list = localRowsByDate[d];
+            let minStartDt = null;
+            let maxEndDt = null;
+
+            list.forEach(r => {
+                const start = r.timeDetails?.boardingTime;
+                const end = r.timeDetails?.actualTime;
+                if (start) {
+                    const startDt = new Date(`${r.date}T${start}`);
+                    if (!isNaN(startDt.getTime())) {
+                        if (!minStartDt || startDt < minStartDt) {
+                            minStartDt = startDt;
+                        }
+                    }
+                }
+                if (end) {
+                    const endDateVal = r.details?.endDate || r.date;
+                    let endDt = new Date(`${endDateVal}T${end}`);
+                    if (!isNaN(endDt.getTime())) {
+                        const startVal = r.timeDetails?.boardingTime;
+                        if (startVal) {
+                            const startDt = new Date(`${r.date}T${startVal}`);
+                            if (!isNaN(startDt.getTime()) && endDt < startDt) {
+                                if (endDateVal === r.date) {
+                                    endDt.setDate(endDt.getDate() + 1);
+                                }
+                            }
+                        }
+                        if (!maxEndDt || endDt > maxEndDt) {
+                            maxEndDt = endDt;
+                        }
+                    }
+                }
+            });
+
+            if (minStartDt && maxEndDt && maxEndDt >= minStartDt) {
+                const hours = (maxEndDt.getTime() - minStartDt.getTime()) / (1000 * 60 * 60);
+                const limitKey = isFixedLocal ? 'monthly_tour_daily_allowance' : 'daily_allowance';
+                const limit = eligibility?.[limitKey] !== undefined && eligibility?.[limitKey] !== null ? parseFloat(eligibility[limitKey]) : 0;
+
+                let eligiblePct = 0;
+                let message = "";
+                if (hours < 12) {
+                    eligiblePct = 0;
+                    message = "no DA is allowed for you based on hours";
+                } else if (hours >= 12 && hours <= 18) {
+                    eligiblePct = 50;
+                    message = "50% based on hours";
+                } else {
+                    eligiblePct = 100;
+                    message = "100% based on hours";
+                }
+
+                const eligibleAmount = (limit * eligiblePct) / 100;
+                const earliestStartStr = minStartDt.toTimeString().substring(0, 5);
+                const latestEndStr = maxEndDt.toTimeString().substring(0, 5);
+                const endFormattedDate = maxEndDt.toISOString().split('T')[0];
+
+                aggResults[d] = {
+                    hours,
+                    eligibleAmount,
+                    message,
+                    earliestStartStr,
+                    latestEndStr: endFormattedDate !== d ? `${latestEndStr} (${endFormattedDate})` : latestEndStr
+                };
+            } else {
+                aggResults[d] = {
+                    hours: 0,
+                    eligibleAmount: 0,
+                    message: "no DA is allowed for you based on hours",
+                    earliestStartStr: '09:00',
+                    latestEndStr: '18:00'
+                };
+            }
+        });
+
+        // Rebuild rows, updating Local Travel DA values
+        const processedDates = new Set();
+        return currentRows.map(row => {
+            if (row.nature === 'Local Travel') {
+                const d = row.date || 'Pending';
+                const agg = aggResults[d];
+                if (!agg) return row;
+
+                const newDetails = { ...row.details };
+                if (!processedDates.has(d)) {
+                    newDetails.da_hours = agg.hours;
+                    newDetails.eligible_da = agg.eligibleAmount;
+                    newDetails.da_message = agg.message;
+                    newDetails.daily_allowance = 0;
+                    newDetails.is_aggregated_first = true;
+                    newDetails.is_aggregated_subsequent = false;
+                    newDetails.earliest_start_time = agg.earliestStartStr;
+                    newDetails.latest_end_time = agg.latestEndStr;
+                    processedDates.add(d);
+                } else {
+                    newDetails.da_hours = 0;
+                    newDetails.eligible_da = 0;
+                    newDetails.da_message = `Aggregated with other entries on ${d}`;
+                    newDetails.daily_allowance = 0;
+                    newDetails.is_aggregated_first = false;
+                    newDetails.is_aggregated_subsequent = true;
+                }
+
+                const baseAmt = parseFloat(newDetails.fare_or_fuel || 0);
+                const updatedAmount = baseAmt.toFixed(2);
+
+                return {
+                    ...row,
+                    details: newDetails,
+                    amount: updatedAmount
+                };
+            }
+            return row;
+        });
+    };
+
+    const setRows = (val) => {
+        setRowsState(prevRows => {
+            const nextRows = typeof val === 'function' ? val(prevRows) : val;
+            return recalculateDA(nextRows);
+        });
+    };
+
+    const getOdoLimit = (rowDetails) => {
+        if (!eligibility) return 0;
+        const mode = (rowDetails?.mode || '').trim().toLowerCase();
+        const subType = (rowDetails?.subType || '').trim().toLowerCase();
+        if (mode === 'bike' && subType === 'own bike') {
+            return eligibility.max_mileage_bike_km > 0 ? parseFloat(eligibility.max_mileage_bike_km) : parseFloat(eligibility.max_mileage_km || 0);
+        }
+        if (mode === 'car' && subType === 'own car') {
+            return eligibility.max_mileage_car_km > 0 ? parseFloat(eligibility.max_mileage_car_km) : parseFloat(eligibility.max_mileage_km || 0);
+        }
+        return parseFloat(eligibility.max_mileage_km || 0);
+    };
 
     const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
@@ -266,6 +483,8 @@ const TravelExpenseGrid = ({
             if (needsFood) {
                 tasks.push(safeFetch('/api/meal-category-masters/', setMealCategories, m => m.status ? m.category_name : null));
                 tasks.push(safeFetch('/api/meal-type-masters/', setMealTypes, m => m.status ? m.meal_type : null));
+                tasks.push(safeFetch('/api/meal-source-masters/', setMealSources, m => m.status ? m.source_name : null));
+                tasks.push(safeFetch('/api/meal-provider-masters/', setMealProviders, m => m.status ? m.provider_name : null));
             }
 
             if (needsIncidental) {
@@ -424,7 +643,10 @@ const TravelExpenseGrid = ({
                     }));
                 }
 
-                const natureVal = exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category);
+                let natureVal = exp.category === 'Others' ? 'Travel' : (exp.category === 'Fuel' ? 'Local Travel' : exp.category);
+                if (exp.category === 'Others' && details.nature === 'Daily Allowance') {
+                    natureVal = 'Daily Allowance';
+                }
 
                 // Initialize timeDetails with robust fallbacks for different data sources (mobile/web/bulk)
                 const timeDetails = details.time || {
@@ -440,6 +662,21 @@ const TravelExpenseGrid = ({
                     if (!details.mode) details.mode = 'BIKE';
                     if (!details.subType) details.subType = 'OWN BIKE';
                     if (!details.bookedBy) details.bookedBy = 'Self Booked';
+
+                    const boardingTime = timeDetails.boardingTime;
+                    const actualTime = timeDetails.actualTime;
+                    const daResult = calculateDAEligibility(boardingTime, actualTime, exp.date, exp.date, isFixedLocal);
+
+                    details.da_hours = details.da_hours !== undefined ? details.da_hours : daResult.hours;
+                    details.eligible_da = details.eligible_da !== undefined ? details.eligible_da : daResult.eligibleAmount;
+                    details.da_message = details.da_message !== undefined ? details.da_message : daResult.message;
+
+                    if (details.daily_allowance === undefined) {
+                        details.daily_allowance = 0;
+                    }
+                    if (details.fare_or_fuel === undefined) {
+                        details.fare_or_fuel = parseFloat(exp.amount || 0) - parseFloat(details.daily_allowance || 0);
+                    }
                 }
                 return {
                     id: exp.id || Math.random().toString(36).substr(2, 9),
@@ -523,6 +760,8 @@ const TravelExpenseGrid = ({
                 key = `Hotel|${row.date}|${row.details.hotelName}|${row.details.city}`;
             } else if (row.nature === 'Incidental') {
                 key = `Incidental|${row.date}|${row.details.incidentalType}`;
+            } else if (row.nature === 'Daily Allowance') {
+                key = `DailyAllowance|${row.date}`;
             } else {
                 key = `Other|${row.nature}|${row.date}|${row.amount}|${row.remarks}`;
             }
@@ -798,9 +1037,10 @@ const TravelExpenseGrid = ({
                     return false;
                 }
 
-                const isNonDefault = !row.details.isPublicTransport && (modeVal.toUpperCase() !== 'BIKE' || subTypeVal.toUpperCase() !== 'OWN BIKE');
+                const travelCheck = checkLocalTravel(modeVal, subTypeVal);
+                const isNonDefault = !travelCheck.allowed;
                 if (isNonDefault && (!row.details.otherReason || !row.details.otherReason.trim())) {
-                    showToast(`Item #${rowNum}: Please enter a reason for selecting non-default travel mode or subtype.`, "error");
+                    showToast(`Item #${rowNum}: Please enter a reason for selecting a travel mode that is not permitted for your cadre.`, "error");
                     return false;
                 }
 
@@ -829,8 +1069,10 @@ const TravelExpenseGrid = ({
                     return false;
                 }
                 if (row.timeDetails.boardingTime && row.timeDetails.actualTime) {
-                    if (row.timeDetails.boardingTime >= row.timeDetails.actualTime) {
-                        showToast(`Item #${rowNum}: End Time must be greater than Start Time.`, "error");
+                    const sDate = row.date;
+                    const eDate = row.details.endDate || row.date;
+                    if (sDate === eDate && row.timeDetails.boardingTime >= row.timeDetails.actualTime) {
+                        showToast(`Item #${rowNum}: End Time must be greater than Start Time for single day travel.`, "error");
                         return false;
                     }
                     // 5-minute increment check
@@ -855,18 +1097,6 @@ const TravelExpenseGrid = ({
 
                 const odoDrivenSubtypes = ['OWN CAR', 'OWN BIKE', 'SELF DRIVE RENTAL', 'COMPANY CAR'];
                 if (odoDrivenSubtypes.includes((subType || '').toUpperCase())) {
-                    // Conditional Validation: If reading exists, photo MUST exist
-                    if (odoStart && !row.details.odoStartImg) {
-                        showToast(`Item #${rowNum}: Start Odometer photo is required since reading is entered.`, "error");
-                        setRowError(row.id, 'odoStartImg', 'Photo required');
-                        return false;
-                    }
-                    if (odoEnd && !row.details.odoEndImg) {
-                        showToast(`Item #${rowNum}: End Odometer photo is required since reading is entered.`, "error");
-                        setRowError(row.id, 'odoEndImg', 'Photo required');
-                        return false;
-                    }
-
                     // Value validation
                     if (odoStart && isNaN(parseFloat(odoStart))) {
                         showToast(`Item #${rowNum}: Start Odometer must be numeric.`, "error");
@@ -884,16 +1114,48 @@ const TravelExpenseGrid = ({
                         return false;
                     }
 
-                    // Entitlement validation for distance
-                    if (odoStart && odoEnd) {
-                        const distance = parseFloat(odoEnd) - parseFloat(odoStart);
-                        const mileageCheck = checkMileage(distance);
-                        if (mileageCheck.exceeds) {
-                            const confirmMileage = await confirm(
-                                `Warning (Item #${rowNum}): ${mileageCheck.warnMessage}\n\nDo you want to proceed with saving anyway?`
-                            );
-                            if (!confirmMileage) return false;
+                    const distance = (odoStart && odoEnd) ? parseFloat(odoEnd) - parseFloat(odoStart) : 0;
+                    const lowerSubType = (subType || '').toLowerCase();
+                    if (distance > 0) {
+                        if (lowerSubType.includes('bike') && distance > 500) {
+                            showToast(`Item #${rowNum}: Travel distance not allowed`, "error");
+                            setRowError(row.id, 'odoEnd', 'Travel distance not allowed');
+                            return false;
                         }
+                        if ((lowerSubType.includes('car') || lowerSubType.includes('rental')) && distance > 1200) {
+                            showToast(`Item #${rowNum}: Travel distance not allowed`, "error");
+                            setRowError(row.id, 'odoEnd', 'Travel distance not allowed');
+                            return false;
+                        }
+                    }
+
+                    const mileageCheck = distance > 0 ? checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType) : { exceeds: false };
+
+                    // Conditional Validation: If reading exists, photo/doc MUST exist
+                    if (odoStart && !row.details.odoStartImg) {
+                        showToast(`Item #${rowNum}: Start Odometer photo is required since reading is entered.`, "error");
+                        setRowError(row.id, 'odoStartImg', 'Photo required');
+                        return false;
+                    }
+                    if (odoEnd && !row.details.odoEndImg) {
+                        showToast(`Item #${rowNum}: End Odometer photo is required since reading is entered.`, "error");
+                        setRowError(row.id, 'odoEndImg', 'Photo required');
+                        return false;
+                    }
+
+                    // Approval doc required when mileage limit is exceeded
+                    if (mileageCheck.exceeds && !row.details.approvalDocImg) {
+                        showToast(`Item #${rowNum}: Handwritten approval document from your reporting manager must be uploaded since the mileage exceeds the cadre limit.`, "error");
+                        setRowError(row.id, 'approvalDocImg', 'Approval document required');
+                        return false;
+                    }
+
+                    // Entitlement warning confirmation
+                    if (mileageCheck.exceeds) {
+                        const confirmMileage = await confirm(
+                            `Warning (Item #${rowNum}): ${mileageCheck.warnMessage}\n\nDo you want to proceed with saving anyway?`
+                        );
+                        if (!confirmMileage) return false;
                     }
                 }
             }
@@ -978,6 +1240,21 @@ const TravelExpenseGrid = ({
                     }
                 }
             }
+
+            if (row.nature === 'Daily Allowance') {
+                if (parseFloat(row.amount) <= 0) {
+                    showToast(`Item #${rowNum}: Daily Allowance amount must be greater than 0.`, "error");
+                    return false;
+                }
+                if (!row.details.justification || !row.details.justification.trim()) {
+                    showToast(`Item #${rowNum}: Justification / Basis is mandatory for manual Daily Allowance claims.`, "error");
+                    return false;
+                }
+                if (!row.bills || row.bills.length === 0) {
+                    showToast(`Item #${rowNum}: Receipt/Bill upload is mandatory for Daily Allowance.`, "error");
+                    return false;
+                }
+            }
         }
 
         // Overlap Validation (Simplified: check if multiple travel segments have same start date)
@@ -1016,7 +1293,8 @@ const TravelExpenseGrid = ({
                     'Local Travel': 'Fuel',
                     'Food': 'Food',
                     'Accommodation': 'Accommodation',
-                    'Incidental': 'Incidental'
+                    'Incidental': 'Incidental',
+                    'Daily Allowance': 'Others'
                 };
 
                 const filteredDetails = { ...row.details };
@@ -1085,12 +1363,18 @@ const TravelExpenseGrid = ({
                     cancellation_reason: row.nature === 'Travel' ? row.details.cancellationReason : null,
                     booked_by: row.nature === 'Travel' ? row.details.bookedBy : null,
                     reimbursement_eligible: row.nature === 'Travel' ? (row.details.bookedBy === 'Self Booked') : true,
-                    // description and image always part of payload
                     description: JSON.stringify({
                         ...filteredDetails,
+                        nature: row.nature,
                         remarks: row.remarks ? row.remarks.trim() : '',
                         time: row.timeDetails,
-                        natureOfVisit: row.details.natureOfVisit ? row.details.natureOfVisit.trim() : ''
+                        natureOfVisit: row.details.natureOfVisit ? row.details.natureOfVisit.trim() : '',
+                        // Food-specific fields persisted explicitly
+                        ...(row.nature === 'Food' ? {
+                            mealSource: row.details.mealSource || '',
+                            provider: row.details.provider || '',
+                            hotelName: row.details.hotelName || '',
+                        } : {}),
                     }),
                     receipt_image: JSON.stringify(row.bills || []),
                     is_deviated: !!row.details.is_deviated,
@@ -1258,6 +1542,9 @@ const TravelExpenseGrid = ({
             newRow.details.mode = 'BIKE';
             newRow.details.subType = 'OWN BIKE';
             newRow.details.bookedBy = 'Self Booked';
+        } else if (targetNature === 'Daily Allowance') {
+            newRow.details.nature = 'Daily Allowance';
+            newRow.details.justification = '';
         }
         setRows(prevRows => [...prevRows, newRow]);
     };
@@ -1359,6 +1646,16 @@ const TravelExpenseGrid = ({
                     const end = parseFloat(newDetails.odoEnd || 0);
                     newDetails.totalKm = end >= start ? (end - start).toFixed(2) : 0;
 
+                    const distance = end - start;
+                    const lowerSubType = (newDetails.subType || '').toLowerCase();
+                    if (start > 0 && end > start) {
+                        if (lowerSubType.includes('bike') && distance > 500) {
+                            showToast("Travel distance not allowed", "error");
+                        } else if ((lowerSubType.includes('car') || lowerSubType.includes('rental')) && distance > 1200) {
+                            showToast("Travel distance not allowed", "error");
+                        }
+                    }
+
                     const isOther = newDetails.isPublicTransport || newDetails.mode === 'Public Transport';
 
                     // KM Reimbursement for Own vehicles based on state rates
@@ -1370,13 +1667,13 @@ const TravelExpenseGrid = ({
                         // Only auto-calc if we have a valid distance and a rate
                         if (!isNaN(start) && !isNaN(end) && end > start && rate) {
                             const distKm = end - start;
-                            updatedAmount = (distKm * rate).toFixed(2);
+                            const fuelVal = distKm * rate;
+                            newDetails.fare_or_fuel = fuelVal.toFixed(2);
                             newDetails.isAutoCalculated = true;
                         }
                     } else if (isOther) {
                         // If switching to "Others", we stop auto-calculating from ODO
                         newDetails.isAutoCalculated = false;
-                        // We preserve current amount if it was manually edited, but if it was 0 we might want to prompt for fare
                     }
                 }
 
@@ -1418,6 +1715,12 @@ const TravelExpenseGrid = ({
                     }
                 }
 
+                if (row.nature === 'Local Travel') {
+                    const baseAmt = parseFloat(newDetails.fare_or_fuel || 0);
+                    const daAmt = parseFloat(newDetails.daily_allowance || 0);
+                    updatedAmount = (baseAmt + daAmt).toFixed(2);
+                }
+
                 return { ...row, details: newDetails, amount: updatedAmount, isSaved: false };
             }
             return row;
@@ -1448,7 +1751,29 @@ const TravelExpenseGrid = ({
                         } catch (e) { }
                     }
                 }
-                return { ...row, timeDetails: newTimeDetails, isSaved: false };
+
+                let newDetails = { ...row.details };
+                let updatedAmount = row.amount;
+
+                if (row.nature === 'Local Travel') {
+                    const boardingTime = newTimeDetails.boardingTime;
+                    const actualTime = newTimeDetails.actualTime;
+                    const daResult = calculateDAEligibility(boardingTime, actualTime, row.date, row.date, isFixedLocal);
+
+                    newDetails.da_hours = daResult.hours;
+                    newDetails.eligible_da = daResult.eligibleAmount;
+                    newDetails.da_message = daResult.message;
+
+                    if (newDetails.daily_allowance === undefined || newDetails.daily_allowance === null || newDetails.daily_allowance === '') {
+                        newDetails.daily_allowance = daResult.eligibleAmount;
+                    }
+
+                    const baseAmt = parseFloat(newDetails.fare_or_fuel || 0);
+                    const daAmt = parseFloat(newDetails.daily_allowance || 0);
+                    updatedAmount = (baseAmt + daAmt).toFixed(2);
+                }
+
+                return { ...row, timeDetails: newTimeDetails, details: newDetails, amount: updatedAmount, isSaved: false };
             }
             return row;
         }));
@@ -1674,6 +1999,19 @@ const TravelExpenseGrid = ({
             return;
         }
 
+        // Validate mileage exceed and approval doc requirement
+        for (let i = 0; i < resubmitModal.rows.length; i++) {
+            const r = resubmitModal.rows[i];
+            const dist = parseFloat(r.odo_end || 0) - parseFloat(r.odo_start || 0);
+            if (dist > 0) {
+                const mileageCheck = checkMileage(dist, r.mode, r.vehicle);
+                if (mileageCheck.exceeds && !r.approvalDocImg) {
+                    showToast(`Row #${i + 1}: Handwritten approval document from your reporting manager must be uploaded since the mileage exceeds the cadre limit.`, "error");
+                    return;
+                }
+            }
+        }
+
         setResubmitModal(prev => ({ ...prev, submitting: true }));
         try {
             const resubmitPayload = {
@@ -1725,7 +2063,7 @@ const TravelExpenseGrid = ({
         });
     };
 
-    const isLocked = claimStatus && !['Draft', 'Rejected'].includes(claimStatus);
+    const isLocked = claimStatus && !['Draft', 'Rejected'].includes(claimStatus) && !isForceUnlocked;
 
     const CategoryTable = ({ nature, title, icon }) => {
         const categoryRows = (() => {
@@ -1768,6 +2106,7 @@ const TravelExpenseGrid = ({
                 case 'Travel': return '1fr';
                 case 'Local Travel': return '1fr';
                 case 'Food': return '140px 80px 180px 1fr 180px 100px 50px';
+                case 'Daily Allowance': return '140px 1fr 180px 100px 50px';
                 case 'Accommodation': return '220px 220px 1fr 180px 100px 50px';
                 case 'Incidental': return '140px 220px 1fr 180px 100px 50px';
                 default: return '1fr';
@@ -1862,548 +2201,844 @@ const TravelExpenseGrid = ({
                                                         </div>
                                                     </td>
                                                 </tr>
-                                                {grouped[date].map(row => (
-                                                    <tr key={row.id} className="category-row-block">
-                                                        <td style={{ padding: '0' }}>
-                                                            <div style={{ margin: '0.5rem 0.75rem 1rem', padding: '1rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                                {grouped[date].map(row => {
+                                                    const claimedDaRow = rows.find(r => r.nature === 'Daily Allowance' && r.date === row.date);
+                                                    const displayedDa = claimedDaRow ? parseFloat(claimedDaRow.amount || 0) : 0;
+                                                    return (
+                                                        <tr key={row.id} className="category-row-block">
+                                                            <td style={{ padding: '0' }}>
+                                                                <div style={{ margin: '0.5rem 0.75rem 1rem', padding: '1rem', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
 
-                                                                {/* CARD HEADER */}
-                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '10px', borderBottom: '2px solid #f1f5f9' }}>
-                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                        <div style={{ width: '8px', height: '28px', background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)', borderRadius: '4px' }} />
-                                                                        <div>
-                                                                            <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Location &amp; Odometer Logs</div>
-                                                                            <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                                {nature === 'Local Travel' ? 'Local Conveyance Entry' : 'Travel Entry'}
-                                                                                {(isFixedLocal || row.details.from_bulk_upload) && (
-                                                                                    <span style={{ color: '#4f46e5', fontWeight: 800, background: '#eef2ff', border: '1px solid #e0e7ff', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem' }}>PLANNED STOP</span>
-                                                                                )}
+                                                                    {/* CARD HEADER */}
+                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '10px', borderBottom: '2px solid #f1f5f9' }}>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                            <div style={{ width: '8px', height: '28px', background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)', borderRadius: '4px' }} />
+                                                                            <div>
+                                                                                <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Location &amp; Odometer Logs</div>
+                                                                                <div style={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                                    {nature === 'Local Travel' ? 'Local Conveyance Entry' : 'Travel Entry'}
+                                                                                    {(isFixedLocal || row.details.from_bulk_upload) && (
+                                                                                        <span style={{ color: '#4f46e5', fontWeight: 800, background: '#eef2ff', border: '1px solid #e0e7ff', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem' }}>PLANNED STOP</span>
+                                                                                    )}
+                                                                                </div>
                                                                             </div>
                                                                         </div>
-                                                                    </div>
-                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                                        {row.details.travelStatus && row.details.travelStatus !== 'Completed' && (
-                                                                            <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: row.details.travelStatus === 'Cancelled' ? '#fee2e2' : '#fef3c7', color: row.details.travelStatus === 'Cancelled' ? '#dc2626' : '#d97706' }}>
-                                                                                {row.details.travelStatus}
-                                                                            </span>
-                                                                        )}
-                                                                        {!isLocked && (
-                                                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                                                {/* DEVIATE/NOT VISITED buttons for planned/bulk uploads */}
-                                                                                {(isFixedLocal || row.details.from_bulk_upload) && !row.is_deviated && (
-                                                                                    <>
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            style={{ background: '#fef3c7', border: '1px solid #fcd34d', color: '#d97706', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                                                                            onClick={() => setDeviationModal({
-                                                                                                show: true,
-                                                                                                rowId: row.id,
-                                                                                                reason: '',
-                                                                                                target: '',
-                                                                                                actualFrom: row.details.origin || '',
-                                                                                                actualTo: row.details.destination || ''
-                                                                                            })}
-                                                                                        >
-                                                                                            <AlertTriangle size={12} /> DEVIATE
-                                                                                        </button>
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#dc2626', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                                                                            onClick={() => setDeviationModal({ show: true, rowId: row.id, reason: '', target: '', isNotVisited: true })}
-                                                                                        >
-                                                                                            <X size={12} /> NOT VISITED
-                                                                                        </button>
-                                                                                    </>
-                                                                                )}
-                                                                                <button type="button" style={{ background: '#fee2e2', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '6px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center' }} onClick={() => deleteRow(row.id)} title="Remove entry">
-                                                                                    <Trash2 size={15} />
-                                                                                </button>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                                {/* TRAVEL MODE & SUB-TYPE */}
-                                                                {!row.details.isPublicTransport && (
-                                                                    <div style={{ padding: '0 14px', display: 'grid', gridTemplateColumns: (row.details.mode || 'BIKE').toUpperCase() !== 'WALK' ? '1fr 1fr' : '1fr', gap: '12px', marginBottom: '10px' }}>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Travel Mode *</label>
-                                                                            <select
-                                                                                className="cat-input"
-                                                                                value={(row.details.mode || 'BIKE').toUpperCase()}
-                                                                                onChange={e => {
-                                                                                    const selectedMode = e.target.value;
-                                                                                    let defaultSubType = '';
-                                                                                    let isPT = false;
-                                                                                    const upperMode = selectedMode.toUpperCase();
-                                                                                    if (upperMode === 'BIKE') {
-                                                                                        defaultSubType = 'OWN BIKE';
-                                                                                    } else if (upperMode === 'CAR') {
-                                                                                        defaultSubType = 'OWN CAR';
-                                                                                    } else if (upperMode === 'PUBLIC TRANSPORT' || upperMode.includes('BUS') || upperMode.includes('TRAIN') || upperMode.includes('METRO') || upperMode.includes('AUTO')) {
-                                                                                        defaultSubType = 'AUTO';
-                                                                                        isPT = true;
-                                                                                    } else if (upperMode === 'WALK') {
-                                                                                        defaultSubType = 'WALK';
-                                                                                        isPT = true;
-                                                                                    }
-                                                                                    updateDetails(row.id, 'mode', selectedMode);
-                                                                                    updateDetails(row.id, 'subType', defaultSubType);
-                                                                                    updateDetails(row.id, 'isPublicTransport', isPT);
-                                                                                }}
-                                                                            >
-                                                                                <option value="">Select Mode</option>
-                                                                                {localTravelModes.map(m => <option key={m} value={m}>{m}</option>)}
-                                                                            </select>
+                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                            {row.details.travelStatus && row.details.travelStatus !== 'Completed' && (
+                                                                                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: row.details.travelStatus === 'Cancelled' ? '#fee2e2' : '#fef3c7', color: row.details.travelStatus === 'Cancelled' ? '#dc2626' : '#d97706' }}>
+                                                                                    {row.details.travelStatus}
+                                                                                </span>
+                                                                            )}
+                                                                            {!isLocked && (
+                                                                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                                                    {/* DEVIATE/NOT VISITED buttons for planned/bulk uploads */}
+                                                                                    {(isFixedLocal || row.details.from_bulk_upload) && !row.is_deviated && (
+                                                                                        <>
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                style={{ background: '#fef3c7', border: '1px solid #fcd34d', color: '#d97706', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                                                                onClick={() => setDeviationModal({
+                                                                                                    show: true,
+                                                                                                    rowId: row.id,
+                                                                                                    reason: '',
+                                                                                                    target: '',
+                                                                                                    actualFrom: row.details.origin || '',
+                                                                                                    actualTo: row.details.destination || ''
+                                                                                                })}
+                                                                                            >
+                                                                                                <AlertTriangle size={12} /> DEVIATE
+                                                                                            </button>
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#dc2626', padding: '6px 12px', borderRadius: '8px', fontSize: '0.7rem', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                                                                onClick={() => setDeviationModal({ show: true, rowId: row.id, reason: '', target: '', isNotVisited: true })}
+                                                                                            >
+                                                                                                <X size={12} /> NOT VISITED
+                                                                                            </button>
+                                                                                        </>
+                                                                                    )}
+                                                                                    <button type="button" style={{ background: '#fee2e2', border: 'none', cursor: 'pointer', color: '#ef4444', padding: '6px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center' }} onClick={() => deleteRow(row.id)} title="Remove entry">
+                                                                                        <Trash2 size={15} />
+                                                                                    </button>
+                                                                                </div>
+                                                                            )}
                                                                         </div>
-
-                                                                        {(row.details.mode || 'BIKE').toUpperCase() !== 'WALK' && (
+                                                                    </div>
+                                                                    {/* TRAVEL MODE & SUB-TYPE */}
+                                                                    {!row.details.isPublicTransport && (
+                                                                        <div style={{ padding: '0 14px', display: 'grid', gridTemplateColumns: (row.details.mode || 'BIKE').toUpperCase() !== 'WALK' ? '1fr 1fr' : '1fr', gap: '12px', marginBottom: '10px' }}>
                                                                             <div className="input-with-label-mini">
-                                                                                <label>Sub-Type *</label>
+                                                                                <label>Travel Mode *</label>
                                                                                 <select
                                                                                     className="cat-input"
-                                                                                    value={(row.details.subType || 'OWN BIKE').toUpperCase()}
+                                                                                    value={(row.details.mode || 'BIKE').toUpperCase()}
                                                                                     onChange={e => {
-                                                                                        updateDetails(row.id, 'subType', e.target.value);
+                                                                                        const selectedMode = e.target.value;
+                                                                                        let defaultSubType = '';
+                                                                                        let isPT = false;
+                                                                                        const upperMode = selectedMode.toUpperCase();
+                                                                                        if (upperMode === 'BIKE') {
+                                                                                            defaultSubType = 'OWN BIKE';
+                                                                                        } else if (upperMode === 'CAR') {
+                                                                                            defaultSubType = 'OWN CAR';
+                                                                                        } else if (upperMode === 'PUBLIC TRANSPORT' || upperMode.includes('BUS') || upperMode.includes('TRAIN') || upperMode.includes('METRO') || upperMode.includes('AUTO')) {
+                                                                                            defaultSubType = 'AUTO';
+                                                                                            isPT = true;
+                                                                                        } else if (upperMode === 'WALK') {
+                                                                                            defaultSubType = 'WALK';
+                                                                                            isPT = true;
+                                                                                        }
+                                                                                        updateDetails(row.id, 'mode', selectedMode);
+                                                                                        updateDetails(row.id, 'subType', defaultSubType);
+                                                                                        updateDetails(row.id, 'isPublicTransport', isPT);
                                                                                     }}
                                                                                 >
-                                                                                    <option value="">Select Sub-Type</option>
-                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'CAR' && localCarSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
-                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'BIKE' && localBikeSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
-                                                                                    {(row.details.mode || 'BIKE').toUpperCase() === 'PUBLIC TRANSPORT' && (localProviders.length > 0 ? localProviders : FALLBACK_LOCAL_PT_SUBTYPES).map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                    <option value="">Select Mode</option>
+                                                                                    {localTravelModes.map(m => <option key={m} value={m}>{m}</option>)}
                                                                                 </select>
                                                                             </div>
-                                                                        )}
-                                                                    </div>
-                                                                )}
 
-                                                                {/* REASON FOR NON-DEFAULT TRAVEL */}
-                                                                {!row.details.isPublicTransport &&
-                                                                    ((row.details.mode || 'BIKE').toUpperCase() !== 'BIKE' ||
-                                                                        (row.details.subType || 'OWN BIKE').toUpperCase() !== 'OWN BIKE') && (
-                                                                        <div style={{ padding: '0 14px', marginBottom: '10px' }}>
-                                                                            <div className="input-with-label-mini">
-                                                                                <label style={{ color: '#f97316', fontWeight: 'bold' }}>Reason for non-default travel *</label>
-                                                                                <input
-                                                                                    type="text"
-                                                                                    className="cat-input"
-                                                                                    placeholder="Why did you deviate from Bike / Own Bike?"
-                                                                                    value={row.details.otherReason || ''}
-                                                                                    onChange={e => updateDetails(row.id, 'otherReason', e.target.value)}
-                                                                                    style={{ border: '1px solid #f97316' }}
-                                                                                    title="Reason is mandatory when deviating from Bike and Own Bike"
-                                                                                />
-                                                                            </div>
+                                                                            {(row.details.mode || 'BIKE').toUpperCase() !== 'WALK' && (
+                                                                                <div className="input-with-label-mini">
+                                                                                    <label>Sub-Type *</label>
+                                                                                    <select
+                                                                                        className="cat-input"
+                                                                                        value={(row.details.subType || 'OWN BIKE').toUpperCase()}
+                                                                                        onChange={e => {
+                                                                                            updateDetails(row.id, 'subType', e.target.value);
+                                                                                        }}
+                                                                                    >
+                                                                                        <option value="">Select Sub-Type</option>
+                                                                                        {(row.details.mode || 'BIKE').toUpperCase() === 'CAR' && localCarSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                        {(row.details.mode || 'BIKE').toUpperCase() === 'BIKE' && localBikeSubTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                        {(row.details.mode || 'BIKE').toUpperCase() === 'PUBLIC TRANSPORT' && (localProviders.length > 0 ? localProviders : FALLBACK_LOCAL_PT_SUBTYPES).map(s => <option key={s} value={s}>{s}</option>)}
+                                                                                    </select>
+                                                                                </div>
+                                                                            )}
                                                                         </div>
                                                                     )}
 
-                                                                {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
-                                                                <div style={{ padding: '0 14px', marginBottom: '10px' }}>
-                                                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px' }}>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                updateDetails(row.id, 'isPublicTransport', false);
-                                                                                updateDetails(row.id, 'mode', 'BIKE');
-                                                                                updateDetails(row.id, 'subType', 'OWN BIKE');
-                                                                            }}
-                                                                            style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
-                                                                        >
-                                                                            VEHICLE (ODOMETER)
-                                                                        </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => {
-                                                                                updateDetails(row.id, 'isPublicTransport', true);
-                                                                                updateDetails(row.id, 'mode', 'PUBLIC TRANSPORT');
-                                                                                updateDetails(row.id, 'subType', 'AUTO');
-                                                                            }}
-                                                                            style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
-                                                                        >
-                                                                            OTHERS (BUS/AUTO)
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-
-                                                                {/* START ROW */}
-                                                                <div style={{ background: '#f8faff', borderRadius: '10px', padding: '12px 14px' }}>
-                                                                    <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>▶ Start</div>
-                                                                    <div style={{ display: 'grid', gridTemplateColumns: '150px 110px 1fr 110px 110px', gap: '12px', alignItems: 'end' }}>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Date</label>
-                                                                            <input type="date" min={minDate} max={maxDate} value={row.date} onChange={e => updateRow(row.id, 'date', e.target.value)} className="cat-input" disabled={isLocked} />
-                                                                        </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Time</label>
-                                                                            <input type="time" step={300} value={row.timeDetails?.boardingTime || ''} onChange={e => updateTimeDetails(row.id, 'boardingTime', e.target.value)} className="cat-input" disabled={isLocked} />
-                                                                        </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Location</label>
-                                                                            <input type="text" placeholder="Start location / Origin" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} className="cat-input" disabled={isLocked} />
-                                                                        </div>
-                                                                        {!row.details.isPublicTransport ? (
-                                                                            <div className="input-with-label-mini">
-                                                                                <label>Odo Reading</label>
-                                                                                <input type="number" placeholder="0" value={row.details.odoStart || ''} onChange={e => updateDetails(row.id, 'odoStart', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
-                                                                                <label style={{ color: '#4f46e5' }}>Fare Paid (₹)</label>
-                                                                                <div style={{ display: 'flex', gap: '6px' }}>
-                                                                                    <input type="number" placeholder="0.00" value={row.amount || ''} onChange={e => updateRow(row.id, 'amount', e.target.value)} className="cat-input" style={{ borderColor: '#4f46e5', fontWeight: 700, flex: 1 }} disabled={isLocked} />
-                                                                                    {!isLocked && (
-                                                                                        <button type="button" className="upload-bill-btn" style={{ height: '34px', padding: '0 10px' }} onClick={() => document.getElementById(`f-pt-${row.id}`).click()}>
-                                                                                            <Upload size={14} />
-                                                                                        </button>
-                                                                                    )}
-                                                                                    <input type="file" id={`f-pt-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
+                                                                    {checkLocalTravel(
+                                                                        row.details.isPublicTransport ? 'Public Transport' : (row.details.mode || 'BIKE'),
+                                                                        row.details.isPublicTransport ? (row.details.remainingRoute || 'AUTO') : (row.details.subType || 'OWN BIKE')
+                                                                    ).allowed === false && (
+                                                                            <div style={{ padding: '0 14px', marginBottom: '10px' }}>
+                                                                                <div className="input-with-label-mini">
+                                                                                    <label style={{ color: '#f97316', fontWeight: 'bold' }}>Reason for non-default travel *</label>
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        className="cat-input"
+                                                                                        placeholder="Reason required — this mode is not in your cadre entitlement"
+                                                                                        value={row.details.otherReason || ''}
+                                                                                        onChange={e => updateDetails(row.id, 'otherReason', e.target.value)}
+                                                                                        style={{ border: '1px solid #f97316' }}
+                                                                                        title="Reason is mandatory when using a travel mode not permitted for your cadre"
+                                                                                    />
                                                                                 </div>
                                                                             </div>
                                                                         )}
-                                                                        {!row.details.isPublicTransport && (
-                                                                            <div className="input-with-label-mini">
-                                                                                <label>Odo Photo</label>
-                                                                                {(!isLocked && row.date === todayStr) ? (
-                                                                                    <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoStart')}>
-                                                                                        {row.details.odoStartImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
-                                                                                        <span>{row.details.odoStartImg ? 'Captured' : 'Odo Pic'}</span>
-                                                                                    </button>
-                                                                                ) : (
-                                                                                    <div style={{ fontSize: '0.7rem', color: row.details.odoStartImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoStartImg ? '✓ Captured' : 'N/A'}</div>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
 
-                                                                {/* END ROW */}
-                                                                <div style={{ background: '#f0fdf4', borderRadius: '10px', padding: '12px 14px' }}>
-                                                                    <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>■ End</div>
-                                                                    <div style={{ display: 'grid', gridTemplateColumns: '150px 110px 1fr 110px 110px', gap: '12px', alignItems: 'end' }}>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Date</label>
-                                                                            <input type="date" min={minDate} max={maxDate} value={row.details.endDate || row.date} onChange={e => updateDetails(row.id, 'endDate', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                    {/* TOGGLE FOR VEHICLE vs OTHERS (Card Layout) */}
+                                                                    <div style={{ padding: '0 14px', marginBottom: '10px' }}>
+                                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px' }}>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    updateDetails(row.id, 'isPublicTransport', false);
+                                                                                    updateDetails(row.id, 'mode', 'BIKE');
+                                                                                    updateDetails(row.id, 'subType', 'OWN BIKE');
+                                                                                }}
+                                                                                style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: !row.details.isPublicTransport ? 'white' : 'transparent', color: !row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: !row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                            >
+                                                                                VEHICLE (ODOMETER)
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    updateDetails(row.id, 'isPublicTransport', true);
+                                                                                    updateDetails(row.id, 'mode', 'PUBLIC TRANSPORT');
+                                                                                    updateDetails(row.id, 'subType', 'AUTO');
+                                                                                }}
+                                                                                style={{ padding: '8px', borderRadius: '6px', border: 'none', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', background: row.details.isPublicTransport ? 'white' : 'transparent', color: row.details.isPublicTransport ? '#1e293b' : '#64748b', boxShadow: row.details.isPublicTransport ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+                                                                            >
+                                                                                OTHERS (BUS/AUTO)
+                                                                            </button>
                                                                         </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Time</label>
-                                                                            <input type="time" value={row.timeDetails?.actualTime || ''} onChange={e => updateTimeDetails(row.id, 'actualTime', e.target.value)} className="cat-input" disabled={isLocked} />
-                                                                        </div>
-                                                                        <div className="input-with-label-mini">
-                                                                            <label>Location</label>
-                                                                            <input type="text" placeholder="End location / Destination" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} className="cat-input" disabled={isLocked} />
-                                                                        </div>
-                                                                        {!row.details.isPublicTransport ? (
-                                                                            <div className="input-with-label-mini">
-                                                                                <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                                                    <span>Odo Reading</span>
-                                                                                    {eligibility?.max_mileage_km > 0 && (
-                                                                                        <span style={{ color: '#6366f1', fontSize: '0.6rem', fontWeight: 700, background: '#eef2ff', padding: '1px 5px', borderRadius: '4px' }}>Limit: {parseFloat(eligibility.max_mileage_km)} km/trip</span>
-                                                                                    )}
-                                                                                </label>
-                                                                                <input
-                                                                                    type="number"
-                                                                                    placeholder="0"
-                                                                                    value={row.details.odoEnd || ''}
-                                                                                    max={eligibility?.max_mileage_km > 0 && row.details.odoStart ? parseFloat(row.details.odoStart) + parseFloat(eligibility.max_mileage_km) : undefined}
-                                                                                    onChange={e => {
-                                                                                        const val = parseFloat(e.target.value);
-                                                                                        const start = parseFloat(row.details.odoStart || 0);
-                                                                                        const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null;
-                                                                                        if (maxKm !== null && !isNaN(val) && !isNaN(start) && (val - start) > maxKm) {
-                                                                                            showToast(`Odometer exceeds your cadre limit of ${maxKm} km/day. Max allowed end reading: ${start + maxKm}`, 'error');
-                                                                                            return;
-                                                                                        }
-                                                                                        updateDetails(row.id, 'odoEnd', e.target.value);
-                                                                                    }}
-                                                                                    className={`cat-input${(() => { const s = parseFloat(row.details.odoStart || 0); const end = parseFloat(row.details.odoEnd || 0); const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null; return maxKm !== null && (end - s) > maxKm ? ' error' : ''; })()}`}
-                                                                                    disabled={isLocked || row.date !== todayStr}
-                                                                                />
-                                                                            </div>
-                                                                        ) : (
-                                                                            <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
-                                                                                <label>Type / Public Mode</label>
-                                                                                <select
-                                                                                    className="cat-input"
-                                                                                    value={row.details.remainingRoute || 'Auto'}
-                                                                                    onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)}
-                                                                                    disabled={isLocked}
-                                                                                >
-                                                                                    <option value="Auto">Auto</option>
-                                                                                    <option value="Bus">Bus</option>
-                                                                                    <option value="Taxi">Taxi</option>
-                                                                                    <option value="Metro">Metro</option>
-                                                                                    <option value="Rickshaw">Rickshaw</option>
-                                                                                    <option value="Other">Other</option>
-                                                                                </select>
-                                                                            </div>
-                                                                        )}
-                                                                        {!row.details.isPublicTransport && (
-                                                                            <div className="input-with-label-mini">
-                                                                                <label>Odo Photo</label>
-                                                                                {(!isLocked && row.date === todayStr) ? (
-                                                                                    <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoEnd')}>
-                                                                                        {row.details.odoEndImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
-                                                                                        <span>{row.details.odoEndImg ? 'Captured' : 'Odo Pic'}</span>
-                                                                                    </button>
-                                                                                ) : (
-                                                                                    <div style={{ fontSize: '0.7rem', color: row.details.odoEndImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoEndImg ? '✓ Captured' : 'N/A'}</div>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
                                                                     </div>
-                                                                </div>
 
-                                                                {/* MILEAGE LIMIT WARNING — card layout */}
-                                                                {(() => {
-                                                                    if (!row.details.isPublicTransport && row.details.odoStart && row.details.odoEnd) {
-                                                                        const distance = parseFloat(row.details.odoEnd) - parseFloat(row.details.odoStart);
-                                                                        if (distance > 0) {
-                                                                            const mileageCheck = checkMileage(distance);
-                                                                            if (mileageCheck.exceeds) {
-                                                                                return (
-                                                                                    <div style={{
-                                                                                        display: 'flex', alignItems: 'flex-start', gap: '8px',
-                                                                                        background: '#fef2f2', border: '1px solid #fca5a5',
-                                                                                        borderRadius: '8px', padding: '8px 12px', marginBottom: '8px',
-                                                                                        fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600, lineHeight: 1.4
-                                                                                    }}>
-                                                                                        <AlertTriangle size={14} style={{ marginTop: '2px', flexShrink: 0, color: '#ef4444' }} />
-                                                                                        <span>⛔ {mileageCheck.warnMessage} Please correct the end odometer reading.</span>
+                                                                    {/* START ROW */}
+                                                                    <div style={{ background: '#f8faff', borderRadius: '10px', padding: '12px 14px' }}>
+                                                                        <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#4f46e5', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>▶ Start</div>
+                                                                        <div style={{ display: 'grid', gridTemplateColumns: '150px 110px 1fr 110px 110px', gap: '12px', alignItems: 'end' }}>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Date</label>
+                                                                                <input type="date" min={minDate} max={maxDate} value={row.date} onChange={e => updateRow(row.id, 'date', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Time</label>
+                                                                                <input type="time" step={300} value={row.timeDetails?.boardingTime || ''} onChange={e => updateTimeDetails(row.id, 'boardingTime', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Location</label>
+                                                                                <input type="text" placeholder="Start location / Origin" value={row.details.origin || ''} onChange={e => updateDetails(row.id, 'origin', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            {!row.details.isPublicTransport ? (
+                                                                                <div className="input-with-label-mini">
+                                                                                    <label>Odo Reading</label>
+                                                                                    <input type="number" placeholder="0" value={row.details.odoStart || ''} onChange={e => updateDetails(row.id, 'odoStart', e.target.value)} className="cat-input" disabled={isLocked || row.date !== todayStr} />
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
+                                                                                    <label style={{ color: '#4f46e5' }}>Fare Paid (₹)</label>
+                                                                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                                                                        <input type="number" placeholder="0.00" value={row.amount || ''} onChange={e => updateRow(row.id, 'amount', e.target.value)} className="cat-input" style={{ borderColor: '#4f46e5', fontWeight: 700, flex: 1 }} disabled={isLocked} />
+                                                                                        {!isLocked && (
+                                                                                            <button type="button" className="upload-bill-btn" style={{ height: '34px', padding: '0 10px' }} onClick={() => document.getElementById(`f-pt-${row.id}`).click()}>
+                                                                                                <Upload size={14} />
+                                                                                            </button>
+                                                                                        )}
+                                                                                        <input type="file" id={`f-pt-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
                                                                                     </div>
+                                                                                </div>
+                                                                            )}
+                                                                            {!row.details.isPublicTransport && (
+                                                                                <div className="input-with-label-mini">
+                                                                                    <label>Odo Photo</label>
+                                                                                    {(!isLocked && row.date === todayStr) ? (
+                                                                                        <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoStart')}>
+                                                                                            {row.details.odoStartImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
+                                                                                            <span>{row.details.odoStartImg ? 'Captured' : 'Odo Pic'}</span>
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <div style={{ fontSize: '0.7rem', color: row.details.odoStartImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoStartImg ? '✓ Captured' : 'N/A'}</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* END ROW */}
+                                                                    <div style={{ background: '#f0fdf4', borderRadius: '10px', padding: '12px 14px' }}>
+                                                                        <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#16a34a', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>■ End</div>
+                                                                        <div style={{ display: 'grid', gridTemplateColumns: '150px 110px 1fr 110px 110px', gap: '12px', alignItems: 'end' }}>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Date</label>
+                                                                                <input type="date" min={minDate} max={maxDate} value={row.details.endDate || row.date} onChange={e => updateDetails(row.id, 'endDate', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Time</label>
+                                                                                <input type="time" value={row.timeDetails?.actualTime || ''} onChange={e => updateTimeDetails(row.id, 'actualTime', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            <div className="input-with-label-mini">
+                                                                                <label>Location</label>
+                                                                                <input type="text" placeholder="End location / Destination" value={row.details.destination || ''} onChange={e => updateDetails(row.id, 'destination', e.target.value)} className="cat-input" disabled={isLocked} />
+                                                                            </div>
+                                                                            {!row.details.isPublicTransport ? (
+                                                                                <div className="input-with-label-mini">
+                                                                                    <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                                                        <span>Odo Reading</span>
+                                                                                        {getOdoLimit(row.details) > 0 && (
+                                                                                            <span style={{ color: '#6366f1', fontSize: '0.6rem', fontWeight: 700, background: '#eef2ff', padding: '1px 5px', borderRadius: '4px' }}>Limit: {parseFloat(getOdoLimit(row.details))} km/trip</span>
+                                                                                        )}
+                                                                                    </label>
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        placeholder="0"
+                                                                                        value={row.details.odoEnd || ''}
+                                                                                        onChange={e => {
+                                                                                            updateDetails(row.id, 'odoEnd', e.target.value);
+                                                                                        }}
+                                                                                        className="cat-input"
+                                                                                        disabled={isLocked || row.date !== todayStr}
+                                                                                    />
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
+                                                                                    <label>Type / Public Mode</label>
+                                                                                    <select
+                                                                                        className="cat-input"
+                                                                                        value={row.details.remainingRoute || 'Auto'}
+                                                                                        onChange={e => updateDetails(row.id, 'remainingRoute', e.target.value)}
+                                                                                        disabled={isLocked}
+                                                                                    >
+                                                                                        <option value="Auto">Auto</option>
+                                                                                        <option value="Bus">Bus</option>
+                                                                                        <option value="Taxi">Taxi</option>
+                                                                                        <option value="Metro">Metro</option>
+                                                                                        <option value="Rickshaw">Rickshaw</option>
+                                                                                        <option value="Other">Other</option>
+                                                                                    </select>
+                                                                                </div>
+                                                                            )}
+                                                                            {!row.details.isPublicTransport && (() => {
+                                                                                const distance = parseFloat(row.details.odoEnd || 0) - parseFloat(row.details.odoStart || 0);
+                                                                                const mileageCheck = distance > 0 ? checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType) : { exceeds: false };
+                                                                                const approvalBorderStyle = mileageCheck.exceeds && !row.details.approvalDocImg ? { border: '2px dashed #ef4444', backgroundColor: '#fef2f2' } : {};
+                                                                                return (
+                                                                                    <>
+                                                                                        <div className="input-with-label-mini">
+                                                                                            <label>Odo Photo</label>
+                                                                                            {(!isLocked && row.date === todayStr) ? (
+                                                                                                <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center' }} onClick={() => handleOdoCapture(row.id, 'odoEnd')}>
+                                                                                                    {row.details.odoEndImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
+                                                                                                    <span>{row.details.odoEndImg ? 'Captured' : 'Odo Pic'}</span>
+                                                                                                </button>
+                                                                                            ) : (
+                                                                                                <div style={{ fontSize: '0.7rem', color: row.details.odoEndImg ? '#16a34a' : '#94a3b8' }}>{row.details.odoEndImg ? '✓ Captured' : 'N/A'}</div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        {mileageCheck.exceeds && (
+                                                                                            <div className="input-with-label-mini">
+                                                                                                <label style={{ color: '#ef4444', fontWeight: 'bold' }}>Approval Doc *</label>
+                                                                                                {(!isLocked && row.date === todayStr) ? (
+                                                                                                    <button type="button" className="odo-capture-btn" style={{ width: '100%', justifyContent: 'center', ...approvalBorderStyle }} onClick={() => handleOdoCapture(row.id, 'approvalDoc')}>
+                                                                                                        {row.details.approvalDocImg ? <Check size={13} style={{ color: '#16a34a' }} /> : <Camera size={13} />}
+                                                                                                        <span>{row.details.approvalDocImg ? 'Uploaded' : 'Upload Doc'}</span>
+                                                                                                    </button>
+                                                                                                ) : (
+                                                                                                    <div style={{ fontSize: '0.7rem', color: row.details.approvalDocImg ? '#16a34a' : '#94a3b8' }}>{row.details.approvalDocImg ? '✓ Uploaded' : 'N/A'}</div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </>
                                                                                 );
+                                                                            })()}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* MILEAGE LIMIT WARNING — card layout */}
+                                                                    {(() => {
+                                                                        if (!row.details.isPublicTransport && row.details.odoStart && row.details.odoEnd) {
+                                                                            const distance = parseFloat(row.details.odoEnd) - parseFloat(row.details.odoStart);
+                                                                            if (distance > 0) {
+                                                                                const mileageCheck = checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType);
+                                                                                if (mileageCheck.exceeds) {
+                                                                                    return (
+                                                                                        <div style={{
+                                                                                            display: 'flex', alignItems: 'flex-start', gap: '8px',
+                                                                                            background: '#fef2f2', border: '1px solid #fca5a5',
+                                                                                            borderRadius: '8px', padding: '8px 12px', marginBottom: '8px',
+                                                                                            fontSize: '0.78rem', color: '#b91c1c', fontWeight: 600, lineHeight: 1.4
+                                                                                        }}>
+                                                                                            <AlertTriangle size={14} style={{ marginTop: '2px', flexShrink: 0, color: '#ef4444' }} />
+                                                                                            <span>⛔ {mileageCheck.warnMessage} Handwritten approval document from your reporting manager should be uploaded.</span>
+                                                                                        </div>
+                                                                                    );
+                                                                                }
                                                                             }
                                                                         }
-                                                                    }
-                                                                    return null;
-                                                                })()}
+                                                                        return null;
+                                                                    })()}
 
-                                                                {/* CALC + INLINE JOB REPORT */}
-                                                                <div style={{ background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                                                                    {/* Calc bar */}
-                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 14px', borderBottom: jobReportOpen[row.id] || row.details.jobReport ? '1px solid #e2e8f0' : 'none' }}>
-                                                                        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
-                                                                            {row.details.isPublicTransport ? 'Calculated Fare claim : ' : 'Calc. Odo claim : '} &nbsp;
-                                                                            <span style={{ color: '#4f46e5', fontWeight: 800, fontSize: '0.9rem' }}>₹{formatIndianCurrency(parseFloat(row.amount || 0).toFixed(2))}</span>
-                                                                        </div>
-                                                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                                            {row.details.jobReport && !jobReportOpen[row.id] && (
-                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#dcfce7', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '4px 12px' }}>
-                                                                                    <FileText size={13} style={{ color: '#16a34a' }} />
-                                                                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803d' }}>Job Report Saved</span>
+                                                                    {/* CALC + INLINE JOB REPORT */}
+                                                                    <div style={{ background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                                                                        {nature === 'Local Travel' ? (() => {
+                                                                            const displayedTotal = parseFloat(row.details?.fare_or_fuel || 0) + displayedDa;
+                                                                            const eligibleAmount = parseFloat(row.details?.eligible_da || 0);
+                                                                            const hasEligibleDA = eligibleAmount > 0;
+                                                                            return (
+                                                                                <div style={{ display: 'flex', flexDirection: 'column', padding: '12px 14px', gap: '8px', borderBottom: (jobReportOpen[row.id] || row.details.jobReport) ? '1px solid #e2e8f0' : 'none' }}>
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                                                                                        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
+                                                                                            {row.details.isPublicTransport ? 'Fare Paid : ' : 'Mileage Claim : '} &nbsp;
+                                                                                            <span style={{ color: '#0f766e', fontWeight: 800, fontSize: '0.85rem' }}>₹{formatIndianCurrency(parseFloat(row.details.fare_or_fuel || 0).toFixed(2))}</span>
+                                                                                        </div>
+                                                                                        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
+                                                                                            Daily Allowance (DA) :&nbsp;
+                                                                                            <span style={{ color: '#4f46e5', fontWeight: 800, fontSize: '0.85rem' }}>₹{formatIndianCurrency(displayedDa.toFixed(2))}</span>
+                                                                                            {row.details.is_aggregated_first && (
+                                                                                                <span style={{ marginLeft: '8px', fontSize: '0.6rem', fontWeight: 800, background: '#dbeafe', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '2px 7px' }}>
+                                                                                                    ★ PRIMARY · {row.details.da_hours ? `${parseFloat(row.details.da_hours).toFixed(1)}h` : ''}
+                                                                                                </span>
+                                                                                            )}
+                                                                                            {row.details.is_aggregated_subsequent && (
+                                                                                                <span style={{ marginLeft: '8px', fontSize: '0.6rem', fontWeight: 800, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '6px', padding: '2px 7px' }}>
+                                                                                                    AGGREGATED · DA=₹0
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
+                                                                                            Total Claim :&nbsp;
+                                                                                            <span style={{ color: '#1e1b4b', fontWeight: 900, fontSize: '0.95rem' }}>₹{formatIndianCurrency(displayedTotal.toFixed(2))}</span>
+                                                                                        </div>
+                                                                                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                                                            {row.details.jobReport && !jobReportOpen[row.id] && (
+                                                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#dcfce7', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '4px 12px' }}>
+                                                                                                    <FileText size={13} style={{ color: '#16a34a' }} />
+                                                                                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803d' }}>Job Report Saved</span>
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {!isLocked && (
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    className="job-report-btn"
+                                                                                                    style={{ background: row.details.jobReport ? '#f0fdf4' : undefined, color: row.details.jobReport ? '#15803d' : undefined, border: row.details.jobReport ? '1px solid #bbf7d0' : undefined }}
+                                                                                                    onClick={() => {
+                                                                                                        setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }));
+                                                                                                        if (!jobReportOpen[row.id]) {
+                                                                                                            setJobReportDraft(prev => ({
+                                                                                                                ...prev,
+                                                                                                                [row.id]: row.details.jobReport || '',
+                                                                                                                [`${row.id}_files`]: row.details.jobReportFiles || []
+                                                                                                            }));
+                                                                                                        }
+                                                                                                    }}
+                                                                                                >
+                                                                                                    <FileText size={14} />
+                                                                                                    {row.details.jobReport ? (jobReportOpen[row.id] ? 'Close Report' : 'Edit Report') : (jobReportOpen[row.id] ? 'Close' : 'Write Job Report')}
+                                                                                                </button>
+                                                                                            )}
+                                                                                            {isLocked && row.details.jobReport && (
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    className="job-report-btn"
+                                                                                                    onClick={() => setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }))}
+                                                                                                >
+                                                                                                    <FileText size={14} />
+                                                                                                    {jobReportOpen[row.id] ? 'Hide Report' : 'View Job Report'}
+                                                                                                </button>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    </div>
+
+                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: row.details.is_aggregated_subsequent ? '#f1f5f9' : '#e0f2fe', border: row.details.is_aggregated_subsequent ? '1px solid #cbd5e1' : '1px solid #bae6fd', borderRadius: '6px', padding: '6px 12px', fontSize: '0.72rem', color: row.details.is_aggregated_subsequent ? '#475569' : '#0369a1', fontWeight: 600 }}>
+                                                                                        <Info size={14} style={{ color: row.details.is_aggregated_subsequent ? '#64748b' : '#0284c7', flexShrink: 0 }} />
+                                                                                        <span>
+                                                                                            {row.details.is_aggregated_first ? (
+                                                                                                <span>Aggregated DA Date: <strong>{row.date}</strong> | Earliest Start: <strong>{row.details.earliest_start_time}</strong> | Latest End: <strong>{row.details.latest_end_time}</strong> | Total Hours: <strong>{parseFloat(row.details.da_hours || 0).toFixed(2)} hrs</strong> | Status: <strong style={{ textTransform: 'uppercase' }}>{row.details.da_message}</strong></span>
+                                                                                            ) : (
+                                                                                                <span>DA for this entry is aggregated under the primary entry on <strong>{row.date}</strong> to prevent double-dipping.</span>
+                                                                                            )}
+                                                                                        </span>
+                                                                                    </div>
+
+                                                                                    {row.details.is_aggregated_first && hasEligibleDA && (
+                                                                                        claimedDaRow ? (
+                                                                                            <div style={{ marginTop: '10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px 14px' }}>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                        <CheckCircle2 size={18} style={{ color: '#16a34a' }} />
+                                                                                                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#15803d' }}>
+                                                                                                            Daily Allowance Claimed: ₹{formatIndianCurrency(parseFloat(claimedDaRow.amount).toFixed(2))}
+                                                                                                        </span>
+                                                                                                    </div>
+                                                                                                    {!isLocked && (
+                                                                                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                className="job-report-btn"
+                                                                                                                style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '4px 10px', height: '28px', fontSize: '0.72rem' }}
+                                                                                                                onClick={() => {
+                                                                                                                    setDaDrafts(prev => ({
+                                                                                                                        ...prev,
+                                                                                                                        [row.date]: {
+                                                                                                                            justification: claimedDaRow.details.justification || '',
+                                                                                                                            amount: parseFloat(claimedDaRow.amount) || eligibleAmount,
+                                                                                                                            bills: claimedDaRow.bills || []
+                                                                                                                        }
+                                                                                                                    }));
+                                                                                                                    setRowsState(prevRows => prevRows.filter(r => r.id !== claimedDaRow.id));
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                Edit Claim
+                                                                                                            </button>
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                className="job-report-btn"
+                                                                                                                style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #fca5a5', padding: '4px 10px', height: '28px', fontSize: '0.72rem' }}
+                                                                                                                onClick={async () => {
+                                                                                                                    const proceed = await confirm("Are you sure you want to delete this Daily Allowance claim?");
+                                                                                                                    if (proceed) {
+                                                                                                                        setRowsState(prevRows => prevRows.filter(r => r.id !== claimedDaRow.id));
+                                                                                                                    }
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                Delete Claim
+                                                                                                            </button>
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                                {claimedDaRow.details.justification && (
+                                                                                                    <div style={{ fontSize: '0.76rem', color: '#374151', marginTop: '6px', background: 'white', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                                                                                                        <strong>Justification:</strong> {claimedDaRow.details.justification}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                                {claimedDaRow.bills && claimedDaRow.bills.length > 0 && (
+                                                                                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '8px' }}>
+                                                                                                        <span style={{ fontSize: '0.7rem', color: '#4b5563', fontWeight: 600 }}>Supporting Receipts:</span>
+                                                                                                        {claimedDaRow.bills.map((b, i) => (
+                                                                                                            <div key={i} style={{ display: 'inline-flex', cursor: 'pointer', background: '#e0f2fe', borderRadius: '6px', padding: '2px 8px', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#0369a1', fontWeight: 600 }} onClick={() => previewBill(b)}>
+                                                                                                                <FileText size={12} /> Bill {i + 1}
+                                                                                                            </div>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <div style={{ marginTop: '10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '12px 14px' }}>
+                                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                                                                                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#334155' }}>Claim Daily Allowance (Voluntary)</span>
+                                                                                                    <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                                                                                                        Eligible Limit: <strong style={{ color: '#4f46e5' }}>₹{eligibleAmount}</strong> (based on trip duration)
+                                                                                                    </span>
+                                                                                                </div>
+                                                                                                {isLocked ? (
+                                                                                                    <div style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>No claim filed for this day. (Locked)</div>
+                                                                                                ) : (
+                                                                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                                                                                        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+                                                                                                            <div style={{ flex: 1 }}>
+                                                                                                                <textarea
+                                                                                                                    className="cat-input"
+                                                                                                                    placeholder="Provide justification/basis for claiming Daily Allowance on this day *"
+                                                                                                                    value={getDaDraft(row.date, eligibleAmount).justification}
+                                                                                                                    onChange={e => updateDaDraft(row.date, 'justification', e.target.value)}
+                                                                                                                    style={{ minHeight: '60px', width: '100%', resize: 'vertical', fontSize: '0.8rem' }}
+                                                                                                                />
+                                                                                                            </div>
+                                                                                                            <div style={{ width: '120px' }}>
+                                                                                                                <div className="input-with-label-mini">
+                                                                                                                    <label style={{ color: '#4f46e5', fontSize: '0.7rem' }}>Claim Amount</label>
+                                                                                                                    <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc', height: '34px' }}>
+                                                                                                                        <span style={{ padding: '0 8px', fontSize: '0.8rem', color: '#94a3b8' }}>₹</span>
+                                                                                                                        <input
+                                                                                                                            type="number"
+                                                                                                                            value={getDaDraft(row.date, eligibleAmount).amount}
+                                                                                                                            onChange={e => updateDaDraft(row.date, 'amount', e.target.value)}
+                                                                                                                            style={{ border: 'none', background: 'transparent', width: '100%', padding: '0 4px', fontSize: '0.8rem', outline: 'none', height: '100%' }}
+                                                                                                                        />
+                                                                                                                    </div>
+                                                                                                                    {getDaDraft(row.date, eligibleAmount).amount && parseFloat(getDaDraft(row.date, eligibleAmount).amount) > eligibleAmount && (
+                                                                                                                        <div style={{ color: '#ef4444', fontSize: '0.62rem', fontWeight: 'bold', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                                                                                                            <AlertCircle size={10} /> Limit Exceeded
+                                                                                                                        </div>
+                                                                                                                    )}
+                                                                                                                </div>
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                                                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                                                                <button
+                                                                                                                    type="button"
+                                                                                                                    className="upload-bill-btn"
+                                                                                                                    style={{ height: '32px', fontSize: '0.72rem', padding: '0 12px' }}
+                                                                                                                    onClick={() => document.getElementById(`f-da-${row.id}`).click()}
+                                                                                                                >
+                                                                                                                    <Upload size={13} /> Upload Receipt *
+                                                                                                                </button>
+                                                                                                                <input
+                                                                                                                    type="file"
+                                                                                                                    id={`f-da-${row.id}`}
+                                                                                                                    hidden
+                                                                                                                    onChange={e => handleDaDraftFileUpload(row.date, e.target.files[0])}
+                                                                                                                    accept="image/*,.pdf"
+                                                                                                                />
+                                                                                                                {getDaDraft(row.date, eligibleAmount).bills.length > 0 && (
+                                                                                                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                                                                                        {getDaDraft(row.date, eligibleAmount).bills.map((b, i) => (
+                                                                                                                            <div key={i} style={{ display: 'inline-flex', cursor: 'pointer', background: '#e0f2fe', borderRadius: '6px', padding: '2px 8px', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#0369a1', fontWeight: 600 }} onClick={() => previewBill(b)}>
+                                                                                                                                <FileText size={12} /> Bill {i + 1}
+                                                                                                                                <button
+                                                                                                                                    type="button"
+                                                                                                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0, marginLeft: '2px' }}
+                                                                                                                                    onClick={e => { e.stopPropagation(); removeDaDraftBill(row.date, i); }}
+                                                                                                                                >
+                                                                                                                                    <X size={10} />
+                                                                                                                                </button>
+                                                                                                                            </div>
+                                                                                                                        ))}
+                                                                                                                    </div>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                            <button
+                                                                                                                type="button"
+                                                                                                                className="job-report-btn"
+                                                                                                                style={{
+                                                                                                                    background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)',
+                                                                                                                    color: 'white',
+                                                                                                                    border: 'none',
+                                                                                                                    padding: '0 16px',
+                                                                                                                    height: '32px',
+                                                                                                                    fontSize: '0.75rem',
+                                                                                                                    fontWeight: 700,
+                                                                                                                    borderRadius: '8px',
+                                                                                                                    cursor: 'pointer'
+                                                                                                                }}
+                                                                                                                onClick={() => {
+                                                                                                                    const draft = getDaDraft(row.date, eligibleAmount);
+                                                                                                                    if (!draft.justification || !draft.justification.trim()) {
+                                                                                                                        showToast("Justification is required to claim Daily Allowance", "error");
+                                                                                                                        return;
+                                                                                                                    }
+                                                                                                                    if (!draft.bills || draft.bills.length === 0) {
+                                                                                                                        showToast("At least one bill/receipt is required to claim Daily Allowance", "error");
+                                                                                                                        return;
+                                                                                                                    }
+                                                                                                                    const amt = parseFloat(draft.amount || 0);
+                                                                                                                    if (isNaN(amt) || amt <= 0) {
+                                                                                                                        showToast("Please specify a valid claim amount", "error");
+                                                                                                                        return;
+                                                                                                                    }
+
+                                                                                                                    const newDaRow = {
+                                                                                                                        id: `temp-${Date.now()}`,
+                                                                                                                        date: row.date,
+                                                                                                                        nature: 'Daily Allowance',
+                                                                                                                        amount: amt.toFixed(2),
+                                                                                                                        details: {
+                                                                                                                            justification: draft.justification,
+                                                                                                                            nature: 'Daily Allowance'
+                                                                                                                        },
+                                                                                                                        bills: draft.bills,
+                                                                                                                        isSaved: false
+                                                                                                                    };
+
+                                                                                                                    setRowsState(prevRows => [...prevRows, newDaRow]);
+                                                                                                                    showToast("Daily Allowance claim successfully added!", "success");
+                                                                                                                }}
+                                                                                                            >
+                                                                                                                Submit DA Claim
+                                                                                                            </button>
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        )
+                                                                                    )}
                                                                                 </div>
-                                                                            )}
-                                                                            {!isLocked && (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    className="job-report-btn"
-                                                                                    style={{ background: row.details.jobReport ? '#f0fdf4' : undefined, color: row.details.jobReport ? '#15803d' : undefined, border: row.details.jobReport ? '1px solid #bbf7d0' : undefined }}
-                                                                                    onClick={() => {
-                                                                                        setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }));
-                                                                                        if (!jobReportOpen[row.id]) {
-                                                                                            setJobReportDraft(prev => ({
-                                                                                                ...prev,
-                                                                                                [row.id]: row.details.jobReport || '',
-                                                                                                [`${row.id}_files`]: row.details.jobReportFiles || []
-                                                                                            }));
-                                                                                        }
-                                                                                    }}
-                                                                                >
-                                                                                    <FileText size={14} />
-                                                                                    {row.details.jobReport ? (jobReportOpen[row.id] ? 'Close Report' : 'Edit Report') : (jobReportOpen[row.id] ? 'Close' : 'Write Job Report')}
-                                                                                </button>
-                                                                            )}
-                                                                            {isLocked && row.details.jobReport && (
-                                                                                <button
-                                                                                    type="button"
-                                                                                    className="job-report-btn"
-                                                                                    onClick={() => setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }))}
-                                                                                >
-                                                                                    <FileText size={14} />
-                                                                                    {jobReportOpen[row.id] ? 'Hide Report' : 'View Job Report'}
-                                                                                </button>
-                                                                            )}
-                                                                        </div>
+                                                                            );
+                                                                        })() : (
+                                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 14px', borderBottom: jobReportOpen[row.id] || row.details.jobReport ? '1px solid #e2e8f0' : 'none' }}>
+                                                                                <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#475569' }}>
+                                                                                    {row.details.isPublicTransport ? 'Calculated Fare claim : ' : 'Calc. Odo claim : '} &nbsp;
+                                                                                    <span style={{ color: '#4f46e5', fontWeight: 800, fontSize: '0.9rem' }}>₹{formatIndianCurrency(parseFloat(row.amount || 0).toFixed(2))}</span>
+                                                                                </div>
+                                                                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                                                    {row.details.jobReport && !jobReportOpen[row.id] && (
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#dcfce7', border: '1px solid #bbf7d0', borderRadius: '20px', padding: '4px 12px' }}>
+                                                                                            <FileText size={13} style={{ color: '#16a34a' }} />
+                                                                                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#15803d' }}>Job Report Saved</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {!isLocked && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="job-report-btn"
+                                                                                            style={{ background: row.details.jobReport ? '#f0fdf4' : undefined, color: row.details.jobReport ? '#15803d' : undefined, border: row.details.jobReport ? '1px solid #bbf7d0' : undefined }}
+                                                                                            onClick={() => {
+                                                                                                setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }));
+                                                                                                if (!jobReportOpen[row.id]) {
+                                                                                                    setJobReportDraft(prev => ({
+                                                                                                        ...prev,
+                                                                                                        [row.id]: row.details.jobReport || '',
+                                                                                                        [`${row.id}_files`]: row.details.jobReportFiles || []
+                                                                                                    }));
+                                                                                                }
+                                                                                            }}
+                                                                                        >
+                                                                                            <FileText size={14} />
+                                                                                            {row.details.jobReport ? (jobReportOpen[row.id] ? 'Close Report' : 'Edit Report') : (jobReportOpen[row.id] ? 'Close' : 'Write Job Report')}
+                                                                                        </button>
+                                                                                    )}
+                                                                                    {isLocked && row.details.jobReport && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="job-report-btn"
+                                                                                            onClick={() => setJobReportOpen(prev => ({ ...prev, [row.id]: !prev[row.id] }))}
+                                                                                        >
+                                                                                            <FileText size={14} />
+                                                                                            {jobReportOpen[row.id] ? 'Hide Report' : 'View Job Report'}
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {/* Inline composer / viewer */}
+                                                                        {jobReportOpen[row.id] && (
+                                                                            isLocked ? (
+                                                                                /* ── VIEW MODE ── */
+                                                                                <div style={{ borderTop: '1px solid #e2e8f0', background: 'white' }}>
+                                                                                    <div style={{ padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>
+                                                                                        <span style={{ color: '#94a3b8', marginRight: '8px' }}>Subject</span>
+                                                                                        {tripId} — Job / Activity Report
+                                                                                    </div>
+                                                                                    <div style={{ padding: '16px', fontSize: '0.88rem', color: '#1e293b', lineHeight: 1.7, whiteSpace: 'pre-wrap', minHeight: '80px' }}>
+                                                                                        {row.details.jobReport}
+                                                                                    </div>
+                                                                                    {row.details.jobReportFiles && row.details.jobReportFiles.length > 0 && (
+                                                                                        <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                                                            {row.details.jobReportFiles.map((f, fi) => (
+                                                                                                <a key={fi} href={getFullUrl(f.data)} download={f.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', textDecoration: 'none' }}>
+                                                                                                    <FileText size={13} /> {f.name}
+                                                                                                </a>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : (
+                                                                                /* ── COMPOSE MODE — email-style ── */
+                                                                                <div style={{ borderTop: '1px solid #e2e8f0', background: 'white', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
+                                                                                    {/* Dark header */}
+                                                                                    <div style={{ background: '#1e293b', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'white' }}>
+                                                                                            {row.details.jobReport ? 'Edit Job Report' : 'New Job Report'}
+                                                                                        </span>
+                                                                                        <button type="button" onClick={() => setJobReportOpen(prev => ({ ...prev, [row.id]: false }))} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                                                            <X size={14} />
+                                                                                        </button>
+                                                                                    </div>
+
+                                                                                    {/* Subject line */}
+                                                                                    <div style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', gap: '10px' }}>
+                                                                                        <span style={{ fontSize: '0.82rem', color: '#94a3b8', fontWeight: 500, minWidth: '55px' }}>Subject</span>
+                                                                                        <span style={{ fontSize: '0.82rem', color: '#1e293b', fontWeight: 500 }}>
+                                                                                            {tripId} — Job / Activity Report
+                                                                                        </span>
+                                                                                    </div>
+
+                                                                                    {/* Body */}
+                                                                                    <textarea
+                                                                                        rows={7}
+                                                                                        style={{ width: '100%', border: 'none', borderBottom: '1px solid #f1f5f9', padding: '14px 16px', fontSize: '0.88rem', color: '#1e293b', resize: 'vertical', outline: 'none', fontFamily: 'inherit', lineHeight: 1.7, background: 'white', display: 'block', boxSizing: 'border-box' }}
+                                                                                        placeholder="Write your detailed job/activity report here..."
+                                                                                        value={jobReportDraft[row.id] ?? row.details.jobReport ?? ''}
+                                                                                        onChange={e => setJobReportDraft(prev => ({ ...prev, [row.id]: e.target.value }))}
+                                                                                        autoFocus
+                                                                                    />
+
+                                                                                    {/* Attached files preview */}
+                                                                                    {(jobReportDraft[`${row.id}_files`] || []).length > 0 && (
+                                                                                        <div style={{ padding: '6px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap', borderBottom: '1px solid #f1f5f9' }}>
+                                                                                            {(jobReportDraft[`${row.id}_files`] || []).map((f, fi) => (
+                                                                                                <div key={fi} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155' }}>
+                                                                                                    <FileText size={13} /> {f.name}
+                                                                                                    <button type="button" onClick={() => { setJobReportDraft(prev => { const files = (prev[`${row.id}_files`] || []).filter((_, i) => i !== fi); return { ...prev, [`${row.id}_files`]: files }; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, marginLeft: '2px', lineHeight: 1 }}>
+                                                                                                        <X size={11} />
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    )}
+
+                                                                                    {/* Bottom bar */}
+                                                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#f8fafc', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
+                                                                                        {/* Send button */}
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 20px', borderRadius: '22px', border: 'none', background: 'linear-gradient(135deg, #4f83cc, #6ba3e0)', fontSize: '0.85rem', fontWeight: 700, color: 'white', cursor: 'pointer', boxShadow: '0 2px 6px rgba(79,131,204,0.4)' }}
+                                                                                            onClick={() => {
+                                                                                                const text = jobReportDraft[row.id] ?? '';
+                                                                                                const files = jobReportDraft[`${row.id}_files`] ?? [];
+                                                                                                updateDetails(row.id, 'jobReport', text);
+                                                                                                updateDetails(row.id, 'jobReportFiles', files);
+                                                                                                setJobReportOpen(prev => ({ ...prev, [row.id]: false }));
+                                                                                                showToast('Job report applied to entry. Click "Commit Registry" to save permanently.', 'success');
+                                                                                            }}
+                                                                                        >
+                                                                                            Apply to Entry
+                                                                                            <ChevronDown size={15} />
+                                                                                        </button>
+
+                                                                                        {/* Right: Attach + Discard */}
+                                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                                                            {/* Attach file */}
+                                                                                            <button type="button" title="Attach file" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
+                                                                                                onClick={() => document.getElementById(`jr-file-${row.id}`).click()}>
+                                                                                                <Upload size={17} />
+                                                                                            </button>
+                                                                                            <input type="file" id={`jr-file-${row.id}`} hidden multiple accept="image/*,.pdf,.doc,.docx"
+                                                                                                onChange={e => {
+                                                                                                    const validFiles = Array.from(e.target.files).filter(file => {
+                                                                                                        if (file.size > 10 * 1024 * 1024) {
+                                                                                                            showToast(`File "${file.name}" is too large (max 10MB). Converting huge PDFs to base64 can crash the page.`, 'error');
+                                                                                                            return false;
+                                                                                                        }
+                                                                                                        return true;
+                                                                                                    });
+
+                                                                                                    const newFilesPromises = validFiles.map(file => {
+                                                                                                        return new Promise(resolve => {
+                                                                                                            const reader = new FileReader();
+                                                                                                            reader.onload = ev => resolve({ name: file.name, data: ev.target.result });
+                                                                                                            reader.readAsDataURL(file);
+                                                                                                        });
+                                                                                                    });
+                                                                                                    Promise.all(newFilesPromises).then(resolved => {
+                                                                                                        setJobReportDraft(prev => ({ ...prev, [`${row.id}_files`]: [...(prev[`${row.id}_files`] || []), ...resolved] }));
+                                                                                                    });
+                                                                                                    if (e.target) e.target.value = '';
+                                                                                                }}
+                                                                                            />
+                                                                                            {/* Discard */}
+                                                                                            <button type="button" title="Discard" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
+                                                                                                onClick={() => {
+                                                                                                    setJobReportOpen(prev => ({ ...prev, [row.id]: false }));
+                                                                                                    setJobReportDraft(prev => { const n = { ...prev }; delete n[row.id]; delete n[`${row.id}_files`]; return n; });
+                                                                                                }}>
+                                                                                                <X size={17} />
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )
+                                                                        )}
                                                                     </div>
 
-                                                                    {/* Inline composer / viewer */}
-                                                                    {jobReportOpen[row.id] && (
-                                                                        isLocked ? (
-                                                                            /* ── VIEW MODE ── */
-                                                                            <div style={{ borderTop: '1px solid #e2e8f0', background: 'white' }}>
-                                                                                <div style={{ padding: '10px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>
-                                                                                    <span style={{ color: '#94a3b8', marginRight: '8px' }}>Subject</span>
-                                                                                    {tripId} — Job / Activity Report
+                                                                    {/* INCIDENTAL + DAY TOTAL */}
+                                                                    <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+                                                                        <div style={{ flex: 1, minWidth: '300px' }}>
+                                                                            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Incidental Expenses (Optional)</div>
+                                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                                                                <select className="cat-input" style={{ width: '175px', flexShrink: 0 }} value={row.details.incidentalCategory || ''} onChange={e => updateDetails(row.id, 'incidentalCategory', e.target.value)} disabled={isLocked}>
+                                                                                    <option value="">Select Category</option>
+                                                                                    {incidentalTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                                                                                </select>
+                                                                                <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc', height: '34px', flexShrink: 0 }}>
+                                                                                    <span style={{ padding: '0 10px', fontSize: '0.85rem', color: '#94a3b8', borderRight: '1px solid #e2e8f0', lineHeight: '34px' }}>₹</span>
+                                                                                    <input type="number" placeholder="Cost" style={{ border: 'none', background: 'transparent', width: '90px', padding: '0 10px', fontSize: '0.85rem', outline: 'none', height: '100%' }} value={row.details.incidentalAmount || ''} onChange={e => updateDetails(row.id, 'incidentalAmount', e.target.value)} disabled={isLocked} />
                                                                                 </div>
-                                                                                <div style={{ padding: '16px', fontSize: '0.88rem', color: '#1e293b', lineHeight: 1.7, whiteSpace: 'pre-wrap', minHeight: '80px' }}>
-                                                                                    {row.details.jobReport}
-                                                                                </div>
-                                                                                {row.details.jobReportFiles && row.details.jobReportFiles.length > 0 && (
-                                                                                    <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                                                                        {row.details.jobReportFiles.map((f, fi) => (
-                                                                                            <a key={fi} href={getFullUrl(f.data)} download={f.name} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155', textDecoration: 'none' }}>
-                                                                                                <FileText size={13} /> {f.name}
-                                                                                            </a>
-                                                                                        ))}
-                                                                                    </div>
+                                                                                {!isLocked && (
+                                                                                    <>
+                                                                                        <button type="button" className="upload-bill-btn" onClick={() => document.getElementById(`f-${row.id}`).click()}>
+                                                                                            <Upload size={13} /> Upload Bill
+                                                                                        </button>
+                                                                                        <input type="file" id={`f-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
+                                                                                    </>
                                                                                 )}
-                                                                            </div>
-                                                                        ) : (
-                                                                            /* ── COMPOSE MODE — email-style ── */
-                                                                            <div style={{ borderTop: '1px solid #e2e8f0', background: 'white', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
-                                                                                {/* Dark header */}
-                                                                                <div style={{ background: '#1e293b', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                                                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'white' }}>
-                                                                                        {row.details.jobReport ? 'Edit Job Report' : 'New Job Report'}
-                                                                                    </span>
-                                                                                    <button type="button" onClick={() => setJobReportOpen(prev => ({ ...prev, [row.id]: false }))} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                                                        <X size={14} />
-                                                                                    </button>
-                                                                                </div>
-
-                                                                                {/* Subject line */}
-                                                                                <div style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid #f1f5f9', gap: '10px' }}>
-                                                                                    <span style={{ fontSize: '0.82rem', color: '#94a3b8', fontWeight: 500, minWidth: '55px' }}>Subject</span>
-                                                                                    <span style={{ fontSize: '0.82rem', color: '#1e293b', fontWeight: 500 }}>
-                                                                                        {tripId} — Job / Activity Report
-                                                                                    </span>
-                                                                                </div>
-
-                                                                                {/* Body */}
-                                                                                <textarea
-                                                                                    rows={7}
-                                                                                    style={{ width: '100%', border: 'none', borderBottom: '1px solid #f1f5f9', padding: '14px 16px', fontSize: '0.88rem', color: '#1e293b', resize: 'vertical', outline: 'none', fontFamily: 'inherit', lineHeight: 1.7, background: 'white', display: 'block', boxSizing: 'border-box' }}
-                                                                                    placeholder="Write your detailed job/activity report here..."
-                                                                                    value={jobReportDraft[row.id] ?? row.details.jobReport ?? ''}
-                                                                                    onChange={e => setJobReportDraft(prev => ({ ...prev, [row.id]: e.target.value }))}
-                                                                                    autoFocus
-                                                                                />
-
-                                                                                {/* Attached files preview */}
-                                                                                {(jobReportDraft[`${row.id}_files`] || []).length > 0 && (
-                                                                                    <div style={{ padding: '6px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap', borderBottom: '1px solid #f1f5f9' }}>
-                                                                                        {(jobReportDraft[`${row.id}_files`] || []).map((f, fi) => (
-                                                                                            <div key={fi} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', background: '#f1f5f9', borderRadius: '8px', padding: '4px 10px', fontSize: '0.75rem', fontWeight: 600, color: '#334155' }}>
-                                                                                                <FileText size={13} /> {f.name}
-                                                                                                <button type="button" onClick={() => { setJobReportDraft(prev => { const files = (prev[`${row.id}_files`] || []).filter((_, i) => i !== fi); return { ...prev, [`${row.id}_files`]: files }; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 0, marginLeft: '2px', lineHeight: 1 }}>
-                                                                                                    <X size={11} />
-                                                                                                </button>
+                                                                                {(row.bills || []).length > 0 && (
+                                                                                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                                                                        {row.bills.map((b, i) => (
+                                                                                            <div key={i} style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer', background: '#e0f2fe', borderRadius: '6px', padding: '4px 8px', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#0369a1', fontWeight: 600 }} onClick={() => previewBill(b)}>
+                                                                                                <FileText size={12} /> Bill {i + 1}
+                                                                                                {!isLocked && (
+                                                                                                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0, lineHeight: 1, marginLeft: '2px' }} onClick={e => { e.stopPropagation(); removeBill(row.id, i); }}>
+                                                                                                        <X size={10} />
+                                                                                                    </button>
+                                                                                                )}
                                                                                             </div>
                                                                                         ))}
                                                                                     </div>
                                                                                 )}
-
-                                                                                {/* Bottom bar */}
-                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', background: '#f8fafc', borderBottomLeftRadius: '10px', borderBottomRightRadius: '10px' }}>
-                                                                                    {/* Send button */}
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 20px', borderRadius: '22px', border: 'none', background: 'linear-gradient(135deg, #4f83cc, #6ba3e0)', fontSize: '0.85rem', fontWeight: 700, color: 'white', cursor: 'pointer', boxShadow: '0 2px 6px rgba(79,131,204,0.4)' }}
-                                                                                        onClick={() => {
-                                                                                            const text = jobReportDraft[row.id] ?? '';
-                                                                                            const files = jobReportDraft[`${row.id}_files`] ?? [];
-                                                                                            updateDetails(row.id, 'jobReport', text);
-                                                                                            updateDetails(row.id, 'jobReportFiles', files);
-                                                                                            setJobReportOpen(prev => ({ ...prev, [row.id]: false }));
-                                                                                            showToast('Job report applied to entry. Click "Commit Registry" to save permanently.', 'success');
-                                                                                        }}
-                                                                                    >
-                                                                                        Apply to Entry
-                                                                                        <ChevronDown size={15} />
-                                                                                    </button>
-
-                                                                                    {/* Right: Attach + Discard */}
-                                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                                                        {/* Attach file */}
-                                                                                        <button type="button" title="Attach file" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
-                                                                                            onClick={() => document.getElementById(`jr-file-${row.id}`).click()}>
-                                                                                            <Upload size={17} />
-                                                                                        </button>
-                                                                                        <input type="file" id={`jr-file-${row.id}`} hidden multiple accept="image/*,.pdf,.doc,.docx"
-                                                                                            onChange={e => {
-                                                                                                const validFiles = Array.from(e.target.files).filter(file => {
-                                                                                                    if (file.size > 10 * 1024 * 1024) {
-                                                                                                        showToast(`File "${file.name}" is too large (max 10MB). Converting huge PDFs to base64 can crash the page.`, 'error');
-                                                                                                        return false;
-                                                                                                    }
-                                                                                                    return true;
-                                                                                                });
-
-                                                                                                const newFilesPromises = validFiles.map(file => {
-                                                                                                    return new Promise(resolve => {
-                                                                                                        const reader = new FileReader();
-                                                                                                        reader.onload = ev => resolve({ name: file.name, data: ev.target.result });
-                                                                                                        reader.readAsDataURL(file);
-                                                                                                    });
-                                                                                                });
-                                                                                                Promise.all(newFilesPromises).then(resolved => {
-                                                                                                    setJobReportDraft(prev => ({ ...prev, [`${row.id}_files`]: [...(prev[`${row.id}_files`] || []), ...resolved] }));
-                                                                                                });
-                                                                                                if (e.target) e.target.value = '';
-                                                                                            }}
-                                                                                        />
-                                                                                        {/* Discard */}
-                                                                                        <button type="button" title="Discard" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
-                                                                                            onClick={() => {
-                                                                                                setJobReportOpen(prev => ({ ...prev, [row.id]: false }));
-                                                                                                setJobReportDraft(prev => { const n = { ...prev }; delete n[row.id]; delete n[`${row.id}_files`]; return n; });
-                                                                                            }}>
-                                                                                            <X size={17} />
-                                                                                        </button>
-                                                                                    </div>
-                                                                                </div>
                                                                             </div>
-                                                                        )
-                                                                    )}
-                                                                </div>
-
-                                                                {/* INCIDENTAL + DAY TOTAL */}
-                                                                <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
-                                                                    <div style={{ flex: 1, minWidth: '300px' }}>
-                                                                        <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Incidental Expenses (Optional)</div>
-                                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                                                            <select className="cat-input" style={{ width: '175px', flexShrink: 0 }} value={row.details.incidentalCategory || ''} onChange={e => updateDetails(row.id, 'incidentalCategory', e.target.value)} disabled={isLocked}>
-                                                                                <option value="">Select Category</option>
-                                                                                {incidentalTypes.map(t => <option key={t} value={t}>{t}</option>)}
-                                                                            </select>
-                                                                            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc', height: '34px', flexShrink: 0 }}>
-                                                                                <span style={{ padding: '0 10px', fontSize: '0.85rem', color: '#94a3b8', borderRight: '1px solid #e2e8f0', lineHeight: '34px' }}>₹</span>
-                                                                                <input type="number" placeholder="Cost" style={{ border: 'none', background: 'transparent', width: '90px', padding: '0 10px', fontSize: '0.85rem', outline: 'none', height: '100%' }} value={row.details.incidentalAmount || ''} onChange={e => updateDetails(row.id, 'incidentalAmount', e.target.value)} disabled={isLocked} />
-                                                                            </div>
-                                                                            {!isLocked && (
-                                                                                <>
-                                                                                    <button type="button" className="upload-bill-btn" onClick={() => document.getElementById(`f-${row.id}`).click()}>
-                                                                                        <Upload size={13} /> Upload Bill
-                                                                                    </button>
-                                                                                    <input type="file" id={`f-${row.id}`} hidden onChange={e => handleFileUpload(row.id, e.target.files[0])} accept="image/*,.pdf" />
-                                                                                </>
-                                                                            )}
-                                                                            {(row.bills || []).length > 0 && (
-                                                                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                                                                    {row.bills.map((b, i) => (
-                                                                                        <div key={i} style={{ position: 'relative', display: 'inline-flex', cursor: 'pointer', background: '#e0f2fe', borderRadius: '6px', padding: '4px 8px', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: '#0369a1', fontWeight: 600 }} onClick={() => previewBill(b)}>
-                                                                                            <FileText size={12} /> Bill {i + 1}
-                                                                                            {!isLocked && (
-                                                                                                <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 0, lineHeight: 1, marginLeft: '2px' }} onClick={e => { e.stopPropagation(); removeBill(row.id, i); }}>
-                                                                                                    <X size={10} />
-                                                                                                </button>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    ))}
-                                                                                </div>
-                                                                            )}
+                                                                        </div>
+                                                                        <div style={{ background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)', borderRadius: '12px', padding: '10px 20px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+                                                                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Day Total</span>
+                                                                            <span style={{ fontSize: '1.4rem', fontWeight: 900, color: 'white', lineHeight: 1.1 }}>
+                                                                                ₹{formatIndianCurrency((
+                                                                                    parseFloat(row.amount || 0) +
+                                                                                    parseFloat(row.details?.incidentalAmount || 0) +
+                                                                                    (nature === 'Local Travel' ? displayedDa : 0)
+                                                                                ).toFixed(2))}
+                                                                            </span>
                                                                         </div>
                                                                     </div>
-                                                                    <div style={{ background: 'linear-gradient(135deg, #4f46e5, #0ea5e9)', borderRadius: '12px', padding: '10px 20px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                                                                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: 'rgba(255,255,255,0.75)', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Day Total</span>
-                                                                        <span style={{ fontSize: '1.4rem', fontWeight: 900, color: 'white', lineHeight: 1.1 }}>
-                                                                            ₹{formatIndianCurrency((parseFloat(row.amount || 0) + parseFloat(row.details.incidentalAmount || 0)).toFixed(2))}
-                                                                        </span>
-                                                                    </div>
-                                                                </div>
 
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
                                             </React.Fragment>
                                         ));
                                     })()
@@ -2756,17 +3391,17 @@ const TravelExpenseGrid = ({
                                                                     {bookedByOptions.map(b => <option key={b} value={b}>{b}</option>)}
                                                                 </select>
 
-                                                                {row.details.mode && (row.details.mode !== 'Bike' || row.details.subType !== 'Own Bike') && (
+                                                                {row.details.mode && checkLocalTravel(row.details.mode, row.details.subType).allowed === false && (
                                                                     <div className="mt-1" style={{ position: 'relative' }}>
                                                                         <input
                                                                             type="text"
                                                                             className="cat-input"
-                                                                            placeholder="Reason for non-default travel *"
+                                                                            placeholder="Reason required — mode not in cadre entitlement *"
                                                                             value={row.details.otherReason || ''}
                                                                             onChange={e => updateDetails(row.id, 'otherReason', e.target.value)}
                                                                             disabled={isFixedLocal}
                                                                             style={{ border: '1px solid #f97316' }}
-                                                                            title="Reason is mandatory when deviating from Bike and Own Bike"
+                                                                            title="Reason is mandatory when using a travel mode not permitted for your cadre"
                                                                         />
                                                                     </div>
                                                                 )}
@@ -2829,6 +3464,34 @@ const TravelExpenseGrid = ({
                                                                     <input type="time" value={row.timeDetails.actualTime || ''} onChange={e => updateTimeDetails(row.id, 'actualTime', e.target.value)} />
                                                                 </div>
 
+                                                                <div style={{ gridColumn: '1 / -1', marginTop: '10px', padding: '10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                                                                    <div style={{ display: 'flex', gap: '12px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                                                                        <div>
+                                                                            <label className="odo-label" style={{ display: 'block', marginBottom: '4px', color: '#4f46e5', fontWeight: 800 }}>Applied DA (₹)</label>
+                                                                            <input
+                                                                                type="number"
+                                                                                placeholder="0.00"
+                                                                                value={row.details.daily_allowance !== undefined ? row.details.daily_allowance : ''}
+                                                                                onChange={e => {
+                                                                                    const val = parseFloat(e.target.value) || 0;
+                                                                                    updateDetails(row.id, 'daily_allowance', val);
+                                                                                }}
+                                                                                style={{ width: '120px', padding: '6px 8px', fontSize: '0.8rem', borderRadius: '6px', border: '1px solid #cbd5e1' }}
+                                                                                disabled={isLocked}
+                                                                            />
+                                                                        </div>
+                                                                        <div style={{ fontSize: '0.75rem', color: '#64748b', textAlign: 'right' }}>
+                                                                            <div>Eligible DA: <strong style={{ color: '#1e293b' }}>₹{parseFloat(row.details.eligible_da || 0).toFixed(2)}</strong></div>
+                                                                            <div>Trip Hours: <strong style={{ color: '#1e293b' }}>{parseFloat(row.details.da_hours || 0).toFixed(1)} hrs</strong></div>
+                                                                            {row.details.da_message && (
+                                                                                <div style={{ marginTop: '2px', fontWeight: 600, color: '#166534' }}>
+                                                                                    {row.details.da_message}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+
                                                                 <div className="odo-tracking mt-2" style={{ gridColumn: '1 / -1' }}>
                                                                     {/* TOGGLE FOR VEHICLE vs OTHERS */}
                                                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: '#f1f5f9', borderRadius: '8px', padding: '3px', marginBottom: '12px' }}>
@@ -2885,22 +3548,29 @@ const TravelExpenseGrid = ({
                                                                                         type="number"
                                                                                         placeholder="0"
                                                                                         value={row.details.odoEnd || ''}
-                                                                                        max={eligibility?.max_mileage_km > 0 && row.details.odoStart ? parseFloat(row.details.odoStart) + parseFloat(eligibility.max_mileage_km) : undefined}
                                                                                         onChange={e => {
-                                                                                            const val = parseFloat(e.target.value);
-                                                                                            const start = parseFloat(row.details.odoStart || 0);
-                                                                                            const maxKm = eligibility?.max_mileage_km > 0 ? parseFloat(eligibility.max_mileage_km) : null;
-                                                                                            if (maxKm !== null && !isNaN(val) && !isNaN(start) && (val - start) > maxKm) {
-                                                                                                showToast(`Odometer exceeds your cadre limit of ${maxKm} km/day. Max allowed end reading: ${start + maxKm}`, 'error');
-                                                                                                return;
-                                                                                            }
                                                                                             updateDetails(row.id, 'odoEnd', e.target.value);
                                                                                         }}
                                                                                         className={errors[row.id]?.odoEnd ? 'error' : ''}
                                                                                         style={{ paddingRight: '50px', width: '100%' }}
                                                                                         disabled={isLocked || row.date !== todayStr}
                                                                                     />
-                                                                                    <button type="button" className="odo-cam-btn" onClick={() => handleOdoCapture(row.id, 'odoEnd')} disabled={isLocked || row.date !== todayStr}>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        className="odo-cam-btn"
+                                                                                        onClick={() => handleOdoCapture(row.id, 'odoEnd')}
+                                                                                        disabled={isLocked || row.date !== todayStr}
+                                                                                        style={(() => {
+                                                                                            const distance = parseFloat(row.details.odoEnd || 0) - parseFloat(row.details.odoStart || 0);
+                                                                                            const mileageCheck = distance > 0 ? checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType) : { exceeds: false };
+                                                                                            return mileageCheck.exceeds && !row.details.odoEndImg ? { border: '1px dashed #ef4444', background: '#fef2f2' } : {};
+                                                                                        })()}
+                                                                                        title={(() => {
+                                                                                            const distance = parseFloat(row.details.odoEnd || 0) - parseFloat(row.details.odoStart || 0);
+                                                                                            const mileageCheck = distance > 0 ? checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType) : { exceeds: false };
+                                                                                            return mileageCheck.exceeds ? 'Upload handwritten approval document from reporting manager' : 'Upload odometer end photo';
+                                                                                        })()}
+                                                                                    >
                                                                                         {row.details.odoEndImg ? <Check size={12} className="text-success" /> : <Camera size={12} />}
                                                                                     </button>
                                                                                 </div>
@@ -2909,11 +3579,11 @@ const TravelExpenseGrid = ({
                                                                                 if (row.details.odoStart && row.details.odoEnd) {
                                                                                     const distance = parseFloat(row.details.odoEnd) - parseFloat(row.details.odoStart);
                                                                                     if (distance > 0) {
-                                                                                        const mileageCheck = checkMileage(distance);
+                                                                                        const mileageCheck = checkMileage(distance, row.details.mode, row.details.subType || row.details.vehicleType);
                                                                                         if (mileageCheck.exceeds) {
                                                                                             return (
-                                                                                                <div className="text-warning mb-2" style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, color: '#d97706' }}>
-                                                                                                    <AlertTriangle size={12} /> {mileageCheck.warnMessage}
+                                                                                                <div className="text-warning mb-2" style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, color: '#b91c1c' }}>
+                                                                                                    <AlertTriangle size={12} style={{ color: '#ef4444' }} /> {mileageCheck.warnMessage} Handwritten approval document from your reporting manager should be uploaded.
                                                                                                 </div>
                                                                                             );
                                                                                         }
@@ -2950,8 +3620,8 @@ const TravelExpenseGrid = ({
                                                                                         <input
                                                                                             type="number"
                                                                                             placeholder="0.00"
-                                                                                            value={row.amount || ''}
-                                                                                            onChange={e => updateRow(row.id, 'amount', e.target.value)}
+                                                                                            value={row.details.fare_or_fuel !== undefined ? row.details.fare_or_fuel : ''}
+                                                                                            onChange={e => updateDetails(row.id, 'fare_or_fuel', e.target.value)}
                                                                                             style={{ width: '100%', fontSize: '0.85rem', fontWeight: 700, padding: '8px', borderRadius: '6px', border: '1px solid #4f46e5', background: '#f5f3ff' }}
                                                                                             disabled={isLocked}
                                                                                         />
@@ -3058,14 +3728,40 @@ const TravelExpenseGrid = ({
                                                         <td>
                                                             <div className="row-fields">
                                                                 <div className="input-with-label-mini">
-                                                                    <label>RESTAURANT / HOTEL NAME</label>
-                                                                    <input type="text" placeholder="Hotel Name" value={row.details.restaurant || ''} onChange={e => updateDetails(row.id, 'restaurant', e.target.value)} disabled={row.details.mealCategory && row.details.mealCategory !== 'Self Meal'} />
+                                                                    <label>MEAL SOURCE</label>
+                                                                    <select className="cat-input" value={row.details.mealSource || ''} onChange={e => {
+                                                                        updateDetails(row.id, 'mealSource', e.target.value);
+                                                                        updateDetails(row.id, 'provider', '');
+                                                                        updateDetails(row.id, 'hotelName', '');
+                                                                    }}>
+                                                                        <option value="">Select Source</option>
+                                                                        {mealSources.map(s => <option key={s} value={s}>{s}</option>)}
+                                                                    </select>
                                                                 </div>
-                                                                <div className="field-group mt-1">
-                                                                    <div className="input-with-label-mini" style={{ flex: 2 }}>
-                                                                        <label>ADDRESS</label>
-                                                                        <input type="text" placeholder="Location Address" value={row.details.purpose || ''} onChange={e => updateDetails(row.id, 'purpose', e.target.value)} disabled={row.details.mealCategory && row.details.mealCategory !== 'Self Meal'} />
+                                                                {(row.details.mealSource || '').toUpperCase() === 'ONLINE' && mealProviders.length > 0 && (
+                                                                    <div className="input-with-label-mini mt-1">
+                                                                        <label>PROVIDER</label>
+                                                                        <select className="cat-input" value={row.details.provider || ''} onChange={e => updateDetails(row.id, 'provider', e.target.value)}>
+                                                                            <option value="">Select Provider</option>
+                                                                            {mealProviders.map(p => <option key={p} value={p}>{p}</option>)}
+                                                                        </select>
                                                                     </div>
+                                                                )}
+                                                                {['RESTAURANT', 'HOTEL', 'ONLINE'].includes((row.details.mealSource || '').toUpperCase()) && (
+                                                                    <div className="input-with-label-mini mt-1">
+                                                                        <label>{(row.details.mealSource || '').toUpperCase() === 'HOTEL' ? 'HOTEL NAME' : 'OUTLET NAME'}</label>
+                                                                        <input
+                                                                            type="text"
+                                                                            className="cat-input"
+                                                                            placeholder={(row.details.mealSource || '').toUpperCase() === 'HOTEL' ? 'Hotel name' : 'Restaurant / outlet'}
+                                                                            value={row.details.hotelName || ''}
+                                                                            onChange={e => updateDetails(row.id, 'hotelName', e.target.value)}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                                <div className="input-with-label-mini mt-1">
+                                                                    <label>ADDRESS</label>
+                                                                    <input type="text" placeholder="Location Address" value={row.details.purpose || ''} onChange={e => updateDetails(row.id, 'purpose', e.target.value)} disabled={row.details.mealCategory && row.details.mealCategory !== 'Self Meal'} />
                                                                 </div>
                                                             </div>
                                                         </td>
@@ -3161,6 +3857,24 @@ const TravelExpenseGrid = ({
                                                             </div>
                                                         </td>
                                                     </>
+                                                )}
+
+                                                {nature === 'Daily Allowance' && (
+                                                    <td>
+                                                        <div className="row-fields">
+                                                            <div className="input-with-label-mini" style={{ width: '100%' }}>
+                                                                <label>JUSTIFICATION / BASIS *</label>
+                                                                <textarea
+                                                                    className="cat-input"
+                                                                    placeholder="Provide justification/basis for claiming Daily Allowance"
+                                                                    value={row.details.justification || ''}
+                                                                    onChange={e => updateDetails(row.id, 'justification', e.target.value)}
+                                                                    style={{ minHeight: '60px', width: '100%', resize: 'vertical' }}
+                                                                    disabled={isLocked}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </td>
                                                 )}
 
                                                 {/* COMMON COLUMNS */}
@@ -3413,6 +4127,7 @@ const TravelExpenseGrid = ({
                                 <th>Category</th>
                                 <th>Date</th>
                                 <th>Activity / Route Details</th>
+                                <th className="text-right">DA</th>
                                 <th className="text-right">Amount</th>
                                 <th className="text-center">Receipt</th>
                                 <th className="text-center">Status</th>
@@ -3422,13 +4137,13 @@ const TravelExpenseGrid = ({
                         <tbody>
                             {rows.length === 0 ? (
                                 <tr>
-                                    <td colSpan={isLocked ? 6 : 7} className="empty-review">No entries found for review</td>
+                                    <td colSpan={isLocked ? 7 : 8} className="empty-review">No entries found for review</td>
                                 </tr>
                             ) : (
                                 (() => {
                                     const filtered = reviewFilter === 'All' ? rows : rows.filter(r => r.nature === reviewFilter);
                                     if (filtered.length === 0) {
-                                        return <tr><td colSpan={isLocked ? 6 : 7} className="empty-review">No entries found for {reviewFilter}</td></tr>;
+                                        return <tr><td colSpan={isLocked ? 7 : 8} className="empty-review">No entries found for {reviewFilter}</td></tr>;
                                     }
                                     return filtered.map(r => {
                                         const categoryOpt = NATURE_OPTIONS.find(o => o.value === r.nature);
@@ -3456,6 +4171,11 @@ const TravelExpenseGrid = ({
                                                                 <>
                                                                     <strong>{r.details?.mode || 'Local'} - {r.details?.subType || 'No Type'}</strong>
                                                                     <span>{(r.details?.origin || r.details?.fromLocation) || 'Starting point'} → {(r.details?.destination || r.details?.toLocation) || 'Ending point'}</span>
+                                                                    {r.details?.da_hours > 0 && (
+                                                                        <span style={{ fontSize: '0.68rem', color: '#6366f1', fontStyle: 'italic' }}>
+                                                                            {parseFloat(r.details.da_hours).toFixed(1)}h consolidated · {r.details?.da_message || ''}
+                                                                        </span>
+                                                                    )}
                                                                 </>
                                                             )}
                                                             {r.nature === 'Food' && (
@@ -3476,7 +4196,16 @@ const TravelExpenseGrid = ({
                                                                     <span>{r.details?.notes || 'No description'}</span>
                                                                 </>
                                                             )}
-                                                            {(!r.nature || !['Travel', 'Local Travel', 'Food', 'Accommodation', 'Incidental'].includes(r.nature)) && (
+                                                            {r.nature === 'Daily Allowance' && (
+                                                                <>
+                                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                        <strong>Daily Allowance</strong>
+                                                                        <span style={{ fontSize: '0.65rem', fontWeight: 800, background: '#fee2e2', color: '#991b1b', border: '1px solid #fecaca', padding: '1px 6px', borderRadius: '4px' }}>MANUAL CLAIM</span>
+                                                                    </div>
+                                                                    <span>Justification: {r.details?.justification || 'None provided'}</span>
+                                                                </>
+                                                            )}
+                                                            {(!r.nature || !['Travel', 'Local Travel', 'Food', 'Accommodation', 'Incidental', 'Daily Allowance'].includes(r.nature)) && (
                                                                 <span>{r.remarks || 'No details'}</span>
                                                             )}
                                                         </div>
@@ -3484,6 +4213,32 @@ const TravelExpenseGrid = ({
                                                             <div className={`rev-status-tag ${r.details.travelStatus.toLowerCase().replace(' ', '-')}`}>
                                                                 {r.details.travelStatus}
                                                             </div>
+                                                        )}
+                                                    </td>
+                                                    {/* DA Column */}
+                                                    <td className="rev-amount-cell text-right">
+                                                        {r.nature === 'Local Travel' ? (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
+                                                                <span style={{ fontWeight: 700, color: '#4f46e5', fontSize: '0.82rem' }}>
+                                                                    ₹{formatIndianCurrency(parseFloat(r.details?.daily_allowance || 0))}
+                                                                </span>
+                                                                {r.details?.is_aggregated_first && (
+                                                                    <span style={{ fontSize: '0.55rem', fontWeight: 800, background: '#dbeafe', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '5px', padding: '1px 5px' }}>
+                                                                        ★ PRIMARY
+                                                                    </span>
+                                                                )}
+                                                                {r.details?.is_aggregated_subsequent && (
+                                                                    <span style={{ fontSize: '0.55rem', fontWeight: 800, background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '5px', padding: '1px 5px' }}>
+                                                                        AGGREGATED
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        ) : r.nature === "Daily Allowance" ? (
+                                                            <span style={{ fontWeight: 700, color: "#4f46e5", fontSize: "0.82rem" }}>
+                                                                ₹{formatIndianCurrency(parseFloat(r.amount || 0))}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>—</span>
                                                         )}
                                                     </td>
                                                     <td className="rev-amount-cell text-right">
@@ -3682,6 +4437,31 @@ const TravelExpenseGrid = ({
                 <div className="m-left">
                     <div className="registry-title-row">
                         <h3>{isLocked ? 'Finalized Journey Ledger' : 'Dynamic Journey Ledger'}</h3>
+                        {claimStatus && !['Draft', 'Rejected'].includes(claimStatus) && user?.role_permissions?.can_edit_submitted_claim && (
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{
+                                    padding: '6px 12px',
+                                    borderRadius: '8px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 700,
+                                    background: isForceUnlocked ? '#dc2626' : '#2563eb',
+                                    color: 'white',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    height: '32px',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                    marginLeft: '10px'
+                                }}
+                                onClick={() => setIsForceUnlocked(!isForceUnlocked)}
+                            >
+                                {isForceUnlocked ? 'Lock Claims' : 'Edit Claim'}
+                            </button>
+                        )}
                         {!isLocked && (
                             <div className="luggage-toggle-zone">
                                 <label className="luggage-checkbox">
@@ -3754,6 +4534,7 @@ const TravelExpenseGrid = ({
                 {activeCategory === 'Travel' && CategoryTable({ nature: "Travel", title: "Long Distance Travel", icon: <Plane size={18} /> })}
                 {activeCategory === 'Local Travel' && CategoryTable({ nature: "Local Travel", title: "Local Conveyance", icon: <Car size={18} /> })}
                 {activeCategory === 'Food' && CategoryTable({ nature: "Food", title: "Food & Refreshments", icon: <Coffee size={18} /> })}
+                {activeCategory === 'Daily Allowance' && CategoryTable({ nature: "Daily Allowance", title: "Daily Allowance", icon: <IndianRupee size={18} /> })}
                 {activeCategory === 'Accommodation' && CategoryTable({ nature: "Accommodation", title: "Stay & Lodging", icon: <Hotel size={18} /> })}
                 {activeCategory === 'Incidental' && CategoryTable({ nature: "Incidental", title: "Incidental Expenses", icon: <Receipt size={18} /> })}
                 {activeCategory === 'Review' && renderReviewSummary()}
@@ -4209,6 +4990,52 @@ const TravelExpenseGrid = ({
                                                             <div style={{ fontSize: '0.65rem', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                                 <Clock size={12} /> Distance Locked
                                                             </div>
+                                                            {(() => {
+                                                                const dist = parseFloat(row.odo_end || 0) - parseFloat(row.odo_start || 0);
+                                                                if (dist > 0) {
+                                                                    const mileageCheck = checkMileage(dist, row.mode, row.vehicle);
+                                                                    if (mileageCheck.exceeds) {
+                                                                        return (
+                                                                            <div style={{ marginTop: '6px' }}>
+                                                                                <div style={{ color: '#ef4444', fontSize: '0.68rem', fontWeight: 'bold', marginBottom: '4px', lineHeight: 1.2 }}>
+                                                                                    ⚠️ Exceeds cadre limit. Handwritten approval document required.
+                                                                                </div>
+                                                                                <input
+                                                                                    type="file"
+                                                                                    id={`resubmit-approval-${idx}`}
+                                                                                    hidden
+                                                                                    accept="image/*,.pdf"
+                                                                                    onChange={e => {
+                                                                                        const file = e.target.files[0];
+                                                                                        if (file) {
+                                                                                            const reader = new FileReader();
+                                                                                            reader.onloadend = () => {
+                                                                                                updateResubmitRow(idx, 'approvalDocImg', reader.result);
+                                                                                            };
+                                                                                            reader.readAsDataURL(file);
+                                                                                        }
+                                                                                    }}
+                                                                                />
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => document.getElementById(`resubmit-approval-${idx}`).click()}
+                                                                                    style={{
+                                                                                        display: 'flex', alignItems: 'center', gap: '4px',
+                                                                                        padding: '6px 10px', borderRadius: '6px',
+                                                                                        border: row.approvalDocImg ? '1px solid #16a34a' : '2px dashed #ef4444',
+                                                                                        background: row.approvalDocImg ? '#f0fdf4' : '#fef2f2',
+                                                                                        color: row.approvalDocImg ? '#16a34a' : '#ef4444',
+                                                                                        fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer'
+                                                                                    }}
+                                                                                >
+                                                                                    {row.approvalDocImg ? '✓ Approval Uploaded' : 'Upload Approval Doc'}
+                                                                                </button>
+                                                                            </div>
+                                                                        );
+                                                                    }
+                                                                }
+                                                                return null;
+                                                            })()}
                                                         </div>
                                                     </td>
                                                     <td className="rejection-reason" style={{ padding: '16px 20px', verticalAlign: 'top' }}>

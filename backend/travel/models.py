@@ -124,11 +124,27 @@ class Trip(SoftDeleteModel):
                 # 2. Branch Code
                 branch = 'GEN'
                 if self.user:
-                    base_loc = self.user.base_location
-                    if base_loc:
+                    resolved_branch = None
+                    try:
+                        api_data = self.user._get_api_data()
+                        if api_data:
+                            geo = api_data.get('office', {}).get('geo_location', {}) or {}
+                            # Prefer district (e.g. NTR) or cluster (e.g. VIJAYAWADA)
+                            resolved_branch = geo.get('district') or geo.get('cluster')
+                    except:
+                        pass
+                    
+                    if not resolved_branch:
+                        resolved_branch = self.user.base_location
+                        
+                    if resolved_branch:
                         try:
-                            clean_loc = re.sub(r'[^a-zA-Z0-9-]', '', base_loc)
-                            branch = clean_loc.upper()
+                            s = str(resolved_branch).strip()
+                            s = re.sub(r'^104-MMU-(AP-)?', '', s, flags=re.IGNORECASE)
+                            s = re.sub(r'^BAVYA\s+(BRANCH|DISTRICT|HEALTH|HELTH)\s+(OFFICE|OFFFICE|SERVICE)\s*(-)?', '', s, flags=re.IGNORECASE)
+                            s = re.sub(r'^BAVYA\s+', '', s, flags=re.IGNORECASE)
+                            clean_loc = re.sub(r'[^a-zA-Z0-9-]', '', s)
+                            branch = clean_loc.upper() if clean_loc else 'GEN'
                         except:
                             pass
                 
@@ -324,6 +340,10 @@ class Expense(SoftDeleteModel):
             ('manual',  'Manually Edited'),
         ],
         help_text="Which amount HR chose or whether they manually edited"
+    )
+    hr_selected_by_role = models.CharField(
+        max_length=50, null=True, blank=True,
+        help_text="Role/Position name of the user who recorded this decision"
     )
     # Amount Finance decided to approve for this line
     finance_selected_amount = models.DecimalField(

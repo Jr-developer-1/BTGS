@@ -27,9 +27,8 @@ class TollGateAdmin(admin.ModelAdmin):
 class CadreAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'designation_keywords')
     search_fields = ('name',)
-
 @admin.register(EligibilityRule)
 class EligibilityRuleAdmin(admin.ModelAdmin):
-    list_display = ('id', 'cadre', 'is_active', 'max_mileage_km', 'daily_allowance_amount', 'air_allowed', 'train_allowed')
+    list_display = ('id', 'cadre', 'is_active', 'max_mileage_km', 'max_mileage_bike_km', 'max_mileage_car_km', 'daily_allowance_amount', 'monthly_tour_daily_allowance_amount', 'air_allowed', 'train_allowed')
     list_filter = ('is_active', 'air_allowed', 'train_allowed')
     search_fields = ('cadre__name',)

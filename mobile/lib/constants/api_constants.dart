@@ -8,8 +8,8 @@ class ApiConstants {
 
   // Using 10.0.2.2 for emulator support by default.
   // Change to your machine IP if testing on a physical device.
-  static const String baseUrl = 'https://one.bhspl.in/tgs';
-  // static const String baseUrl = 'http://10.2.1.31:4567';
+  // static const String baseUrl = 'https://one.bhspl.in/tgs';
+  static const String baseUrl = 'http://10.2.1.31:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
 
   // Authentication Endpoints
@@ -19,6 +19,9 @@ class ApiConstants {
   static const String authChangePassword = '$baseUrl/api/auth/change-password';
   static const String authSwitchPosition = '$baseUrl/api/auth/switch-position';
   static const String authMe = '$baseUrl/api/auth/me';
+  static const String authSetPin = '$baseUrl/api/auth/set-pin';
+  static const String authVerifyPin = '$baseUrl/api/auth/verify-pin';
+  static const String authHasPin = '$baseUrl/api/auth/has-pin';
 
   // Travel/Trip Endpoints
   static const String trips = '$baseUrl/api/trips/';
@@ -133,8 +136,8 @@ class ApiConstants {
   static const String apiKey = 'MOBILE-APP-PROD-2025-V11';
 
   // App Version & Build Configuration
-  static const String appVersion = '3.0.0';
-  static const String buildNumber = '3';
+  static const String appVersion = '3.0.1';
+  static const String buildNumber = '4';
 
   static const String financeExport = '$baseUrl/api/finance/export/';
   static const String financeImport = '$baseUrl/api/finance/import/';

@@ -11,8 +11,18 @@ import {
 
 const getStatusTranslation = (status) => {
     if (!status) return '—';
+    if (['Submitted', 'Forwarded', 'Manager Approved', 'ManagerApproved', 'Senior Manager Approved', 'Director Approved', 'Claim Forwarded', 'Claim Approved by Manager', 'HR Approved', 'Approved by HR', 'Finance Approved', 'Approved by Finance', 'Waiting for Payment', 'Payment Pending'].includes(status)) {
+        return 'Pending';
+    }
+    if (['Approved', 'Completed', 'Settled', 'Claim Approved', 'Claim Settled', 'Claim Processed'].includes(status)) {
+        return 'Approved';
+    }
     if (status === 'Resolved') return 'Revised';
-    if (['Submitted', 'Resubmitted'].includes(status)) return 'Pending';
+    if (status === 'Resubmitted') return 'Resubmitted';
+    if (status === 'Rejected') return 'Rejected';
+    if (status === 'Claim Submitted') return 'Claim Submitted';
+    if (status === 'Claim Resubmitted') return 'Claim Resubmitted';
+    if (status === 'Claim Rejected') return 'Claim Rejected';
     return status;
 };
 
@@ -21,15 +31,220 @@ const getStatusStyle = (status) => {
     switch (translated) {
         case 'Approved':
             return { background: '#ecfdf5', color: '#065f46', border: '1px solid #a7f3d0' };
+        case 'Revised':
+            return { background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe' };
+        case 'Resubmitted':
+            return { background: '#f5f3ff', color: '#5b21b6', border: '1px solid #ddd6fe' };
         case 'Rejected':
             return { background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca' };
         case 'Pending':
             return { background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' };
         case 'Not Submitted':
             return { background: '#f8fafc', color: '#64748b', border: '1px solid #cbd5e1' };
+        case 'Claim Submitted':
+            return { background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' };
+        case 'Claim Resubmitted':
+            return { background: '#faf5ff', color: '#7e22ce', border: '1px solid #e9d5ff' };
+        case 'Claim Rejected':
+            return { background: '#fff1f2', color: '#be123c', border: '1px solid #fecdd3' };
         default:
             return { background: '#f1f5f9', color: '#475569', border: '1px solid #cbd5e1' };
     }
+};
+
+const MonthYearPicker = ({ value, onChange, placeholder = "Select Month", style = {} }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const [tempYear, setTempYear] = useState(new Date().getFullYear());
+    const dropdownRef = useRef(null);
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
+
+    const years = [];
+    const currentYear = new Date().getFullYear();
+    for (let y = currentYear; y >= 2010; y--) {
+        years.push(y);
+    }
+
+    let currentLabel = placeholder;
+    if (value) {
+        const [start] = value.split('|');
+        const d = new Date(start);
+        if (!isNaN(d.getTime())) {
+            currentLabel = d.toLocaleDateString('default', { month: 'long', year: 'numeric' });
+        }
+    }
+
+    const months = [
+        { name: 'January', short: 'Jan', index: 0 },
+        { name: 'February', short: 'Feb', index: 1 },
+        { name: 'March', short: 'Mar', index: 2 },
+        { name: 'April', short: 'Apr', index: 3 },
+        { name: 'May', short: 'May', index: 4 },
+        { name: 'June', short: 'Jun', index: 5 },
+        { name: 'July', short: 'Jul', index: 6 },
+        { name: 'August', short: 'Aug', index: 7 },
+        { name: 'September', short: 'Sep', index: 8 },
+        { name: 'October', short: 'Oct', index: 9 },
+        { name: 'November', short: 'Nov', index: 10 },
+        { name: 'December', short: 'Dec', index: 11 }
+    ];
+
+    const handleSelectMonth = (monthIndex) => {
+        const startStr = `${tempYear}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+        const lastDay = new Date(tempYear, monthIndex + 1, 0).getDate();
+        const endStr = `${tempYear}-${String(monthIndex + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        onChange(`${startStr}|${endStr}`);
+        setIsOpen(false);
+    };
+
+    return (
+        <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block', width: '100%', minWidth: '180px' }}>
+            <button
+                type="button"
+                onClick={() => setIsOpen(!isOpen)}
+                style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: '1px solid #cbd5e1',
+                    background: 'white',
+                    fontSize: '0.9rem',
+                    color: '#334155',
+                    outline: 'none',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    gap: '8px',
+                    ...style
+                }}
+            >
+                <span>{currentLabel}</span>
+                <ChevronDown size={16} style={{ color: '#64748b', flexShrink: 0 }} />
+            </button>
+
+            {isOpen && (
+                <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    marginTop: '8px',
+                    width: '320px',
+                    backgroundColor: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '16px',
+                    boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                    zIndex: 1000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '16px',
+                    gap: '12px'
+                }}>
+                    <div style={{
+                        display: 'flex',
+                        gap: '6px',
+                        overflowX: 'auto',
+                        paddingBottom: '8px',
+                        borderBottom: '1px solid #f1f5f9',
+                        scrollbarWidth: 'none',
+                        msOverflowStyle: 'none'
+                    }}>
+                        {years.map(y => {
+                            const isSelected = tempYear === y;
+                            return (
+                                <button
+                                    key={y}
+                                    type="button"
+                                    onClick={() => setTempYear(y)}
+                                    style={{
+                                        padding: '6px 12px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 700,
+                                        border: isSelected ? '1px solid var(--primary)' : '1px solid #e2e8f0',
+                                        backgroundColor: isSelected ? 'var(--primary)' : '#ffffff',
+                                        color: isSelected ? '#ffffff' : '#475569',
+                                        cursor: 'pointer',
+                                        flexShrink: 0
+                                    }}
+                                >
+                                    {y}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: '8px'
+                    }}>
+                        {months.map(m => {
+                            const startStr = `${tempYear}-${String(m.index + 1).padStart(2, '0')}-01`;
+                            const lastDay = new Date(tempYear, m.index + 1, 0).getDate();
+                            const endStr = `${tempYear}-${String(m.index + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                            const isSelected = value === `${startStr}|${endStr}`;
+
+                            return (
+                                <button
+                                    key={m.index}
+                                    type="button"
+                                    onClick={() => handleSelectMonth(m.index)}
+                                    style={{
+                                        padding: '10px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.85rem',
+                                        fontWeight: 600,
+                                        border: isSelected ? '1px solid var(--primary)' : '1px solid transparent',
+                                        backgroundColor: isSelected ? '#eff6ff' : '#f8fafc',
+                                        color: isSelected ? 'var(--primary)' : '#334155',
+                                        cursor: 'pointer',
+                                        textAlign: 'center',
+                                        transition: 'all 0.15s'
+                                    }}
+                                >
+                                    {m.short}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {value && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onChange('');
+                                setIsOpen(false);
+                            }}
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                borderRadius: '8px',
+                                border: 'none',
+                                backgroundColor: '#f1f5f9',
+                                color: '#64748b',
+                                fontSize: '0.8rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                marginTop: '4px'
+                            }}
+                        >
+                            Clear Month Filter
+                        </button>
+                    )}
+                </div>
+            )}
+        </div>
+    );
 };
 
 const TravelReports = () => {
@@ -74,7 +289,7 @@ const TravelReports = () => {
     const monthOptions = useMemo(() => {
         const options = [];
         const date = new Date();
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 120; i++) {
             const m = date.getMonth();
             const y = date.getFullYear();
             const monthName = date.toLocaleString('default', { month: 'long' });
@@ -284,13 +499,13 @@ const TravelReports = () => {
         if (modalFilters.startDate) {
             const start = new Date(modalFilters.startDate);
             start.setHours(0, 0, 0, 0);
-            const tripDate = new Date(trip.created_at);
+            const tripDate = new Date(trip.start_date || trip.created_at);
             if (tripDate < start) return false;
         }
         if (modalFilters.endDate) {
             const end = new Date(modalFilters.endDate);
             end.setHours(23, 59, 59, 999);
-            const tripDate = new Date(trip.created_at);
+            const tripDate = new Date(trip.start_date || trip.created_at);
             if (tripDate > end) return false;
         }
         if (modalFilters.status && modalFilters.status !== 'All') {
@@ -325,13 +540,13 @@ const TravelReports = () => {
         if (modalFilters.startDate) {
             const start = new Date(modalFilters.startDate);
             start.setHours(0, 0, 0, 0);
-            const batchDate = new Date(batch.created_at);
+            const batchDate = new Date(batch.trip_start_date || batch.created_at);
             if (batchDate < start) return false;
         }
         if (modalFilters.endDate) {
             const end = new Date(modalFilters.endDate);
             end.setHours(23, 59, 59, 999);
-            const batchDate = new Date(batch.created_at);
+            const batchDate = new Date(batch.trip_start_date || batch.created_at);
             if (batchDate > end) return false;
         }
         if (modalFilters.status && modalFilters.status !== 'All') {
@@ -371,6 +586,91 @@ const TravelReports = () => {
             )
         ).length;
     }, [stats.batches, modalFilters.selectedRoles]);
+
+    const totalEmployees = useMemo(() => {
+        const list = activeModal === 'trips' ? stats.trips : (activeModal === 'batches' ? stats.batches : []);
+        if (!list) return 0;
+        
+        const baseFiltered = list.filter(item => {
+            if (activeModal === 'trips' && item.is_bulk_upload) return false;
+            return true;
+        });
+
+        const targetList = (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0)
+            ? baseFiltered.filter(item => 
+                modalFilters.selectedRoles.some(r => 
+                    (item.user_role && item.user_role === r) || 
+                    (!item.user_role && item.user_designation && item.user_designation.startsWith(r))
+                )
+              )
+            : baseFiltered;
+
+        const uniqueUserIds = new Set(targetList.map(item => item.user_id || item.employee_id).filter(Boolean));
+        return uniqueUserIds.size;
+    }, [activeModal, stats, modalFilters.selectedRoles]);
+
+    const statusCounts = useMemo(() => {
+        const list = activeModal === 'trips' ? stats.trips : (activeModal === 'batches' ? stats.batches : []);
+        const counts = {
+            Pending: 0,
+            Approved: 0,
+            Resubmitted: 0,
+            Revised: 0,
+            'Not Submitted': 0,
+            Rejected: 0,
+            'Claim Submitted': 0,
+            'Claim Resubmitted': 0,
+            'Claim Rejected': 0
+        };
+
+        if (!list || activeModal === 'users') return counts;
+
+        const filteredForCounts = list.filter(item => {
+            if (activeModal === 'trips' && item.is_bulk_upload) return false;
+
+            if (item.status === 'Not Submitted') {
+                if (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0) {
+                    const hasMatch = modalFilters.selectedRoles.some(r => 
+                        (item.user_role && item.user_role === r) || 
+                        (!item.user_role && item.user_designation && item.user_designation.startsWith(r))
+                    );
+                    if (!hasMatch) return false;
+                }
+                return true;
+            }
+
+            const itemDateStr = item.start_date || item.trip_start_date || item.created_at;
+            if (modalFilters.startDate) {
+                const start = new Date(modalFilters.startDate);
+                start.setHours(0, 0, 0, 0);
+                const itemDate = new Date(itemDateStr);
+                if (isNaN(itemDate.getTime()) || itemDate < start) return false;
+            }
+            if (modalFilters.endDate) {
+                const end = new Date(modalFilters.endDate);
+                end.setHours(23, 59, 59, 999);
+                const itemDate = new Date(itemDateStr);
+                if (isNaN(itemDate.getTime()) || itemDate > end) return false;
+            }
+            if (modalFilters.selectedRoles && modalFilters.selectedRoles.length > 0) {
+                const hasMatch = modalFilters.selectedRoles.some(r => 
+                    (item.user_role && item.user_role === r) || 
+                    (!item.user_role && item.user_designation && item.user_designation.startsWith(r))
+                );
+                if (!hasMatch) return false;
+            }
+            return true;
+        });
+
+        filteredForCounts.forEach(item => {
+            const translated = getStatusTranslation(item.status);
+            if (counts[translated] !== undefined) {
+                counts[translated]++;
+            }
+        });
+
+        return counts;
+    }, [activeModal, stats, modalFilters.startDate, modalFilters.endDate, modalFilters.selectedRoles]);
 
     const filteredUsers = (stats.users || []).filter(userObj => {
         if (!userObj) return false;
@@ -846,10 +1146,10 @@ const TravelReports = () => {
                                     <Calendar size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'text-bottom' }} />
                                     Month Filter
                                 </label>
-                                <select 
+                                <MonthYearPicker
                                     value={selectedMonth}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
+                                    placeholder="Select Month (Custom Range)"
+                                    onChange={(val) => {
                                         setSelectedMonth(val);
                                         if (val) {
                                             const [start, end] = val.split('|');
@@ -866,23 +1166,7 @@ const TravelReports = () => {
                                             }));
                                         }
                                     }}
-                                    style={{
-                                        padding: '12px 16px',
-                                        borderRadius: '12px',
-                                        border: '1px solid #cbd5e1',
-                                        background: 'white',
-                                        fontSize: '0.9rem',
-                                        color: '#334155',
-                                        outline: 'none'
-                                    }}
-                                >
-                                    <option value="">Select Month (Custom Range)</option>
-                                    {monthOptions.map(opt => (
-                                        <option key={opt.value} value={opt.value}>
-                                            {opt.label}
-                                        </option>
-                                    ))}
-                                </select>
+                                />
                             </div>
 
                             {/* Start Date */}
@@ -1007,15 +1291,109 @@ const TravelReports = () => {
                                     </p>
                                 </div>
                             ) : (
-                                <div style={{
-                                    backgroundColor: '#ffffff',
-                                    borderRadius: '24px',
-                                    border: '1px solid #e2e8f0',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)',
-                                    overflow: 'hidden'
-                                }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                    {/* Status Count Dashboard Panel */}
+                                    {['trips', 'batches'].includes(activeModal) && (
+                                        <div style={{
+                                            display: 'flex',
+                                            gap: '12px',
+                                            flexWrap: 'wrap',
+                                            alignItems: 'center'
+                                        }}>
+                                            {/* Total Employees Card */}
+                                            <div 
+                                                style={{
+                                                    padding: '10px 16px',
+                                                    borderRadius: '12px',
+                                                    backgroundColor: '#ffffff',
+                                                    border: '1px solid #e2e8f0',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    fontSize: '0.85rem',
+                                                    fontWeight: 600,
+                                                    color: '#334155',
+                                                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.02)'
+                                                }}
+                                            >
+                                                <Users size={16} style={{ color: 'var(--primary)' }} />
+                                                <span>Total Employees:</span>
+                                                <span style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--primary)' }}>
+                                                    {totalEmployees}
+                                                </span>
+                                            </div>
+
+                                            {/* Status Count Cards */}
+                                            {Object.entries(statusCounts)
+                                                .filter(([statusName, count]) => {
+                                                    if (activeModal === 'trips' && statusName === 'Not Submitted') {
+                                                        return false;
+                                                    }
+                                                    return count > 0;
+                                                })
+                                                .map(([statusName, count]) => {
+                                                    const style = getStatusStyle(statusName);
+                                                    const isSelected = modalFilters.status === statusName;
+                                                    return (
+                                                        <button
+                                                            key={statusName}
+                                                            onClick={() => setModalFilters(prev => ({
+                                                                ...prev,
+                                                                status: isSelected ? 'All' : statusName
+                                                            }))}
+                                                            style={{
+                                                                padding: '10px 16px',
+                                                                borderRadius: '12px',
+                                                                backgroundColor: isSelected ? style.background : '#ffffff',
+                                                                border: isSelected ? style.border : '1px solid #e2e8f0',
+                                                                color: style.color,
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: '8px',
+                                                                fontSize: '0.85rem',
+                                                                fontWeight: 700,
+                                                                cursor: 'pointer',
+                                                                transition: 'all 0.2s',
+                                                                outline: 'none',
+                                                                boxShadow: isSelected ? '0 4px 6px -1px rgba(0, 0, 0, 0.05)' : '0 2px 4px rgba(0, 0, 0, 0.02)',
+                                                                transform: isSelected ? 'scale(1.02)' : 'none'
+                                                            }}
+                                                            onMouseEnter={(e) => {
+                                                                if (!isSelected) {
+                                                                    e.currentTarget.style.backgroundColor = style.background;
+                                                                    e.currentTarget.style.borderColor = style.border;
+                                                                }
+                                                            }}
+                                                            onMouseLeave={(e) => {
+                                                                if (!isSelected) {
+                                                                    e.currentTarget.style.backgroundColor = '#ffffff';
+                                                                    e.currentTarget.style.borderColor = '#e2e8f0';
+                                                                }
+                                                            }}
+                                                        >
+                                                            <span style={{
+                                                                width: '8px',
+                                                                height: '8px',
+                                                                borderRadius: '50%',
+                                                                backgroundColor: style.color
+                                                            }} />
+                                                            <span>{statusName}:</span>
+                                                            <span style={{ fontSize: '1rem', fontWeight: 800 }}>{count}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                        </div>
+                                    )}
+
+                                    <div style={{
+                                        backgroundColor: '#ffffff',
+                                        borderRadius: '24px',
+                                        border: '1px solid #e2e8f0',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)',
+                                        overflow: 'hidden'
+                                    }}>
                                     {/* Header */}
                                     <div style={{
                                         padding: '24px 32px',
@@ -1072,10 +1450,15 @@ const TravelReports = () => {
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>Month:</span>
-                                                <select 
+                                                <MonthYearPicker
                                                     value={selectedMonth}
-                                                    onChange={(e) => {
-                                                        const val = e.target.value;
+                                                    placeholder="Select Month"
+                                                    style={{
+                                                        padding: '6px 12px',
+                                                        borderRadius: '10px',
+                                                        fontSize: '0.85rem'
+                                                    }}
+                                                    onChange={(val) => {
                                                         setSelectedMonth(val);
                                                         if (val) {
                                                             const [start, end] = val.split('|');
@@ -1086,23 +1469,7 @@ const TravelReports = () => {
                                                             setFilters(prev => ({ ...prev, startDate: '', endDate: '' }));
                                                         }
                                                     }}
-                                                    style={{
-                                                        border: '1px solid #cbd5e1',
-                                                        borderRadius: '10px',
-                                                        padding: '6px 12px',
-                                                        fontSize: '0.85rem',
-                                                        color: '#334155',
-                                                        background: 'white',
-                                                        outline: 'none'
-                                                    }}
-                                                >
-                                                    <option value="">Select Month</option>
-                                                    {monthOptions.map(opt => (
-                                                        <option key={opt.value} value={opt.value}>
-                                                            {opt.label}
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                />
                                             </div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                 <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b' }}>From:</span>
@@ -1160,12 +1527,17 @@ const TravelReports = () => {
                                                             }}
                                                         >
                                                             <option value="All">All Statuses</option>
-                                                            {activeModal === 'trips' && ['All', ...new Set((stats.trips || []).map(t => getStatusTranslation(t.status)).filter(Boolean))].map(status => (
-                                                                status !== 'All' && <option key={status} value={status}>{status}</option>
-                                                            ))}
-                                                            {activeModal === 'batches' && ['All', ...new Set((stats.batches || []).map(b => getStatusTranslation(b.status)).filter(Boolean))].map(status => (
-                                                                status !== 'All' && <option key={status} value={status}>{status}</option>
-                                                            ))}
+                                                            {Object.entries(statusCounts)
+                                                                .filter(([statusName, count]) => {
+                                                                    if (activeModal === 'trips' && statusName === 'Not Submitted') {
+                                                                        return false;
+                                                                    }
+                                                                    return count > 0;
+                                                                })
+                                                                .map(([statusName]) => (
+                                                                    <option key={statusName} value={statusName}>{statusName}</option>
+                                                                ))
+                                                            }
                                                         </select>
                                                     </div>
 
@@ -1363,6 +1735,7 @@ const TravelReports = () => {
                                             Export CSV
                                         </button>
                                     </div>
+
 
                                     {/* Table Content */}
                                     <div style={{
@@ -1805,7 +2178,8 @@ const TravelReports = () => {
                                         )}
                                     </div>
                                 </div>
-                            )}
+                            </div>
+                        )}
                         </div>
                     </>
                 ) : (

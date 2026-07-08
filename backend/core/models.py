@@ -71,6 +71,9 @@ class User(models.Model):
     allow_photo_reset = models.BooleanField(default=False)
     frs_logs_cleared_at = models.DateTimeField(null=True, blank=True)
 
+    # Security PIN (hashed) for mobile app access
+    security_pin_hash = models.CharField(max_length=255, null=True, blank=True)
+
     # Mandatory Django auth fields
     USERNAME_FIELD = 'employee_id'
     REQUIRED_FIELDS = []
@@ -359,23 +362,96 @@ class User(models.Model):
         bank_info = data.get('bank_details', {}) or {}
         return bank_info.get('ifsc_code', '')
 
+    def get_effective_reporting_chain(self):
+        """
+        Constructs a list of position dictionaries representing the reporting chain
+        for the user's active position, resolving self-referential loops by walking
+        through the reporting managers of any positions held by the user.
+        """
+        data = self._get_api_data()
+        if not data:
+            return []
+        
+        pos_details = data.get('positions_details', []) or []
+        my_positions = {}
+        for p in pos_details:
+            p_id = p.get('id')
+            if p_id:
+                my_positions[str(p_id)] = p
+
+        active_pos = self.get_current_position()
+        if not active_pos:
+            return []
+
+        chain = []
+        visited_pos_ids = set()
+
+        to_process = list(active_pos.get('reporting_to', []))
+        
+        while to_process:
+            mgr_info = to_process.pop(0)
+            if not mgr_info:
+                continue
+            
+            pos_id = None
+            if isinstance(mgr_info, dict):
+                pos_id = mgr_info.get('id') or mgr_info.get('position_id')
+            else:
+                pos_id = mgr_info
+            
+            pos_id_str = str(pos_id) if pos_id else None
+            
+            # Extract employee identifier
+            emp_code = None
+            if isinstance(mgr_info, dict):
+                emp_code = mgr_info.get('employee_code') or mgr_info.get('employee_id') or mgr_info.get('employee', {}).get('employee_code')
+            else:
+                emp_code = mgr_info
+
+            is_self = False
+            if emp_code:
+                emp_code_str = str(emp_code).strip()
+                if emp_code_str == str(self.employee_id).strip():
+                    is_self = True
+
+            if (pos_id_str and pos_id_str in my_positions) or is_self:
+                # Loop detection/self-reference
+                matched_pos = my_positions.get(pos_id_str) if pos_id_str else None
+                if not matched_pos and is_self:
+                    for p in pos_details:
+                        if str(p.get('id')) != str(active_pos.get('id')):
+                            matched_pos = p
+                            break
+                
+                if matched_pos:
+                    chain.append(mgr_info)
+                    parent_reporting = matched_pos.get('reporting_to', [])
+                    if pos_id_str and pos_id_str not in visited_pos_ids:
+                        visited_pos_ids.add(pos_id_str)
+                        to_process = list(parent_reporting) + to_process
+                else:
+                    continue
+            else:
+                if pos_id_str:
+                    if pos_id_str in visited_pos_ids:
+                        continue
+                    visited_pos_ids.add(pos_id_str)
+                chain.append(mgr_info)
+
+        return chain
+
     def _get_hierarchy_manager(self, index):
         """Helper to resolve a manager from the API hierarchy at a specific depth."""
-        pos = self.get_current_position()
-        if not pos: return None
-        # Support both 'position' (current) and 'positions_details' (legacy)
-        reporting_to = pos.get('reporting_to', [])
-        if len(reporting_to) <= index:
+        chain = self.get_effective_reporting_chain()
+        if len(chain) <= index:
              return None
              
-        mgr_info = reporting_to[index]
+        mgr_info = chain[index]
         if not mgr_info:
             return None
             
-        # Resolve identifier: prioritize 'employee_code' (Login ID) then 'employee_id' (Numeric API ID)
         emp_code = None
         if isinstance(mgr_info, dict):
-            # Prioritize employee_code/employee_identifier as it's typically the login ID
             emp_code = mgr_info.get('employee_code') or mgr_info.get('employee_id') or mgr_info.get('employee', {}).get('employee_code')
         else:
             emp_code = mgr_info
@@ -400,12 +476,10 @@ class User(models.Model):
 
     def _get_hierarchy_manager_position(self, index):
         """Helper to get the raw manager position ID from the API hierarchy."""
-        pos = self.get_current_position()
-        if not pos: return None
-        reporting_to = pos.get('reporting_to', [])
-        if len(reporting_to) <= index:
+        chain = self.get_effective_reporting_chain()
+        if len(chain) <= index:
              return None
-        mgr_info = reporting_to[index]
+        mgr_info = chain[index]
         if isinstance(mgr_info, dict):
             return mgr_info.get('id') or mgr_info.get('position_id')
         return mgr_info
@@ -644,6 +718,25 @@ class ReportAccessControl(models.Model):
 
     def __str__(self):
         return f"{self.access_type} - {self.target_name} ({self.target_id})"
+
+
+class UserDocument(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='documents')
+    document_type = models.CharField(max_length=50)
+    document_number = models.CharField(max_length=100, blank=True, null=True)
+    file_data = models.TextField(blank=True, null=True)  # Store base64 data
+    file_name = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'User Document'
+        verbose_name_plural = 'User Documents'
+        unique_together = ('user', 'document_type')
+
+    def __str__(self):
+        return f"{self.user.employee_id} - {self.document_type}"
+
 
 
 
