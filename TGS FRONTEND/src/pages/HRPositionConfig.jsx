@@ -38,15 +38,56 @@ const HRPositionConfig = () => {
     const [newClaimsAppr, setNewClaimsAppr] = useState('MARK_READ');
     const [newEditClaims, setNewEditClaims] = useState('READ_ONLY');
     const [newCanViewReports, setNewCanViewReports] = useState(false);
+    const [newHrLevelType, setNewHrLevelType] = useState('assistant_manager');
     const [selectedPosition, setSelectedPosition] = useState(null);
 
     useEffect(() => {
         fetchProjects();
     }, []);
 
+    const [isParallelFlow, setIsParallelFlow] = useState(false);
+    const [enableTwoLevelFlow, setEnableTwoLevelFlow] = useState(false);
+
     useEffect(() => {
         fetchConfigs();
+        fetchWorkflowSetting(selectedProject);
     }, [selectedProject]);
+
+    const fetchWorkflowSetting = async (projectCode) => {
+        try {
+            const response = await api.get(`/api/hr-position-config/get_workflow_setting/?project_code=${projectCode}`);
+            setIsParallelFlow(response.data.is_parallel);
+            setEnableTwoLevelFlow(response.data.enable_two_level_flow);
+        } catch (err) {
+            console.error('Failed to load workflow setting', err);
+        }
+    };
+
+    const updateWorkflowSettings = async (parallelValue, twoLevelValue) => {
+        try {
+            const response = await api.post('/api/hr-position-config/set_workflow_setting/', {
+                project_code: selectedProject,
+                is_parallel: parallelValue,
+                enable_two_level_flow: twoLevelValue
+            });
+            setIsParallelFlow(response.data.is_parallel);
+            setEnableTwoLevelFlow(response.data.enable_two_level_flow);
+            showToast(`Workflow updated successfully`, 'success');
+        } catch (err) {
+            showToast('Failed to update workflow setting', 'error');
+        }
+    };
+
+    const handleToggleParallelFlow = () => {
+        const newParallel = !isParallelFlow;
+        const newTwoLevel = newParallel ? enableTwoLevelFlow : false;
+        updateWorkflowSettings(newParallel, newTwoLevel);
+    };
+
+    const handleToggleTwoLevelFlow = () => {
+        const newTwoLevel = !enableTwoLevelFlow;
+        updateWorkflowSettings(isParallelFlow, newTwoLevel);
+    };
 
     const fetchProjects = async () => {
         setProjectsLoading(true);
@@ -127,6 +168,7 @@ const HRPositionConfig = () => {
                 claims_approval: newClaimsAppr,
                 edit_claims: newEditClaims,
                 can_view_reports: newCanViewReports,
+                hr_level_type: newHrLevelType,
                 is_active: true
             };
 
@@ -158,6 +200,7 @@ const HRPositionConfig = () => {
         setNewClaimsAppr('MARK_READ');
         setNewEditClaims('READ_ONLY');
         setNewCanViewReports(false);
+        setNewHrLevelType('assistant_manager');
 
         const successCount = createdConfigs.length;
         const projectLabel = successCount > 1 ? `${successCount} projects` : `${projectCodes[0]}`;
@@ -256,43 +299,156 @@ const HRPositionConfig = () => {
             </div>
 
             {/* Project Selection Dropdown */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px', backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                <span style={{ fontWeight: '600', color: '#475569', fontSize: '14px' }}>Select Project Scope:</span>
-                {projectsLoading ? (
-                    <span style={{ color: '#94a3b8', fontSize: '14px' }}>Loading projects...</span>
-                ) : (
-                    <select
-                        value={selectedProject}
-                        onChange={(e) => setSelectedProject(e.target.value)}
-                        style={{
-                            padding: '8px 16px',
-                            borderRadius: '8px',
-                            border: '1px solid #cbd5e1',
-                            backgroundColor: '#fff',
-                            color: '#1e293b',
-                            fontWeight: '600',
-                            minWidth: '240px',
-                            outline: 'none',
-                            cursor: 'pointer'
-                        }}
-                    >
-                        <option value="General">General (Global Default)</option>
-                        {projects.map((proj) => (
-                            <option key={proj.code} value={proj.code}>
-                                {proj.name} ({proj.code})
-                            </option>
-                        ))}
-                    </select>
-                )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', backgroundColor: '#fff', padding: '16px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', flexWrap: 'wrap', gap: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontWeight: '600', color: '#475569', fontSize: '14px' }}>Select Project Scope:</span>
+                    {projectsLoading ? (
+                        <span style={{ color: '#94a3b8', fontSize: '14px' }}>Loading projects...</span>
+                    ) : (
+                        <select
+                            value={selectedProject}
+                            onChange={(e) => setSelectedProject(e.target.value)}
+                            style={{
+                                padding: '8px 16px',
+                                borderRadius: '8px',
+                                border: '1px solid #cbd5e1',
+                                backgroundColor: '#fff',
+                                color: '#1e293b',
+                                fontWeight: '600',
+                                minWidth: '240px',
+                                outline: 'none',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <option value="General">General (Global Default)</option>
+                            {projects.map((proj) => (
+                                <option key={proj.code} value={proj.code}>
+                                    {proj.name} ({proj.code})
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                </div>
+
+                {/* Switch button for Parallel vs Sequential Workflow */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontWeight: '600', color: '#475569', fontSize: '14px' }}>Workflow Routing:</span>
+                        <button
+                            onClick={handleToggleParallelFlow}
+                            style={{
+                                position: 'relative',
+                                width: '100px',
+                                height: '34px',
+                                borderRadius: '17px',
+                                backgroundColor: isParallelFlow ? '#8b5cf6' : '#64748b',
+                                border: 'none',
+                                cursor: 'pointer',
+                                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: isParallelFlow ? 'flex-start' : 'flex-end',
+                                padding: '2px 6px',
+                                outline: 'none',
+                                boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.1)'
+                            }}
+                        >
+                            <span style={{
+                                color: '#fff',
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                position: 'absolute',
+                                left: isParallelFlow ? '38px' : 'auto',
+                                right: isParallelFlow ? 'auto' : '38px',
+                                transition: 'all 0.3s ease',
+                                userSelect: 'none'
+                            }}>
+                                {isParallelFlow ? 'Parallel' : 'Sequential'}
+                            </span>
+                            <div style={{
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                backgroundColor: '#fff',
+                                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                                transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                transform: isParallelFlow ? 'translateX(0)' : 'translateX(0)'
+                            }} />
+                        </button>
+                    </div>
+
+                    {isParallelFlow && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontWeight: '600', color: '#475569', fontSize: '14px' }}>2-Level Flow:</span>
+                            <button
+                                onClick={handleToggleTwoLevelFlow}
+                                style={{
+                                    position: 'relative',
+                                    width: '100px',
+                                    height: '34px',
+                                    borderRadius: '17px',
+                                    backgroundColor: enableTwoLevelFlow ? '#10b981' : '#64748b',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: enableTwoLevelFlow ? 'flex-start' : 'flex-end',
+                                    padding: '2px 6px',
+                                    outline: 'none',
+                                    boxShadow: 'inset 0 2px 4px rgba(0, 0, 0, 0.1)'
+                                }}
+                            >
+                                <span style={{
+                                    color: '#fff',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    position: 'absolute',
+                                    left: enableTwoLevelFlow ? '38px' : 'auto',
+                                    right: enableTwoLevelFlow ? 'auto' : '38px',
+                                    transition: 'all 0.3s ease',
+                                    userSelect: 'none'
+                                }}>
+                                    {enableTwoLevelFlow ? 'Enabled' : 'Disabled'}
+                                </span>
+                                <div style={{
+                                    width: '28px',
+                                    height: '28px',
+                                    borderRadius: '50%',
+                                    backgroundColor: '#fff',
+                                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                                    transition: 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    transform: enableTwoLevelFlow ? 'translateX(0)' : 'translateX(0)'
+                                }} />
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Dashboard Summary / Intro */}
-            <div style={{ backgroundColor: '#ede9fe', padding: '20px', borderRadius: '16px', border: '1px solid #ddd6fe', color: '#5b21b6', marginBottom: '24px', lineHeight: '1.5' }}>
-                <h3 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: '#4c1d95' }}>Project-Scoped Sequential HR routing</h3>
-                HR configurations are resolved sequentially based on the order defined below.
-                If <strong>Formal Approval</strong> is enabled, requests will block at that HR step and require action.
-                If <strong>Mark as Read</strong> is enabled, a read-only intimation is dispatched without blocking the workflow.
-                If <strong>Can Edit</strong> is enabled, HR members can adjust claim item amounts during review.
+            <div style={{ backgroundColor: isParallelFlow ? (enableTwoLevelFlow ? '#ecfdf5' : '#f0fdf4') : '#ede9fe', padding: '20px', borderRadius: '16px', border: isParallelFlow ? (enableTwoLevelFlow ? '1px solid #a7f3d0' : '1px solid #bbf7d0') : '1px solid #ddd6fe', color: isParallelFlow ? (enableTwoLevelFlow ? '#065f46' : '#15803d') : '#5b21b6', marginBottom: '24px', lineHeight: '1.5', transition: 'all 0.3s ease' }}>
+                <h3 style={{ margin: '0 0 6px 0', fontSize: '16px', fontWeight: 'bold', color: isParallelFlow ? (enableTwoLevelFlow ? '#064e3b' : '#166534') : '#4c1d95' }}>
+                    {isParallelFlow ? (enableTwoLevelFlow ? 'Project-Scoped 2-Level Parallel HR Routing' : 'Project-Scoped Parallel HR Routing') : 'Project-Scoped Sequential HR Routing'}
+                </h3>
+                {isParallelFlow ? (
+                    enableTwoLevelFlow ? (
+                        <span>
+                            HR configurations are resolved in <strong>2-Levels</strong>. First, parallel dispatch is sent to all <strong>Assistant Manager</strong> HR positions. Once any single Assistant Manager approves, the request is promoted to all <strong>Manager</strong> HR positions for final sign-off.
+                        </span>
+                    ) : (
+                        <span>
+                            HR configurations are resolved <strong>simultaneously</strong> (Parallel dispatch). All active HR positions receive notifications at once, and a <strong>single approval</strong> from any position will approve/clear the stage.
+                        </span>
+                    )
+                ) : (
+                    <span>
+                        HR configurations are resolved <strong>sequentially</strong> based on the order defined below. Requests will route to one position at a time in sequence.
+                        If <strong>Formal Approval</strong> is enabled, requests will block at that HR step and require action.
+                        If <strong>Mark as Read</strong> is enabled, a read-only intimation is dispatched without blocking the workflow.
+                        If <strong>Can Edit</strong> is enabled, HR members can adjust claim item amounts during review.
+                    </span>
+                )}
             </div>
 
             {/* Config Table */}
@@ -303,6 +459,7 @@ const HRPositionConfig = () => {
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px', width: '60px' }}>ORDER</th>
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>POSITION IDENTIFIER</th>
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>POSITION NAME</th>
+                            <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>HR LEVEL</th>
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>TRIP/TRAVEL ROUTE</th>
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>BULK LOG ROUTE</th>
                             <th style={{ padding: '16px 20px', color: '#64748b', fontWeight: '600', fontSize: '13px' }}>CLAIMS/ADVANCES</th>
@@ -315,7 +472,7 @@ const HRPositionConfig = () => {
                     <tbody>
                         {configs.length === 0 ? (
                             <tr>
-                                <td colSpan="10" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                                <td colSpan="11" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
                                     No HR positions configured for project "{selectedProject}".
                                 </td>
                             </tr>
@@ -356,6 +513,26 @@ const HRPositionConfig = () => {
                                         <span style={{ fontSize: '11px', backgroundColor: '#e2e8f0', color: '#475569', padding: '2px 6px', borderRadius: '4px', display: 'inline-block', marginTop: '2px' }}>
                                             {cfg.project_code}
                                         </span>
+                                    </td>
+                                    <td style={{ padding: '16px 20px' }}>
+                                        <select
+                                            value={cfg.hr_level_type || 'assistant_manager'}
+                                            onChange={(e) => updatePositionConfig(cfg.id, { hr_level_type: e.target.value })}
+                                            style={{
+                                                padding: '6px 10px',
+                                                borderRadius: '8px',
+                                                border: '1px solid #cbd5e1',
+                                                fontSize: '13px',
+                                                fontWeight: '600',
+                                                outline: 'none',
+                                                color: cfg.hr_level_type === 'manager' ? '#0f766e' : '#4f46e5',
+                                                backgroundColor: cfg.hr_level_type === 'manager' ? '#f0fdfa' : '#eef2ff',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            <option value="assistant_manager">Assistant Manager</option>
+                                            <option value="manager">Manager</option>
+                                        </select>
                                     </td>
                                     <td style={{ padding: '16px 20px' }}>
                                         <select
@@ -648,6 +825,17 @@ const HRPositionConfig = () => {
                                     >
                                         <option value="false">Denied</option>
                                         <option value="true">Allowed</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontWeight: '600', color: '#475569', fontSize: '13px', marginBottom: '4px' }}>HR Type Level</label>
+                                    <select
+                                        value={newHrLevelType}
+                                        onChange={(e) => setNewHrLevelType(e.target.value)}
+                                        style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #cbd5e1', outline: 'none' }}
+                                    >
+                                        <option value="assistant_manager">Assistant Manager</option>
+                                        <option value="manager">Manager</option>
                                     </select>
                                 </div>
                             </div>

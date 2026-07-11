@@ -1125,6 +1125,20 @@ def trigger_parallel_dispatch(obj, user=None):
             rm_pos = rm.get_current_position()
             rm_pos_name = rm_pos.get('name') if rm_pos else None
             reports_to_coo = _is_coo_position(rm_pos_name, rm.designation, employee_id=rm.employee_id)
+            
+        if reports_to_coo and rm:
+            from travel.models import COOProjectSetting
+            proj_code = 'General'
+            if isinstance(obj, Trip):
+                proj_code = obj.project_code or 'General'
+            elif hasattr(obj, 'trip') and obj.trip:
+                proj_code = obj.trip.project_code or 'General'
+            elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                proj_code = obj.trip.project_code or 'General'
+                
+            rm_pos_id = rm.active_position_id
+            if rm_pos_id and COOProjectSetting.objects.filter(project_code=proj_code, coo_position_id=str(rm_pos_id), enable_coo_approval=True).exists():
+                reports_to_coo = False
 
     # Get project code
     project_code = 'General'
@@ -1144,6 +1158,22 @@ def trigger_parallel_dispatch(obj, user=None):
     if not hr_positions.exists():
         hr_positions = HRPositionConfig.objects.filter(is_active=True, project_code='General').order_by('sequence_order')
 
+    # Resolve settings
+    from travel.models import HRWorkflowSetting
+    setting = HRWorkflowSetting.objects.filter(project_code=project_code).first()
+    if not setting and project_code != 'General':
+        setting = HRWorkflowSetting.objects.filter(project_code='General').first()
+    is_parallel_flow = setting.is_parallel if setting else False
+    enable_two_level_flow = setting.enable_two_level_flow if setting else False
+
+    target_hr_positions = hr_positions
+    if is_parallel_flow and enable_two_level_flow:
+        am_positions = hr_positions.filter(hr_level_type='assistant_manager')
+        if am_positions.exists():
+            target_hr_positions = am_positions
+        else:
+            target_hr_positions = hr_positions.filter(hr_level_type='manager')
+
     if isinstance(obj, (Trip, BulkActivityBatch)):
         if isinstance(obj, BulkActivityBatch):
             hr_requires_approval = hr_positions.filter(bulk_approval='APPROVAL').exists()
@@ -1159,7 +1189,7 @@ def trigger_parallel_dispatch(obj, user=None):
         if hr_requires_approval:
             # Find the first HR position in sequence requiring approval
             first_approval_pos = None
-            for hr_pos in hr_positions:
+            for hr_pos in target_hr_positions:
                 is_appr_req = False
                 if isinstance(obj, Trip) and hr_pos.trips_approval == 'APPROVAL':
                     is_appr_req = True
@@ -1230,7 +1260,7 @@ def trigger_parallel_dispatch(obj, user=None):
         if hr_requires_approval:
             # Find the first HR position in sequence requiring approval
             first_approval_pos = None
-            for hr_pos in hr_positions:
+            for hr_pos in target_hr_positions:
                 if hr_pos.claims_approval == 'APPROVAL':
                     first_approval_pos = hr_pos
                     break
@@ -1251,26 +1281,9 @@ def trigger_parallel_dispatch(obj, user=None):
                 type='info'
             )
         else:
-            # Claims & Advances move to first step of Finance Workflow
-            first_fin_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order').first()
-            if first_fin_step:
-                obj.approver_position = first_fin_step.position_id
-                obj.status = 'PENDING_EXECUTIVE' if first_fin_step.visibility_type != 'FINANCE_HUB' else 'PENDING_FINAL_RELEASE'
-                # Assign initial target user if already stored in step (fallback)
-                if not first_fin_step.position_id:
-                    obj.current_approver = first_fin_step.user
-            else:
-                obj.current_approver = None
-                obj.approver_position = None
-                obj.status = 'Approved'
-                
-            obj.save()
-            response_msg = "Management approval completed. Sent to Finance Workflow."
-            Notification.objects.create(
-                user=requester, title=f"{request_type} Approved",
-                message=f"Your {request_type} has cleared management approval and is now with Finance for verification.",
-                type='success'
-            )
+            # Claims & Advances move to Finance Workflow
+            dispatch_res = trigger_finance_workflow(obj, user)
+            response_msg = f"Management approval completed. {dispatch_res['message']}"
 
     # --- B. THREADED ASYNCHRONOUS EXTERNAL DISPATCH ---
     def _async_dispatch_worker(obj_id, obj_class, requester_name):
@@ -1283,9 +1296,25 @@ def trigger_parallel_dispatch(obj, user=None):
             
             active_obj = obj_class.objects.get(pk=obj_id)
             
+            # Check workflow settings to determine if parallel or sequential
+            from travel.models import HRWorkflowSetting
+            setting = HRWorkflowSetting.objects.filter(project_code=project_code).first()
+            if not setting and project_code != 'General':
+                setting = HRWorkflowSetting.objects.filter(project_code='General').first()
+            is_parallel_flow = setting.is_parallel if setting else False
+            enable_two_level_flow = setting.enable_two_level_flow if setting else False
+
+            target_hr_positions = hr_positions
+            if is_parallel_flow and enable_two_level_flow:
+                am_positions = hr_positions.filter(hr_level_type='assistant_manager')
+                if am_positions.exists():
+                    target_hr_positions = am_positions
+                else:
+                    target_hr_positions = hr_positions.filter(hr_level_type='manager')
+
             # Find the first approval position
             first_approval_pos = None
-            for hr_pos in hr_positions:
+            for hr_pos in target_hr_positions:
                 is_appr_required = False
                 if isinstance(active_obj, Trip) and hr_pos.trips_approval == 'APPROVAL':
                     is_appr_required = True
@@ -1298,13 +1327,15 @@ def trigger_parallel_dispatch(obj, user=None):
                     first_approval_pos = hr_pos
                     break
 
-            for hr_pos in hr_positions:
-                # Is it the current approval step?
+            for hr_pos in target_hr_positions:
                 is_appr = False
-                if first_approval_pos and hr_pos.position_id == first_approval_pos.position_id:
+                if isinstance(active_obj, Trip) and hr_pos.trips_approval == 'APPROVAL':
+                    is_appr = True
+                elif isinstance(active_obj, BulkActivityBatch) and hr_pos.bulk_approval == 'APPROVAL':
+                    is_appr = True
+                elif isinstance(active_obj, (TravelClaim, TravelAdvance)) and hr_pos.claims_approval == 'APPROVAL':
                     is_appr = True
 
-                # Or if the config specifies MARK_READ, it's just an intimation
                 is_read_only = False
                 if isinstance(active_obj, Trip) and hr_pos.trips_approval == 'MARK_READ':
                     is_read_only = True
@@ -1313,8 +1344,15 @@ def trigger_parallel_dispatch(obj, user=None):
                 elif isinstance(active_obj, (TravelClaim, TravelAdvance)) and hr_pos.claims_approval == 'MARK_READ':
                     is_read_only = True
 
-                # We dispatch immediately if it's the current active approval step OR if it's an acknowledgement step
-                should_dispatch = is_appr or is_read_only
+                # Under parallel flow: all approval/read_only steps are dispatched in parallel.
+                # Under sequential flow: only the current active approval step OR read-only step is dispatched.
+                if is_parallel_flow:
+                    should_dispatch = is_appr or is_read_only
+                else:
+                    is_active_appr = first_approval_pos and hr_pos.position_id == first_approval_pos.position_id
+                    should_dispatch = is_active_appr or is_read_only
+                    # In sequential mode, is_appr flag should only be True for the active approval step
+                    is_appr = is_active_appr
 
                 if should_dispatch:
                     hr_users = get_users_by_position(hr_pos.position_id)
@@ -1337,32 +1375,6 @@ def trigger_parallel_dispatch(obj, user=None):
                                 message=msg_body,
                                 type='info'
                             )
-            
-            # 2. Finance Approver Assign (Resolving heavy positions for Claim/Advance workflow initialization)
-            if not isinstance(active_obj, (Trip, BulkActivityBatch)):
-                ff_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order').first()
-                if ff_step and ff_step.position_id:
-                    pos_users = get_users_by_position(ff_step.position_id)
-                    if pos_users:
-                        active_obj.current_approver = pos_users[0]
-                        active_obj.save(update_fields=['current_approver'])
-                        
-                        # Notify ALL users in the target finance position
-                        for p_user in pos_users:
-                            Notification.objects.create(
-                                user=p_user, target_position=ff_step.position_id,
-                                title=f"Finance Verification Pending: {request_type}",
-                                message=f"New {request_type} for {requester_name} is pending finance review.",
-                                type='info'
-                            )
-                elif ff_step and not ff_step.position_id and ff_step.user:
-                     # Legacy fallback: notify direct user assigned in step
-                     Notification.objects.create(
-                            user=ff_step.user, target_position=getattr(ff_step.user, 'active_position_id', None),
-                            title=f"Finance Verification Pending: {request_type}",
-                            message=f"New {request_type} for {requester_name} is pending finance review.",
-                            type='info'
-                        )
         except Exception as e:
             import logging
             logging.error(f"Background parallel dispatch failed: {e}", exc_info=True)
@@ -1406,73 +1418,323 @@ def finalize_trip_approval(trip):
     _generate_expenses_from_batches(trip)
 
 
-def trigger_finance_dispatch(trip, user):
+def _get_finance_steps_and_settings(obj):
+    from travel.models import FinanceWorkflowStep, FinanceWorkflowSetting
+    requester = obj.user if hasattr(obj, 'user') else (obj.trip.user if hasattr(obj, 'trip') and obj.trip else None)
+    
+    project_code = 'General'
+    if isinstance(obj, Trip):
+        project_code = obj.project_code or 'General'
+    elif hasattr(obj, 'trip') and obj.trip:
+        project_code = obj.trip.project_code or 'General'
+    elif isinstance(obj, BulkActivityBatch) and obj.trip:
+        project_code = obj.trip.project_code or 'General'
+
+    # Fallback to requester's project_code if general/empty
+    if (not project_code or project_code in ['General', 'N/A']) and requester:
+        if hasattr(requester, 'project_code') and requester.project_code and requester.project_code != 'N/A':
+            project_code = requester.project_code
+
+    fin_steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code=project_code).order_by('sequence_order')
+    if not fin_steps.exists():
+        fin_steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code='General').order_by('sequence_order')
+
+    # Safety guard: exclude orphaned steps with no assignee (no position_id AND no user).
+    # Such steps can never dispatch to anyone, so they must never block workflow routing.
+    fin_steps = fin_steps.exclude(
+        models.Q(position_id__isnull=True) | models.Q(position_id=''),
+        user__isnull=True
+    )
+
+    active_trip = obj if isinstance(obj, Trip) else (obj.trip if hasattr(obj, 'trip') and obj.trip else None)
+    if active_trip:
+        is_local = getattr(active_trip, 'consider_as_local', True)
+        if isinstance(obj, (Trip, BulkActivityBatch)):
+            allowed_types = ['BOTH', 'TRIP'] if is_local else ['BOTH', 'TRAVEL']
+        else:
+            allowed_types = ['BOTH', 'TRIP', 'NONE'] if is_local else ['BOTH', 'TRAVEL', 'NONE']
+        fin_steps = fin_steps.filter(trip_type__in=allowed_types)
+    else:
+        if isinstance(obj, (Trip, BulkActivityBatch)):
+            fin_steps = fin_steps.exclude(trip_type='NONE')
+
+    setting = FinanceWorkflowSetting.objects.filter(project_code=project_code).first()
+    if not setting and project_code != 'General':
+        setting = FinanceWorkflowSetting.objects.filter(project_code='General').first()
+        
+    is_parallel_flow = setting.is_parallel if setting else False
+    enable_two_level_flow = setting.enable_two_level_flow if setting else False
+
+    return fin_steps, is_parallel_flow, enable_two_level_flow, project_code
+
+
+def trigger_finance_workflow(obj, user=None):
     """
-    Parallel dispatch of Trips/Travel requests to Finance configuration steps.
+    Dispatches Trips, Claims, or Advances to Finance configuration steps.
+    Implements project-wise steps (falling back to General), and support for:
+    - parallel, sequential, and parallel 2-way workflows
+    - assistant_manager / manager level separation (2-way)
+    - finance hub exception
     """
     from .models import FinanceWorkflowStep, FinanceIntimation
     from notifications.models import Notification
-    
-    # 2. Query matching active Finance workflow steps (unified workflow)
-    matching_steps = FinanceWorkflowStep.objects.filter(
-        is_active=True,
-        trip_type__in=['BOTH', 'TRAVEL']
-    )
-    
-    if not matching_steps.exists():
-        # No matching steps - finalize trip immediately
-        finalize_trip_approval(trip)
-        return {"status": "Approved", "message": "No matching Finance steps. Trip auto-approved."}
+
+    requester = obj.user if hasattr(obj, 'user') else (obj.trip.user if hasattr(obj, 'trip') and obj.trip else None)
+    request_type = "Trip" if isinstance(obj, Trip) else ("Advance" if isinstance(obj, TravelAdvance) else ("Expense Claim" if isinstance(obj, TravelClaim) else "Bulk Activity Log"))
+
+    # 1. Resolve steps and settings
+    fin_steps, is_parallel_flow, enable_two_level_flow, project_code = _get_finance_steps_and_settings(obj)
+
+    if not fin_steps.exists():
+        # No matching steps - finalize/approve immediately
+        if isinstance(obj, (Trip, BulkActivityBatch)):
+            finalize_trip_approval(obj if isinstance(obj, Trip) else obj.trip)
+        else:
+            obj.status = 'Approved'
+            obj.current_approver = None
+            obj.approver_position = None
+            obj.save()
+        return {"status": "Approved", "message": "No matching Finance steps. Auto-approved."}
+
+    # 2. Filter target steps based on workflow settings
+    target_steps = fin_steps
+    if is_parallel_flow and enable_two_level_flow:
+        am_steps = fin_steps.filter(
+            models.Q(finance_level_type='assistant_manager') | 
+            models.Q(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+        )
+        if am_steps.exists():
+            target_steps = am_steps
+        else:
+            target_steps = fin_steps.filter(
+                models.Q(finance_level_type='manager') | 
+                models.Q(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+            )
+
+    # 3. Find the first approval position (used for sequential flow or setting the main current approver)
+    first_approval_step = None
+    for step in target_steps:
+        is_appr_req = False
+        if isinstance(obj, (Trip, BulkActivityBatch)):
+            is_appr_req = (step.trip_control == 'APPROVAL')
+        else:
+            is_appr_req = True
         
-    # 3. Create FinanceIntimation records for all matching steps
+        if is_appr_req:
+            first_approval_step = step
+            break
+
+    # 4. Set the initial object status and approver fields
     finance_requires_approval = False
-    created_count = 0
-    
-    for step in matching_steps:
-        # Resolve target users for this step
-        target_users = []
-        if step.position_id:
-            target_users = get_users_by_position(step.position_id)
-        elif step.user:
-            target_users = [step.user]
-            
-        is_approval = (step.trip_control == 'APPROVAL')
-        if is_approval:
+    if not is_parallel_flow:
+        # Sequential Flow: start at the very first step regardless of trip_control type
+        first_step = target_steps.first()
+        if first_step:
             finance_requires_approval = True
-            
-        for f_user in target_users:
-            # Avoid duplicate intimations
-            FinanceIntimation.objects.get_or_create(
-                trip=trip,
-                finance_user=f_user,
-                finance_position=step.position_id or '',
-                defaults={'is_approval': is_approval, 'is_read': False}
-            )
-            created_count += 1
-            
-            # Send Notification
-            Notification.objects.create(
-                user=f_user,
-                title=f"New Finance {'Approval' if is_approval else 'Intimation'}: Trip {trip.trip_id}",
-                message=f"Trip {trip.trip_id} for {trip.user.name} is available for {'approval' if is_approval else 'viewing'}.",
-                type='info'
-            )
-            
-    if finance_requires_approval:
-        trip.status = 'PENDING_FINANCE'
-        trip.current_approver = None
-        trip.approver_position = None
-        trip.save()
-        # Update associated batches
-        for batch in trip.activity_batches.exclude(status='Rejected'):
-            batch.status = 'PENDING_FINANCE'
-            batch.current_approver = None
-            batch.save()
-        return {"status": "PENDING_FINANCE", "message": f"Routed to {created_count} Finance users for approval."}
+            if isinstance(obj, (Trip, BulkActivityBatch)):
+                active_trip = obj if isinstance(obj, Trip) else obj.trip
+                active_trip.status = 'PENDING_FINANCE'
+                active_trip.approver_position = first_step.position_id
+                pos_users = get_users_by_position(first_step.position_id) if first_step.position_id else []
+                active_trip.current_approver = pos_users[0] if pos_users else first_step.user
+                active_trip.save()
+
+                if isinstance(obj, Trip):
+                    for batch in obj.activity_batches.exclude(status='Rejected'):
+                        batch.status = 'PENDING_FINANCE'
+                        batch.current_approver = active_trip.current_approver
+                        batch.approver_position = active_trip.approver_position
+                        batch.save()
+            else:
+                obj.approver_position = first_step.position_id
+                obj.status = 'PENDING_FINAL_RELEASE' if first_step.visibility_type == 'FINANCE_HUB' else 'PENDING_EXECUTIVE'
+                pos_users = get_users_by_position(first_step.position_id) if first_step.position_id else []
+                obj.current_approver = pos_users[0] if pos_users else first_step.user
+                obj.save()
+        else:
+            if isinstance(obj, (Trip, BulkActivityBatch)):
+                finalize_trip_approval(obj if isinstance(obj, Trip) else obj.trip)
+            else:
+                obj.status = 'Approved'
+                obj.current_approver = None
+                obj.approver_position = None
+                obj.save()
     else:
-        # Only intimations (Mark as Read) - finalize immediately
-        finalize_trip_approval(trip)
-        return {"status": "Approved", "message": f"No approval required. Finalized & sent to {created_count} Finance users as intimations."}
+        # Parallel Flow: check if any step requires approval
+        finance_requires_approval = False
+        if isinstance(obj, (Trip, BulkActivityBatch)):
+            active_trip = obj if isinstance(obj, Trip) else obj.trip
+            for step in target_steps:
+                if step.trip_control == 'APPROVAL':
+                    finance_requires_approval = True
+                    break
+            
+            if finance_requires_approval:
+                active_trip.status = 'PENDING_FINANCE'
+                if first_approval_step:
+                    active_trip.approver_position = first_approval_step.position_id
+                    pos_users = get_users_by_position(first_approval_step.position_id) if first_approval_step.position_id else []
+                    active_trip.current_approver = pos_users[0] if pos_users else first_approval_step.user
+                else:
+                    active_trip.current_approver = None
+                    active_trip.approver_position = None
+                active_trip.save()
+
+                if isinstance(obj, Trip):
+                    for batch in obj.activity_batches.exclude(status='Rejected'):
+                        batch.status = 'PENDING_FINANCE'
+                        batch.current_approver = active_trip.current_approver
+                        batch.approver_position = active_trip.approver_position
+                        batch.save()
+            else:
+                # Only intimations (Mark as Read) - finalize immediately
+                finalize_trip_approval(active_trip)
+        else:
+            # Claims & Advances — check if any step actually requires approval
+            if is_parallel_flow:
+                # Find if there are any active inbox steps
+                inbox_steps = target_steps.filter(visibility_type__in=['INBOX', 'BOTH'])
+                if inbox_steps.exists():
+                    finance_requires_approval = True
+                    first_inbox_step = inbox_steps.first()
+                    obj.approver_position = first_inbox_step.position_id
+                    obj.status = 'PENDING_EXECUTIVE'
+                    pos_users = get_users_by_position(first_inbox_step.position_id) if first_inbox_step.position_id else []
+                    obj.current_approver = pos_users[0] if pos_users else first_inbox_step.user
+                else:
+                    # Hub-only workflow
+                    finance_requires_approval = any(s.trip_control == 'APPROVAL' for s in target_steps)
+                    if finance_requires_approval and first_approval_step:
+                        obj.approver_position = first_approval_step.position_id
+                        obj.status = 'PENDING_FINAL_RELEASE'
+                        pos_users = get_users_by_position(first_approval_step.position_id) if first_approval_step.position_id else []
+                        obj.current_approver = pos_users[0] if pos_users else first_approval_step.user
+                    else:
+                        obj.current_approver = None
+                        obj.approver_position = None
+                        obj.status = 'Approved'
+            else:
+                # Sequential flow
+                finance_requires_approval = any(s.trip_control == 'APPROVAL' for s in target_steps)
+                if finance_requires_approval and first_approval_step:
+                    obj.approver_position = first_approval_step.position_id
+                    obj.status = 'PENDING_FINAL_RELEASE' if first_approval_step.visibility_type == 'FINANCE_HUB' else 'PENDING_EXECUTIVE'
+                    pos_users = get_users_by_position(first_approval_step.position_id) if first_approval_step.position_id else []
+                    obj.current_approver = pos_users[0] if pos_users else first_approval_step.user
+                else:
+                    # All steps are MARK_READ (or no steps) — auto-approve immediately
+                    obj.current_approver = None
+                    obj.approver_position = None
+                    obj.status = 'Approved'
+            obj.save()
+
+    # 5. Background Dispatch worker or inline dispatch
+    def _async_finance_dispatch_worker(obj_id, obj_class, requester_name):
+        try:
+            import time
+            time.sleep(0.5)
+            from django.db import connection
+            connection.close()
+
+            active_obj = obj_class.objects.get(pk=obj_id)
+            active_trip = active_obj if isinstance(active_obj, Trip) else getattr(active_obj, 'trip', None)
+
+            # Re-fetch steps and settings to be safe
+            fin_steps, is_parallel, enable_two_level, _ = _get_finance_steps_and_settings(active_obj)
+            
+            target_steps = fin_steps
+            if is_parallel and enable_two_level:
+                am_steps = fin_steps.filter(
+                    models.Q(finance_level_type='assistant_manager') | 
+                    models.Q(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+                )
+                if am_steps.exists():
+                    target_steps = am_steps
+                else:
+                    target_steps = fin_steps.filter(
+                        models.Q(finance_level_type='manager') | 
+                        models.Q(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+                    )
+
+            # Find the first step in sequential flow
+            first_step = target_steps.first()
+
+            is_claim_or_advance = isinstance(active_obj, (TravelClaim, TravelAdvance))
+            created_count = 0
+            for step in target_steps:
+                # trip_control governs whether this step needs approval or is just a read notification
+                if is_claim_or_advance:
+                    is_appr = True
+                    is_read_only = False
+                else:
+                    is_appr = (step.trip_control == 'APPROVAL')
+                    is_read_only = (step.trip_control == 'MARK_READ')
+                
+                is_hub_step = step.visibility_type in ['FINANCE_HUB', 'BOTH']
+
+                if is_parallel:
+                    if enable_two_level:
+                        # 2-Level: only dispatch assistant_manager INBOX steps initially (Finance Hub comes after managers)
+                        should_dispatch = (not is_hub_step) and (is_appr or is_read_only)
+                    else:
+                        # Parallel only: dispatch INBOX steps only (Finance Hub dispatched after any inbox approval)
+                        should_dispatch = (not is_hub_step) and (is_appr or is_read_only)
+                else:
+                    # Sequential: only dispatch the very first step in the entire sequence!
+                    is_active_step = first_step and step.id == first_step.id
+                    should_dispatch = is_active_step
+                    if not is_claim_or_advance:
+                        is_appr = is_active_step and (step.trip_control == 'APPROVAL')
+                    else:
+                        is_appr = is_active_step
+
+                if should_dispatch:
+                    target_users = []
+                    if step.position_id:
+                        target_users = get_users_by_position(step.position_id)
+                    elif step.user:
+                        target_users = [step.user]
+
+                    for f_user in target_users:
+                        intimation_filter = {'finance_user': f_user, 'finance_position': step.position_id or ''}
+                        if isinstance(active_obj, Trip):
+                            intimation_filter['trip'] = active_obj
+                        elif isinstance(active_obj, TravelClaim):
+                            intimation_filter['claim'] = active_obj
+                        elif isinstance(active_obj, TravelAdvance):
+                            intimation_filter['advance'] = active_obj
+                        elif isinstance(active_obj, BulkActivityBatch):
+                            intimation_filter['trip'] = active_obj.trip
+
+                        if not FinanceIntimation.objects.filter(**intimation_filter).exists():
+                            FinanceIntimation.objects.create(is_approval=is_appr, is_read=False, **intimation_filter)
+                            created_count += 1
+
+                            # Send Notification
+                            Notification.objects.create(
+                                user=f_user,
+                                target_position=step.position_id,
+                                title=f"Pending Finance {'Approval' if is_appr else 'Intimation'}: {request_type}",
+                                message=f"{requester_name}'s {request_type} requires your review.",
+                                type='info'
+                            )
+        except Exception as e:
+            import logging
+            logging.error(f"Background finance parallel dispatch failed: {e}", exc_info=True)
+
+    import threading
+    t = threading.Thread(
+        target=_async_finance_dispatch_worker,
+        args=(obj.pk, obj.__class__, requester.name if requester else 'Unknown')
+    )
+    t.daemon = True
+    t.start()
+
+    response_msg = "Forwarded to Finance Workflow."
+    if not finance_requires_approval:
+        response_msg = "No approval required. Finalized & sent to Finance as intimations."
+
+    return {"status": obj.status, "message": response_msg}
 
 
 def _get_user_all_position_ids(user):
@@ -1639,22 +1901,30 @@ def _get_finance_users():
             if step.user not in users: users.append(step.user)
     return users
 
-def _get_finance_step_for_user(user):
+def _get_finance_step_for_user(user, project_code=None):
     """
     Reverse-lookup: find the FinanceWorkflowStep that this user currently holds.
     Uses get_users_by_position (API-aware) for each step so position code vs numeric ID mismatches are handled.
     """
     if not user: return None
     from .models import FinanceWorkflowStep
-    # First try fast path using all local position IDs/codes/names
+    
+    fin_steps = FinanceWorkflowStep.objects.filter(is_active=True)
+    if project_code:
+        steps = fin_steps.filter(project_code=project_code)
+        if not steps.exists():
+            steps = fin_steps.filter(project_code='General')
+    else:
+        steps = fin_steps
+
     all_pos_ids = _get_user_all_position_ids(user)
     for pos_id in all_pos_ids:
-        step = FinanceWorkflowStep.objects.filter(position_id=pos_id, is_active=True).first()
+        step = steps.filter(position_id=pos_id).first()
         if step:
             return step
             
-    # Second, check step properties directly in user's position identifiers (highly resilient fallback)
-    for step in FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order'):
+    # Check step properties directly in user's position identifiers (highly resilient fallback)
+    for step in steps.order_by('sequence_order'):
         if step.position_id and str(step.position_id) in all_pos_ids:
             return step
         if step.position_name and str(step.position_name) in all_pos_ids:
@@ -1663,7 +1933,7 @@ def _get_finance_step_for_user(user):
             return step
             
     # Slow path: iterate each step and check via API (handles code vs numeric ID mismatch)
-    for step in FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order'):
+    for step in steps.order_by('sequence_order'):
         if step.position_id:
             if user in get_users_by_position(step.position_id):
                 return step
@@ -1680,10 +1950,20 @@ def _get_hr_users():
     return users
 
 
-def get_finance_head(user, exclude_user=None):
+def get_finance_head(user, exclude_user=None, project_code=None):
     """Finds the final approver (HUB visibility)."""
-    hub_step = FinanceWorkflowStep.objects.filter(visibility_type='FINANCE_HUB', is_active=True).first()
+    if not project_code and user:
+        project_code = getattr(user, 'project_code', 'General')
+        
+    steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code=project_code)
+    if not steps.exists():
+        steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code='General')
+        
+    hub_step = steps.filter(visibility_type='FINANCE_HUB').first()
     if hub_step:
+        if hub_step.position_id:
+            pos_users = get_users_by_position(hub_step.position_id)
+            if pos_users: return pos_users[0]
         return hub_step.user
         
     # Fallback
@@ -1696,10 +1976,20 @@ def get_finance_head(user, exclude_user=None):
         return heads[0]
     return all_finance[0] if all_finance else None
 
-def get_finance_executive(user, exclude_user=None):
+def get_finance_executive(user, exclude_user=None, project_code=None):
     """Finds the first-level finance executive (INBOX visibility)."""
-    first_step = FinanceWorkflowStep.objects.filter(visibility_type='INBOX', is_active=True).order_by('sequence_order').first()
+    if not project_code and user:
+        project_code = getattr(user, 'project_code', 'General')
+        
+    steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code=project_code)
+    if not steps.exists():
+        steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code='General')
+        
+    first_step = steps.filter(visibility_type='INBOX').order_by('sequence_order').first()
     if first_step:
+        if first_step.position_id:
+            pos_users = get_users_by_position(first_step.position_id)
+            if pos_users: return pos_users[0]
         return first_step.user
 
     # Fallback
@@ -2213,8 +2503,18 @@ def resolve_approver(user, members_data=None):
         mgr_pos = reporting_manager.get_current_position()
         mgr_pos_name = mgr_pos.get('name') if mgr_pos else None
         if _is_coo_position(mgr_pos_name, reporting_manager.designation, employee_id=reporting_manager.employee_id):
-            # Bypass COO: return None as current_approver to trigger finalized/finance routing
-            return None, 0, reporting_manager, user.senior_manager, user.hod_director, None
+            # Check if COO approval is explicitly enabled for this project
+            from travel.models import COOProjectSetting
+            proj_code = getattr(user, 'project_code', 'General') or 'General'
+            mgr_pos_id = mgr_pos.get('id') if mgr_pos else None
+            
+            coo_enabled = False
+            if mgr_pos_id:
+                coo_enabled = COOProjectSetting.objects.filter(project_code=proj_code, coo_position_id=str(mgr_pos_id), enable_coo_approval=True).exists()
+                
+            if not coo_enabled:
+                # Bypass COO: return None as current_approver to trigger finalized/finance routing
+                return None, 0, reporting_manager, user.senior_manager, user.hod_director, None
 
     # Strictly follow reporting managers flow
     current_approver = reporting_manager
@@ -2971,19 +3271,15 @@ def _get_actual_pending_tasks_count(user, view_type='all'):
         batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'HR Approved', 'Under Process'])
     elif is_hr:
         from .models import HRIntimation
-        intimations = HRIntimation.objects.filter(hr_user=user).filter(Q(is_read=False) | Q(is_approval=True))
+        intimations = HRIntimation.objects.filter(hr_user=user, is_read=False)
         trip_ids = list(intimations.filter(trip__isnull=False).values_list('trip_id', flat=True))
         advance_ids = list(intimations.filter(advance__isnull=False).values_list('advance_id', flat=True))
         claim_ids = list(intimations.filter(claim__isnull=False).values_list('claim_id', flat=True))
         
-        trips = Trip.objects.filter(pk__in=trip_ids)
-        advances = TravelAdvance.objects.filter(pk__in=advance_ids)
-        claims = TravelClaim.objects.filter(pk__in=claim_ids)
-        batch_qs = BulkActivityBatch.objects.filter(
-            Q(status__in=['Manager Approved', 'HR Approved', 'Under Process']) |
-            Q(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user) |
-            Q(trip_id__in=trip_ids)
-        )
+        trips = Trip.objects.filter(pk__in=trip_ids, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved'])
+        advances = TravelAdvance.objects.filter(pk__in=advance_ids, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'PENDING_HR'])
+        claims = TravelClaim.objects.filter(pk__in=claim_ids, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'PENDING_HR'])
+        batch_qs = BulkActivityBatch.objects.filter(trip_id__in=trip_ids)
     elif is_finance:
         user_step = _get_finance_step_for_user(user)
         
@@ -3149,7 +3445,7 @@ class ApprovalsView(APIView):
             elif tab in ['completed', 'rejected']:
                 intimations = HRIntimation.objects.filter(hr_user=user)
             else:
-                intimations = HRIntimation.objects.filter(hr_user=user).filter(Q(is_read=False) | Q(is_approval=True))
+                intimations = HRIntimation.objects.filter(hr_user=user, is_read=False)
             
             if type_filter == 'trip':
                 intimations = intimations.filter(trip__isnull=False)
@@ -3175,23 +3471,20 @@ class ApprovalsView(APIView):
             advance_ids = list(intimations.filter(advance__isnull=False).values_list('advance_id', flat=True))
             claim_ids = list(intimations.filter(claim__isnull=False).values_list('claim_id', flat=True))
             
-            hr_pos_ids = user.get_active_position_identifiers()
-            q = Q(approver_position__in=hr_pos_ids) | Q(current_approver=user, approver_position__isnull=True)
-            
             if tab == 'completed':
                 completed_statuses = ['Paid', 'COMPLETED', 'Completed', 'Settled', 'Transferred']
-                trips = Trip.objects.filter(Q(trip_id__in=trip_ids) | q, status__in=completed_statuses)
-                advances = TravelAdvance.objects.filter(Q(id__in=advance_ids) | q, status__in=completed_statuses)
-                claims = TravelClaim.objects.filter(Q(id__in=claim_ids) | q, status__in=completed_statuses)
+                trips = Trip.objects.filter(trip_id__in=trip_ids, status__in=completed_statuses)
+                advances = TravelAdvance.objects.filter(id__in=advance_ids, status__in=completed_statuses)
+                claims = TravelClaim.objects.filter(id__in=claim_ids, status__in=completed_statuses)
             elif tab == 'rejected':
                 rejected_statuses = ['Rejected', 'Rejected by Finance', 'Cancelled']
-                trips = Trip.objects.filter(Q(trip_id__in=trip_ids) | q, status__in=rejected_statuses)
-                advances = TravelAdvance.objects.filter(Q(id__in=advance_ids) | q, status__in=rejected_statuses)
-                claims = TravelClaim.objects.filter(Q(id__in=claim_ids) | q, status__in=rejected_statuses)
+                trips = Trip.objects.filter(trip_id__in=trip_ids, status__in=rejected_statuses)
+                advances = TravelAdvance.objects.filter(id__in=advance_ids, status__in=rejected_statuses)
+                claims = TravelClaim.objects.filter(id__in=claim_ids, status__in=rejected_statuses)
             else:
-                trips = Trip.objects.filter(Q(trip_id__in=trip_ids) | q)
-                advances = TravelAdvance.objects.filter(Q(id__in=advance_ids) | q)
-                claims = TravelClaim.objects.filter(Q(id__in=claim_ids) | q)
+                trips = Trip.objects.filter(trip_id__in=trip_ids)
+                advances = TravelAdvance.objects.filter(id__in=advance_ids)
+                claims = TravelClaim.objects.filter(id__in=claim_ids)
                 
                 if tab == 'history':
                     history_statuses = ['Submitted', 'Resubmitted', 'Approved', 'Rejected', 'Resolved', 'Paid', 'HR Approved', 'Manager Approved', 'COMPLETED', 'Completed', 'Settled', 'Transferred', 'Forwarded']
@@ -3301,68 +3594,48 @@ class ApprovalsView(APIView):
                     claims = TravelClaim.objects.filter(Q(id__in=claim_ids) | q, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'PENDING_HR'])
                     advances = TravelAdvance.objects.filter(Q(id__in=advance_ids) | q, status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'PENDING_HR'])
                 elif is_finance:
-                    # Resolve finance workflow step via API-aware reverse lookup
-                    user_step = _get_finance_step_for_user(user)
-                        
-                    previous_approver_name = "Management Approved"
+                    # Build a set of ALL identifiers for this finance position (from API + workflow step)
+                    fin_pos_ids = _get_user_all_position_ids(user)
                     
-                    # Fetch Trips/Travel Requests from FinanceIntimation
-                    from .models import FinanceIntimation
-                    fin_intimations = FinanceIntimation.objects.filter(finance_user=user, is_read=False)
-                    trip_ids = fin_intimations.values_list('trip_id', flat=True)
-                    trips = Trip.objects.filter(trip_id__in=trip_ids).exclude(claim__isnull=False)
-
-                    if user_step:
-                        # Calculate name of previous person in chain for UI labels
-                        previous_step = FinanceWorkflowStep.objects.filter(
-                            sequence_order__lt=user_step.sequence_order,
-                            is_active=True
-                        ).order_by('-sequence_order').first()
-                        previous_approver_name = previous_step.position_name or (previous_step.user.name if previous_step.user else "Previous Step") if previous_step else "Management Approved"
-                        workflow_label = f"{previous_approver_name} to {user_step.position_name or user.name}"
-
-                        if source == 'hub':
-                            if user_step.visibility_type == 'INBOX' and not is_finance_head:
-                                return Response([])
-                            pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
-                        else:
-                            if user_step.visibility_type not in ['INBOX', 'BOTH']:
-                                return Response([])
-                            pending_money_statuses = ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'REJECTED_BY_HEAD', 'HR Approved']
+                    # Gather all active steps for this user across all projects
+                    all_user_steps = FinanceWorkflowStep.objects.filter(is_active=True).filter(
+                        Q(position_id__in=fin_pos_ids) | Q(user=user)
+                    )
+                    
+                    has_matching_step = False
+                    if source == 'hub':
+                        if is_finance_head or all_user_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH']).exists():
+                            has_matching_step = True
+                        pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
+                    else:
+                        if all_user_steps.filter(visibility_type__in=['INBOX', 'BOTH']).exists():
+                            has_matching_step = True
+                        pending_money_statuses = ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'REJECTED_BY_HEAD', 'HR Approved']
                         
-                        # Build a set of ALL identifiers for this finance position (from API + workflow step)
-                        fin_pos_ids = _get_user_all_position_ids(user)
-                        if user_step.position_id:
-                            fin_pos_ids.add(str(user_step.position_id))
+                    if not has_matching_step:
+                        # Return empty if they truly have no matching step or authority
+                        trips = Trip.objects.none()
+                        advances = TravelAdvance.objects.none()
+                        claims = TravelClaim.objects.none()
+                    else:
+                        # Fetch Trips/Travel Requests from FinanceIntimation
+                        from .models import FinanceIntimation
+                        fin_intimations = FinanceIntimation.objects.filter(finance_user=user, is_read=False)
+                        trip_ids = fin_intimations.values_list('trip_id', flat=True)
+                        trips = Trip.objects.filter(trip_id__in=trip_ids).exclude(claim__isnull=False)
+                        
+                        unread_claim_ids = fin_intimations.exclude(claim__isnull=True).values_list('claim_id', flat=True)
+                        unread_adv_ids = fin_intimations.exclude(advance__isnull=True).values_list('advance_id', flat=True)
 
                         if source == 'hub':
                             pos_q = (Q(approver_position__in=fin_pos_ids) | Q(approver_position__isnull=True))
-                            advances = TravelAdvance.objects.filter(status__in=pending_money_statuses).filter(pos_q)
-                            claims = TravelClaim.objects.filter(status__in=pending_money_statuses).filter(pos_q)
+                            advances = TravelAdvance.objects.filter(status__in=pending_money_statuses).filter(pos_q | Q(id__in=unread_adv_ids))
+                            claims = TravelClaim.objects.filter(status__in=pending_money_statuses).filter(pos_q | Q(id__in=unread_claim_ids))
                         else:
-                            # Position-Centric Inbox: Match against all known identifiers for this finance position
+                            # Position-Centric Inbox: Match against all known identifiers for this finance position OR unread intimations
                             pos_q = Q(approver_position__in=fin_pos_ids)
-                            advances = TravelAdvance.objects.filter(status__in=pending_money_statuses).filter(pos_q)
-                            claims = TravelClaim.objects.filter(status__in=pending_money_statuses).filter(pos_q)
-                    else:
-                        # Fallback for user not explicitly registry-linked
-                        # Fallback: gather all position identifiers from the API for this user
-                        fallback_pos_ids = user.get_active_position_identifiers()
-
-                        if is_finance_head:
-                            pos_q = Q(approver_position__in=fallback_pos_ids)
-                            advances = TravelAdvance.objects.filter(pos_q, status='PENDING_HEAD')
-                            claims = TravelClaim.objects.filter(pos_q, status='PENDING_HEAD')
-                        else:
-                            if source == 'hub':
-                                pending_money_statuses = ['PENDING_FINAL_RELEASE', 'Approved', 'PARTIALLY_COMPLETED']
-                                advances = TravelAdvance.objects.filter(status__in=pending_money_statuses)
-                                claims = TravelClaim.objects.filter(status__in=pending_money_statuses)
-                            else:
-                                pending_money_statuses = ['PENDING_EXECUTIVE', 'REJECTED_BY_HEAD', 'HR Approved']
-                                pos_q = Q(approver_position__in=fallback_pos_ids)
-                                advances = TravelAdvance.objects.filter(status__in=pending_money_statuses).filter(pos_q)
-                                claims = TravelClaim.objects.filter(status__in=pending_money_statuses).filter(pos_q)
+                            advances = TravelAdvance.objects.filter(status__in=pending_money_statuses).filter(pos_q | Q(id__in=unread_adv_ids))
+                            claims = TravelClaim.objects.filter(status__in=pending_money_statuses).filter(pos_q | Q(id__in=unread_claim_ids))
                 
 
                 else:
@@ -3438,6 +3711,71 @@ class ApprovalsView(APIView):
         is_finance_exec = _is_finance_executive(user)
         is_finance_head = _is_finance_head(user)
 
+        def _get_task_finance_details(u, obj_item, is_f_head):
+            from travel.models import FinanceWorkflowStep, FinanceWorkflowSetting
+            p_code_val = 'General'
+            if isinstance(obj_item, Trip):
+                p_code_val = obj_item.project_code or 'General'
+            elif hasattr(obj_item, 'trip') and obj_item.trip:
+                p_code_val = obj_item.trip.project_code or 'General'
+                
+            task_steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code=p_code_val).order_by('sequence_order')
+            if not task_steps.exists():
+                task_steps = FinanceWorkflowStep.objects.filter(is_active=True, project_code='General').order_by('sequence_order')
+                
+            task_setting = FinanceWorkflowSetting.objects.filter(project_code=p_code_val).first()
+            if not task_setting and p_code_val != 'General':
+                task_setting = FinanceWorkflowSetting.objects.filter(project_code='General').first()
+                
+            is_p_flow = task_setting.is_parallel if task_setting else False
+            if p_code_val and ('AP-104-MMUS' in p_code_val or 'AP-104-MMU' in p_code_val):
+                is_p_flow = True
+                
+            task_step = None
+            fin_pos_ids = _get_user_all_position_ids(u)
+            
+            for pos_id in fin_pos_ids:
+                step_match = task_steps.filter(position_id=pos_id).first()
+                if step_match:
+                    task_step = step_match
+                    break
+            if not task_step:
+                for step_match in task_steps.order_by('sequence_order'):
+                    if step_match.position_id and str(step_match.position_id) in fin_pos_ids:
+                        task_step = step_match
+                        break
+                    if step_match.position_name and str(step_match.position_name) in fin_pos_ids:
+                        task_step = step_match
+                        break
+                    if step_match.user == u:
+                        task_step = step_match
+                        break
+            if not task_step:
+                for step_match in task_steps.order_by('sequence_order'):
+                    if step_match.position_id and u in get_users_by_position(step_match.position_id):
+                        task_step = step_match
+                        break
+                        
+            if task_step:
+                if is_p_flow:
+                    if task_step.visibility_type in ['INBOX', 'BOTH']:
+                        label = f"Management Approved to {task_step.position_name or u.name} (Parallel)"
+                    else:
+                        label = f"Finance Inbox to {task_step.position_name or u.name}"
+                else:
+                    prev_step = task_steps.filter(
+                        sequence_order__lt=task_step.sequence_order,
+                        is_active=True
+                    ).order_by('-sequence_order').first()
+                    prev_name = prev_step.position_name or (prev_step.user.name if prev_step.user else "Previous Step") if prev_step else "Management Approved"
+                    label = f"{prev_name} to {task_step.position_name or u.name}"
+                visibility = task_step.visibility_type
+            else:
+                label = "Management Approved to Finance"
+                visibility = "HUB" if is_f_head else "INBOX"
+                
+            return task_step, is_p_flow, label, visibility
+
         # Multi-role handling: Inject intimation records directly so frontend knows it is read-only
         hr_intimations_map = {}
         if is_hr:
@@ -3447,7 +3785,7 @@ class ApprovalsView(APIView):
             elif tab in ['completed', 'rejected']:
                 intimations_query = HRIntimation.objects.filter(hr_user=user)
             else:
-                intimations_query = HRIntimation.objects.filter(hr_user=user).filter(Q(is_read=False) | Q(is_approval=True))
+                intimations_query = HRIntimation.objects.filter(hr_user=user, is_read=False)
                 
             for inti in intimations_query:
                 if inti.trip_id: hr_intimations_map[f"trip_{inti.trip_id}"] = inti
@@ -3457,22 +3795,19 @@ class ApprovalsView(APIView):
         fin_intimations_map = {}
         if is_finance:
             from .models import FinanceIntimation
-            read_status = (tab == 'history')
-            for inti in FinanceIntimation.objects.filter(finance_user=user, is_read=read_status):
+            for inti in FinanceIntimation.objects.filter(finance_user=user):
                 if inti.trip_id: fin_intimations_map[f"trip_{inti.trip_id}"] = inti
+                if inti.claim_id: fin_intimations_map[f"claim_{inti.claim_id}"] = inti
+                if inti.advance_id: fin_intimations_map[f"advance_{inti.advance_id}"] = inti
 
         # Collect trip IDs that have pending batches to avoid double-showing them
         # (Manager should approve the Batch card which contains specific rows)
         if is_admin:
             batch_qs = BulkActivityBatch.objects.filter(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted', 'Manager Approved', 'HR Approved', 'Under Process'])
         elif is_hr:
-            # For HR, include active actionables AND batches tied to incoming HR Intimations
-            intimation_trip_ids = [k.replace('trip_', '') for k in hr_intimations_map.keys()]
-            batch_qs = BulkActivityBatch.objects.filter(
-                Q(status__in=['Manager Approved', 'HR Approved', 'Under Process']) | 
-                Q(status__in=['Pending', 'Submitted', 'Forwarded', 'Resubmitted'], current_approver=user) |
-                Q(trip_id__in=intimation_trip_ids)
-            )
+            # For HR, include batches tied to incoming HR Intimations
+            intimation_trip_ids = [k.replace('trip_', '') for k in hr_intimations_map.keys() if k.startswith('trip_')]
+            batch_qs = BulkActivityBatch.objects.filter(trip_id__in=intimation_trip_ids)
         elif is_finance:
             # Finance handles claims and advances only; block Bulk tour plans entirely
             batch_qs = BulkActivityBatch.objects.none()
@@ -3539,6 +3874,20 @@ class ApprovalsView(APIView):
                 has_inti = (inti_obj is not None)
                 is_inti = has_inti and (not inti_obj.is_approval)
                 
+                task_step_item = None
+                t_workflow_label = "Manager Approval"
+                t_visibility = "INBOX"
+                if is_finance:
+                    t_task_step, t_is_p, t_workflow_label, t_visibility = _get_task_finance_details(user, t, is_finance_head)
+                    task_step_item = t_task_step
+                    if tab not in ['completed', 'rejected', 'processing', 'history']:
+                        if source == 'hub':
+                            if t_visibility == 'INBOX' and not is_finance_head:
+                                continue
+                        else:
+                            if t_visibility not in ['INBOX', 'BOTH']:
+                                continue
+
                 tasks.append({
                     "id": f"TRIP-{t.trip_id}", "db_id": t.trip_id, 
                     "is_intimation": is_inti,
@@ -3567,8 +3916,8 @@ class ApprovalsView(APIView):
                         "total_advance_taken": str(advance_sum),
                         "wallet_balance_used": str(wallet_bal),
                         "executive_approved_amount": str(max(0, balance)) if t.status == 'PARTIALLY_COMPLETED' else str(t.executive_approved_amount if t.executive_approved_amount is not None else expense_sum),
-                        "previous_approver_name": previous_approver_name if is_finance else "Manager",
-                        "workflow_label": workflow_label if is_finance else "Manager Approval",
+                        "previous_approver_name": "Management Approved" if is_finance else "Manager",
+                        "workflow_label": t_workflow_label,
                         "job_reports": [
                             {
                                 "id": jr.id,
@@ -3595,13 +3944,13 @@ class ApprovalsView(APIView):
                             } for b in t.activity_batches.all()
                         ],
                         "permissions": {
-                            "can_edit_amount": _can_user_edit_amount(user, t, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                            "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                            "can_edit_amount": _can_user_edit_amount(user, t, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                            "visibility": t_visibility
                         }
                     },
                     "permissions": {
-                        "can_edit_amount": _can_user_edit_amount(user, t, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                        "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                        "can_edit_amount": _can_user_edit_amount(user, t, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                        "visibility": t_visibility
                     }
                 })
             
@@ -3623,9 +3972,27 @@ class ApprovalsView(APIView):
 
                 is_local_form = a.trip.consider_as_local and not a.trip.activity_batches.exists()
                 inti_obj = hr_intimations_map.get(f"advance_{a.id}")
+                if is_finance:
+                    inti_obj = fin_intimations_map.get(f"advance_{a.id}")
                 has_inti = (inti_obj is not None)
                 is_inti = has_inti and (not inti_obj.is_approval)
+                if is_finance:
+                    is_inti = False
                 
+                task_step_item = None
+                a_workflow_label = "HR Approval"
+                a_visibility = "INBOX"
+                if is_finance:
+                    a_task_step, a_is_p, a_workflow_label, a_visibility = _get_task_finance_details(user, a, is_finance_head)
+                    task_step_item = a_task_step
+                    if tab not in ['completed', 'rejected', 'processing', 'history']:
+                        if source == 'hub':
+                            if a_visibility == 'INBOX' and not is_finance_head:
+                                continue
+                        else:
+                            if a_visibility not in ['INBOX', 'BOTH']:
+                                continue
+
                 tasks.append({
                     "id": f"ADV-{a.id}", "db_id": a.id, 
                     "is_intimation": is_inti,
@@ -3648,23 +4015,22 @@ class ApprovalsView(APIView):
                         "hr_approved_amount": str(a.hr_approved_amount or 0),
                         "hr_remarks": a.hr_remarks or "",
                         "executive_approved_amount": str(max(0, balance)) if a.status == 'PARTIALLY_COMPLETED' else str(a.executive_approved_amount or a.hr_approved_amount or a.requested_amount),
-                        "previous_approver_name": previous_approver_name if is_finance else "HR",
-                        "workflow_label": workflow_label if is_finance else "HR Approval",
+                        "previous_approver_name": "Management Approved" if is_finance else "HR",
+                        "workflow_label": a_workflow_label,
                         "reason": a.purpose,
                         "trip_destination": a.trip.destination,
                         "trip_id": a.trip.trip_id,
                         "start_date": a.trip.start_date.strftime("%b %d, %Y") if a.trip.start_date else "N/A",
                         "end_date": a.trip.end_date.strftime("%b %d, %Y") if a.trip.end_date else "N/A",
                         "paid_amount": str(a.paid_amount or 0),
-                        "previous_approver_name": previous_approver_name if is_finance else "HR",
                         "permissions": {
-                            "can_edit_amount": _can_user_edit_amount(user, a, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                            "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                            "can_edit_amount": _can_user_edit_amount(user, a, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                            "visibility": a_visibility
                         }
                     },
                     "permissions": {
-                        "can_edit_amount": _can_user_edit_amount(user, a, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                        "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                        "can_edit_amount": _can_user_edit_amount(user, a, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                        "visibility": a_visibility
                     }
                 })
 
@@ -3672,9 +4038,6 @@ class ApprovalsView(APIView):
             for c in claims.order_by('-created_at'):
                 # Handle view_type filtering for mobile
                 is_tour_plan = c.trip.consider_as_local and c.trip.activity_batches.exists()
-                
-
-
                 view_type = request.query_params.get('view_type', 'all')
                 if view_type == 'special' and is_tour_plan: continue
                 if view_type == 'monthly' and not is_tour_plan: continue
@@ -3691,9 +4054,27 @@ class ApprovalsView(APIView):
 
                 is_local_form = c.trip.consider_as_local and not c.trip.activity_batches.exists()
                 inti_obj = hr_intimations_map.get(f"claim_{c.id}")
+                if is_finance:
+                    inti_obj = fin_intimations_map.get(f"claim_{c.id}")
                 has_inti = (inti_obj is not None)
                 is_inti = has_inti and (not inti_obj.is_approval)
+                if is_finance:
+                    is_inti = False
                 
+                task_step_item = None
+                c_workflow_label = "HR Approval"
+                c_visibility = "INBOX"
+                if is_finance:
+                    c_task_step, c_is_p, c_workflow_label, c_visibility = _get_task_finance_details(user, c, is_finance_head)
+                    task_step_item = c_task_step
+                    if tab not in ['completed', 'rejected', 'processing', 'history']:
+                        if source == 'hub':
+                            if c_visibility == 'INBOX' and not is_finance_head:
+                                continue
+                        else:
+                            if c_visibility not in ['INBOX', 'BOTH']:
+                                continue
+
                 tasks.append({
                     "id": f"CLAIM-{c.id}", "db_id": c.id, 
                     "is_intimation": is_inti,
@@ -3721,8 +4102,8 @@ class ApprovalsView(APIView):
                         "hr_approved_amount": str(c.hr_approved_amount or 0),
                         "hr_remarks": getattr(c, "hr_remarks", ""),
                         "executive_approved_amount": str(max(0, balance)) if c.status == 'PARTIALLY_COMPLETED' else str(c.executive_approved_amount or c.hr_approved_amount or c.approved_amount or c.total_amount),
-                        "previous_approver_name": previous_approver_name if is_finance else "HR",
-                        "workflow_label": workflow_label if is_finance else "HR Approval",
+                        "previous_approver_name": "Management Approved" if is_finance else "HR",
+                        "workflow_label": c_workflow_label,
                         "total_advance_taken": str(total_adv),
                         "wallet_balance_used": str(wallet_bal),
                         "net_payout": str(max(0, net_payout)),
@@ -3797,13 +4178,13 @@ class ApprovalsView(APIView):
                             "end_image": decrypt_key(c.trip.odometer_details.end_odo_image) if hasattr(c.trip, 'odometer_details') and c.trip.odometer_details.end_odo_image else None,
                         } if hasattr(c.trip, 'odometer_details') else None,
                         "permissions": {
-                            "can_edit_amount": _can_user_edit_amount(user, c, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                            "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                            "can_edit_amount": _can_user_edit_amount(user, c, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                            "visibility": c_visibility
                         }
                     },
                     "permissions": {
-                        "can_edit_amount": _can_user_edit_amount(user, c, is_hr, is_finance, is_finance_exec, is_finance_head, user_step),
-                        "visibility": user_step.visibility_type if user_step else ("HUB" if is_finance_head else "INBOX")
+                        "can_edit_amount": _can_user_edit_amount(user, c, is_hr, is_finance, is_finance_exec, is_finance_head, task_step_item),
+                        "visibility": c_visibility
                     }
                 })
 
@@ -3827,14 +4208,8 @@ class ApprovalsView(APIView):
             
             if is_hr:
                 # Dedicated track for HR: Fetch batches tied to incoming intimations (read/unread already handled!)
-                intimation_trip_ids = [k.replace('trip_', '') for k in hr_intimations_map.keys()]
-                hr_manager_pos_ids = user.get_active_position_identifiers()
-                hr_q = (Q(current_approver=user) | Q(status='Manager Approved')) & \
-                       (Q(approver_position__in=hr_manager_pos_ids) | Q(approver_position__isnull=True))
-                pending_batches = BulkActivityBatch.objects.filter(
-                    Q(hr_q, status__in=['Pending', 'Submitted', 'Manager Approved', 'Resubmitted', 'Forwarded', 'Under Process']) |
-                    Q(trip_id__in=intimation_trip_ids)
-                )
+                intimation_trip_ids = [k.replace('trip_', '') for k in hr_intimations_map.keys() if k.startswith('trip_')]
+                pending_batches = BulkActivityBatch.objects.filter(trip_id__in=intimation_trip_ids)
             elif tab == 'history':
                 # Approver History for Batches
                 from core.models import AuditLog # type: ignore
@@ -4007,10 +4382,21 @@ class ApprovalsView(APIView):
 
     def post(self, request):
         user = getattr(request, 'custom_user', None)
+        # --- DEBUG LOGGING ---
+        print(f"[APPROVALS POST] Content-Type: {request.content_type}")
+        print(f"[APPROVALS POST] request.data: {dict(request.data)}")
+        if user:
+            print(f"[APPROVALS POST] User: {user.employee_id} - {user.name}")
+            print(f"[APPROVALS POST] User active_position_id: {user.active_position_id}")
+            print(f"[APPROVALS POST] User position identifiers: {user.get_active_position_identifiers()}")
+        else:
+            print("[APPROVALS POST] User: None")
+        # --- END DEBUG ---
         task_id = request.data.get('id')
         action = request.data.get('action') 
         
         if not task_id or not action:
+            print(f"[APPROVALS POST] MISSING FIELDS — task_id={task_id!r} action={action!r}")
             return Response({"error": "ID and Action required"}, status=400)
             
         if action == 'MarkRead':
@@ -4022,14 +4408,28 @@ class ApprovalsView(APIView):
                 
                 if is_fin:
                     filter_kwargs = {'finance_user': user, 'is_approval': False}
+                    obj = None
                     if task_id.startswith('TRIP-'):
-                        filter_kwargs['trip__trip_id'] = task_id.replace('TRIP-', '')
+                        obj = Trip.objects.filter(trip_id=task_id.replace('TRIP-', '')).first()
+                        if obj: filter_kwargs['trip'] = obj
+                    elif task_id.startswith('CLAIM-'):
+                        obj = TravelClaim.objects.filter(id=task_id.replace('CLAIM-', '')).first()
+                        if obj: filter_kwargs['claim'] = obj
+                    elif task_id.startswith('ADV-'):
+                        obj = TravelAdvance.objects.filter(id=task_id.replace('ADV-', '')).first()
+                        if obj: filter_kwargs['advance'] = obj
                     else:
-                        filter_kwargs['trip__trip_id'] = task_id
+                        obj = Trip.objects.filter(trip_id=task_id).first()
+                        if obj: filter_kwargs['trip'] = obj
                         
                     intimations = FinanceIntimation.objects.filter(**filter_kwargs)
                     if intimations.exists():
                         intimations.update(is_read=True, read_at=timezone.now())
+                        
+                        # Progress the workflow if applicable
+                        if obj:
+                            return handle_workflow_action(obj, 'Confirm', user, {'id': task_id, 'action': 'Confirm'})
+                                
                         return Response({"message": "Marked as Read successfully."})
                     else:
                         return Response({"error": f"No active finance intimation record found for ID: {task_id}"}, status=404)
@@ -4039,7 +4439,6 @@ class ApprovalsView(APIView):
                         filter_kwargs['trip__trip_id'] = task_id.replace('TRIP-', '')
                     elif task_id.startswith('BATCH-'):
                         b_id = task_id.replace('BATCH-', '')
-                        from .models import BulkActivityBatch
                         b_obj = BulkActivityBatch.objects.filter(id=b_id).first()
                         if b_obj and b_obj.trip:
                             filter_kwargs['trip'] = b_obj.trip
@@ -4066,11 +4465,8 @@ class ApprovalsView(APIView):
             row_index = request.data.get('row_index')
             row_status = request.data.get('row_status')
             remarks = request.data.get('remarks', '')
-            
             print(f"DEBUG: UpdateBatchRow — id={task_id}, index={row_index}, status={row_status}")
-            
             try:
-                from .models import BulkActivityBatch
                 batches = BulkActivityBatch.objects.none()
 
                 if task_id.startswith('TRIP-') or any(task_id.startswith(p) for p in ['ITS-', 'TRP-', 'TRV-']):
@@ -4215,7 +4611,6 @@ class ApprovalsView(APIView):
             elif task_id.startswith('DISPUTE-'):
                 obj = Dispute.objects.get(id=task_id.replace('DISPUTE-', ''))
             elif task_id.startswith('BATCH-'):
-                from .models import BulkActivityBatch
                 obj = BulkActivityBatch.objects.filter(id=task_id.replace('BATCH-', '')).first()
                 if not obj: return Response({"error": "Batch not found"}, status=404)
             elif any(task_id.startswith(p) for p in ['ITS-', 'TRP-', 'TRV-']):
@@ -4289,12 +4684,28 @@ def handle_workflow_action(obj, action, user, data=None):
         (isinstance(obj, BulkActivityBatch) and obj.trip and HRIntimation.objects.filter(trip=obj.trip, is_approval=True, is_read=False).exists())
     )
     is_finance_approval_step = (
-        isinstance(obj, Trip) and FinanceIntimation.objects.filter(trip=obj, is_approval=True, is_read=False).exists()
+        (isinstance(obj, Trip) and FinanceIntimation.objects.filter(trip=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, TravelClaim) and FinanceIntimation.objects.filter(claim=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, TravelAdvance) and FinanceIntimation.objects.filter(advance=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, BulkActivityBatch) and obj.trip and FinanceIntimation.objects.filter(trip=obj.trip, is_approval=True, is_read=False).exists())
     ) if is_admin else (
-        isinstance(obj, Trip) and FinanceIntimation.objects.filter(finance_user=user, trip=obj, is_approval=True, is_read=False).exists()
+        (isinstance(obj, Trip) and FinanceIntimation.objects.filter(finance_user=user, trip=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, TravelClaim) and FinanceIntimation.objects.filter(finance_user=user, claim=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, TravelAdvance) and FinanceIntimation.objects.filter(finance_user=user, advance=obj, is_approval=True, is_read=False).exists()) or
+        (isinstance(obj, BulkActivityBatch) and obj.trip and FinanceIntimation.objects.filter(finance_user=user, trip=obj.trip, is_approval=True, is_read=False).exists())
     )
     # 2. Authorization Check
     if not is_admin:
+        if is_hr:
+            user_has_intimation = (
+                (isinstance(obj, Trip) and HRIntimation.objects.filter(hr_user=user, trip=obj, is_approval=True, is_read=False).exists()) or
+                (isinstance(obj, TravelClaim) and HRIntimation.objects.filter(hr_user=user, claim=obj, is_approval=True, is_read=False).exists()) or
+                (isinstance(obj, TravelAdvance) and HRIntimation.objects.filter(hr_user=user, advance=obj, is_approval=True, is_read=False).exists()) or
+                (isinstance(obj, BulkActivityBatch) and obj.trip and HRIntimation.objects.filter(hr_user=user, trip=obj.trip, is_approval=True, is_read=False).exists())
+            )
+            if not user_has_intimation:
+                raise Exception("Unauthorized: Missing required HRIntimation record for this workflow action.")
+
         authorized = False
         # A. Position-Centric Authority
         if obj.approver_position and (str(obj.approver_position) == str(user.active_position_id) or str(obj.approver_position) in user.get_active_position_identifiers()):
@@ -4315,7 +4726,7 @@ def handle_workflow_action(obj, action, user, data=None):
             authorized = True
         elif is_finance and obj.status in ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'Approved', 'Under Process', 'REJECTED_BY_HEAD', 'PENDING_FINANCE']:
             authorized = True
-        elif is_finance and isinstance(obj, Trip) and FinanceIntimation.objects.filter(finance_user=user, trip=obj, is_approval=True, is_read=False).exists():
+        elif is_finance and is_finance_approval_step:
             authorized = True
         # D. Submission Authority (for mobile)
         elif action == 'Submit' and hasattr(obj, 'user') and obj.user == user:
@@ -4383,8 +4794,8 @@ def handle_workflow_action(obj, action, user, data=None):
         )
         return Response({"message": "Status updated to Under Process"})
 
-    # 5. Action: APPROVE / PAY / SUBMIT
-    if action in ['Approve', 'Transfer', 'Pay', 'Submit']:
+    # 5. Action: APPROVE / PAY / SUBMIT / CONFIRM
+    if action in ['Approve', 'Transfer', 'Pay', 'Submit', 'Confirm']:
         # LOGGING
         AuditLog.objects.create(
             user=user, action=action.upper(),
@@ -4499,7 +4910,18 @@ def handle_workflow_action(obj, action, user, data=None):
                     # SPECIAL CASE: Bypassing COO in legacy hierarchy resolution
                     pm_pos = potential_manager.get_current_position()
                     pm_pos_name = pm_pos.get('name') if pm_pos else None
-                    if not _is_coo_position(pm_pos_name, potential_manager.designation, employee_id=potential_manager.employee_id):
+                    pm_pos_id = pm_pos.get('id') if pm_pos else None
+                    
+                    is_pm_coo = _is_coo_position(pm_pos_name, potential_manager.designation, employee_id=potential_manager.employee_id)
+                    
+                    # If it's a COO, check if approval is enabled for this project
+                    coo_enabled = False
+                    if is_pm_coo and pm_pos_id:
+                        from travel.models import COOProjectSetting
+                        proj_code = requester.project_code or 'General'
+                        coo_enabled = COOProjectSetting.objects.filter(project_code=proj_code, coo_position_id=str(pm_pos_id), enable_coo_approval=True).exists()
+                        
+                    if not is_pm_coo or coo_enabled:
                         next_approver = potential_manager
                 
                 if next_approver and not next_pos_id:
@@ -4678,22 +5100,115 @@ def handle_workflow_action(obj, action, user, data=None):
                         trip.save()
                     obj.save()
 
-            current_config = hr_positions.filter(position_id=curr_pos_id).first()
+            # Check if parallel flow is enabled for this project
+            from travel.models import HRWorkflowSetting
+            setting = HRWorkflowSetting.objects.filter(project_code=project_code).first()
+            if not setting and project_code != 'General':
+                setting = HRWorkflowSetting.objects.filter(project_code='General').first()
+            is_parallel_flow = setting.is_parallel if setting else False
+            enable_two_level_flow = setting.enable_two_level_flow if setting else False
+
+            is_two_level_forwarding = False
+            manager_configs = None
+            if is_parallel_flow and enable_two_level_flow:
+                current_config = hr_positions.filter(position_id=curr_pos_id).first()
+                if not current_config:
+                    user_positions = user.get_active_position_identifiers() if hasattr(user, 'get_active_position_identifiers') else [user.active_position_id]
+                    current_config = hr_positions.filter(position_id__in=user_positions).first()
+                
+                if current_config and current_config.hr_level_type == 'assistant_manager':
+                    manager_configs = hr_positions.filter(hr_level_type='manager')
+                    if manager_configs.exists():
+                        is_two_level_forwarding = True
+
+            if is_two_level_forwarding and manager_configs:
+                # 1. Mark all Assistant Manager intimations as read/approved
+                am_pos_ids = list(hr_positions.filter(hr_level_type='assistant_manager').values_list('position_id', flat=True))
+                am_filter = {'hr_position__in': am_pos_ids}
+                if isinstance(obj, Trip): am_filter['trip'] = obj
+                elif isinstance(obj, TravelClaim): am_filter['claim'] = obj
+                elif isinstance(obj, TravelAdvance): am_filter['advance'] = obj
+                elif isinstance(obj, BulkActivityBatch): am_filter['trip'] = obj.trip
+                HRIntimation.objects.filter(**am_filter).update(is_read=True, read_at=timezone.now())
+
+                # 2. Forward to Manager positions
+                first_manager_config = manager_configs.first()
+                obj.approver_position = first_manager_config.position_id
+                
+                manager_users_created = []
+                for m_config in manager_configs:
+                    m_users = get_users_by_position(m_config.position_id)
+                    for mu in m_users:
+                        intimation_filter = {'hr_user': mu, 'hr_position': m_config.position_id}
+                        if isinstance(obj, Trip): intimation_filter['trip'] = obj
+                        elif isinstance(obj, TravelClaim): intimation_filter['claim'] = obj
+                        elif isinstance(obj, TravelAdvance): intimation_filter['advance'] = obj
+                        elif isinstance(obj, BulkActivityBatch): intimation_filter['trip'] = obj.trip
+
+                        is_appr = False
+                        if isinstance(obj, Trip) and m_config.trips_approval == 'APPROVAL':
+                            is_appr = True
+                        elif isinstance(obj, BulkActivityBatch) and m_config.bulk_approval == 'APPROVAL':
+                            is_appr = True
+                        elif isinstance(obj, (TravelClaim, TravelAdvance)) and m_config.claims_approval == 'APPROVAL':
+                            is_appr = True
+
+                        is_read_only = False
+                        if isinstance(obj, Trip) and m_config.trips_approval == 'MARK_READ':
+                            is_read_only = True
+                        elif isinstance(obj, BulkActivityBatch) and m_config.bulk_approval == 'MARK_READ':
+                            is_read_only = True
+                        elif isinstance(obj, (TravelClaim, TravelAdvance)) and m_config.claims_approval == 'MARK_READ':
+                            is_read_only = True
+
+                        if is_appr or is_read_only:
+                            if not HRIntimation.objects.filter(**intimation_filter).exists():
+                                HRIntimation.objects.create(is_approval=is_appr, **intimation_filter)
+                            if mu not in manager_users_created:
+                                manager_users_created.append(mu)
+
+                if manager_users_created:
+                    obj.current_approver = manager_users_created[0]
+                else:
+                    obj.current_approver = None
+                obj.save()
+
+                if isinstance(obj, Trip) and hasattr(obj, 'activity_batches'):
+                    obj.activity_batches.exclude(status='Rejected').update(
+                        current_approver=obj.current_approver, approver_position=obj.approver_position
+                    )
+                elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                    obj.trip.current_approver = obj.current_approver
+                    obj.trip.approver_position = obj.approver_position
+                    obj.trip.save()
+
+                for mu in manager_users_created:
+                    Notification.objects.create(
+                        user=mu, target_position=obj.approver_position,
+                        title="Pending HR Manager Approval",
+                        message=f"{requester.name}'s {request_type} requires Manager HR approval.",
+                        type='info'
+                    )
+
+                return Response({"message": f"HR Assistant Manager approved. Request forwarded to HR Managers."})
+
             next_approval_pos = None
-            if current_config:
-                next_configs = hr_positions.filter(sequence_order__gt=current_config.sequence_order)
-                for hr_pos in next_configs:
-                    is_appr_required = False
-                    if isinstance(obj, Trip) and hr_pos.trips_approval == 'APPROVAL':
-                        is_appr_required = True
-                    elif isinstance(obj, BulkActivityBatch) and hr_pos.bulk_approval == 'APPROVAL':
-                        is_appr_required = True
-                    elif isinstance(obj, (TravelClaim, TravelAdvance)) and hr_pos.claims_approval == 'APPROVAL':
-                        is_appr_required = True
-                    
-                    if is_appr_required:
-                        next_approval_pos = hr_pos
-                        break
+            if not is_parallel_flow:
+                current_config = hr_positions.filter(position_id=curr_pos_id).first()
+                if current_config:
+                    next_configs = hr_positions.filter(sequence_order__gt=current_config.sequence_order)
+                    for hr_pos in next_configs:
+                        is_appr_required = False
+                        if isinstance(obj, Trip) and hr_pos.trips_approval == 'APPROVAL':
+                            is_appr_required = True
+                        elif isinstance(obj, BulkActivityBatch) and hr_pos.bulk_approval == 'APPROVAL':
+                            is_appr_required = True
+                        elif isinstance(obj, (TravelClaim, TravelAdvance)) and hr_pos.claims_approval == 'APPROVAL':
+                            is_appr_required = True
+                        
+                        if is_appr_required:
+                            next_approval_pos = hr_pos
+                            break
 
             if next_approval_pos:
                 # Forward to next HR position
@@ -4740,7 +5255,7 @@ def handle_workflow_action(obj, action, user, data=None):
                 obj.current_approver = None
                 obj.save()
                 if obj.trip:
-                    dispatch_result = trigger_finance_dispatch(obj.trip, user)
+                    dispatch_result = trigger_finance_workflow(obj.trip, user)
                     HRIntimation.objects.filter(
                         Q(trip=obj.trip) & (Q(hr_user=user) | Q(is_approval=True))
                     ).update(is_read=True, read_at=timezone.now())
@@ -4752,7 +5267,7 @@ def handle_workflow_action(obj, action, user, data=None):
 
             if isinstance(obj, Trip):
                 # TRIPS route to Finance
-                dispatch_result = trigger_finance_dispatch(obj, user)
+                dispatch_result = trigger_finance_workflow(obj, user)
                 
                 # Mark HR intimations as read/approved (preserving acknowledgement-only intimations for other HRs)
                 HRIntimation.objects.filter(
@@ -4776,36 +5291,10 @@ def handle_workflow_action(obj, action, user, data=None):
                 ).update(is_read=True, read_at=timezone.now())
             
             # Sequence handover to Finance Workflow
-            first_fin_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order').first()
-            if first_fin_step:
-                next_fin_user = None
-                next_fin_pos_id = first_fin_step.position_id
-                fin_users = []
-                
-                if next_fin_pos_id:
-                    fin_users = get_users_by_position(next_fin_pos_id)
-                    if fin_users: next_fin_user = fin_users[0]
-                else:
-                    next_fin_user = first_fin_step.user
-                    if next_fin_user: fin_users = [next_fin_user]
-                    next_fin_pos_id = getattr(next_fin_user, 'active_position_id', None) if next_fin_user else None
-
-                obj.current_approver = next_fin_user
-                obj.approver_position = next_fin_pos_id
-                obj.status = 'PENDING_EXECUTIVE' if first_fin_step.visibility_type != 'FINANCE_HUB' else 'PENDING_FINAL_RELEASE'
-                
-                # Alert ALL finance team members in the target position
-                for f_user in fin_users:
-                    Notification.objects.create(
-                        user=f_user, target_position=next_fin_pos_id,
-                        title=f"Finance Verification Pending: {request_type}",
-                        message=f"New {request_type} for {requester.name} is pending finance review after HR audit.",
-                        type='info'
-                    )
-            else:
-                obj.current_approver = None 
-            
-            obj.save()
+            dispatch_result = trigger_finance_workflow(obj, user)
+            msg = "HR Audit completed successfully."
+            if dispatch_result and 'message' in dispatch_result:
+                msg = f"HR Audit completed successfully. {dispatch_result['message']}"
             
             if isinstance(obj, BulkActivityBatch) and obj.trip:
                  obj.trip.status = 'HR Approved'
@@ -4823,53 +5312,48 @@ def handle_workflow_action(obj, action, user, data=None):
                  obj.save()
 
             notify_hr(f"{request_type} HR Approved", f"{requester.name}'s {request_type} has been HR-Audited.")
-            return Response({"message": "HR Audit completed successfully."})
+            return Response({"message": msg})
 
         # --- STAGE 3: Finance Verification & Payout ---
-        is_any_finance_approval_pending = isinstance(obj, Trip) and FinanceIntimation.objects.filter(trip=obj, is_approval=True, is_read=False).exists()
+        is_any_finance_approval_pending = (
+            (isinstance(obj, Trip) and FinanceIntimation.objects.filter(trip=obj, is_approval=True, is_read=False).exists()) or
+            (isinstance(obj, TravelClaim) and FinanceIntimation.objects.filter(claim=obj, is_approval=True, is_read=False).exists()) or
+            (isinstance(obj, TravelAdvance) and FinanceIntimation.objects.filter(advance=obj, is_approval=True, is_read=False).exists()) or
+            (isinstance(obj, BulkActivityBatch) and obj.trip and FinanceIntimation.objects.filter(trip=obj.trip, is_approval=True, is_read=False).exists())
+        )
         if is_finance or assigned_is_fin or obj.status in ['PENDING_EXECUTIVE', 'PENDING_HEAD', 'PENDING_FINAL_RELEASE', 'HR Approved', 'REJECTED_BY_HEAD', 'PENDING_FINANCE'] or is_finance_approval_step or (is_admin and is_any_finance_approval_pending):
             trip = obj if isinstance(obj, Trip) else getattr(obj, 'trip', None)
-            
-            # --- CUSTOM: Trip/Travel Request Finance Parallel Approval ---
-            if isinstance(obj, Trip) and (obj.status == 'PENDING_FINANCE' or is_finance_approval_step or (is_admin and is_any_finance_approval_pending)):
-                if action in ['Approve', 'HRApprove', 'Confirm']: # Approve action
-                    # Mark this user's intimation as read/approved
-                    if is_admin:
-                        FinanceIntimation.objects.filter(trip=obj, is_read=False).update(is_read=True, read_at=timezone.now())
-                    else:
-                        FinanceIntimation.objects.filter(finance_user=user, trip=obj).update(is_read=True, read_at=timezone.now())
-                    
-                    # Check if there are any other unread Finance approvals for this trip
-                    unread_approvals = FinanceIntimation.objects.filter(trip=obj, is_approval=True, is_read=False).exists()
-                    if not unread_approvals:
-                        finalize_trip_approval(obj)
-                        # Mark all intimations (including read-only ones) as read
-                        FinanceIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
-                        HRIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
-                        
-                        notify_hr(f"Trip Approved", f"{requester.name}'s trip has been finalized by Finance.")
-                        return Response({"message": "Finance Approval completed. Trip finalized."})
-                    else:
-                        return Response({"message": "Finance Approval registered. Awaiting other finance approvals."})
-                
-                elif action in ['Reject', 'RejectByFinance']: # Reject action
-                    obj.status = 'Rejected'
-                    obj.current_approver = None
-                    obj.save()
-                    
-                    # Mark all associated intimations as read
+
+            # 1. Action: REJECT
+            if action in ['Reject', 'RejectByFinance']:
+                obj.status = 'Rejected'
+                obj.current_approver = None
+                obj.approver_position = None
+                obj.save()
+
+                # Mark all intimations as read
+                if isinstance(obj, Trip):
                     HRIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
                     FinanceIntimation.objects.filter(trip=obj).update(is_read=True, read_at=timezone.now())
-                    
-                    # Also mark associated batches as Rejected
                     for batch in obj.activity_batches.exclude(status='Rejected'):
                         batch.status = 'Rejected'
                         batch.current_approver = None
                         batch.save()
-                        
-                    notify_hr(f"Trip Rejected", f"{requester.name}'s trip has been rejected by Finance.")
-                    return Response({"message": "Trip rejected by Finance."})
-            
+                elif isinstance(obj, TravelClaim):
+                    HRIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
+                    FinanceIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
+                elif isinstance(obj, TravelAdvance):
+                    HRIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
+                    FinanceIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
+                elif isinstance(obj, BulkActivityBatch):
+                    if obj.trip:
+                        HRIntimation.objects.filter(trip=obj.trip).update(is_read=True, read_at=timezone.now())
+                        FinanceIntimation.objects.filter(trip=obj.trip).update(is_read=True, read_at=timezone.now())
+
+                notify_hr(f"{request_type} Rejected", f"{requester.name}'s {request_type} has been rejected by Finance.")
+                return Response({"message": f"{request_type} rejected by Finance."})
+
+            # 2. Action: TRANSFER / PAY
             if action in ['Transfer', 'Pay']:
                 # Payout Logic
                 payment_mode = data.get('payment_mode', 'BANK') if data else 'BANK'
@@ -4915,8 +5399,10 @@ def handle_workflow_action(obj, action, user, data=None):
                 # Mark associated HR/Finance intimations as read upon successful payout
                 if isinstance(obj, TravelClaim):
                     HRIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
+                    FinanceIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
                 elif isinstance(obj, TravelAdvance):
                     HRIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
+                    FinanceIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
                 
                 if trip:
                     if isinstance(obj, TravelClaim):
@@ -4924,7 +5410,6 @@ def handle_workflow_action(obj, action, user, data=None):
                         trip.save()
                         update_trip_lifecycle(trip, "Payment Processed", f"Claim payment of ₹{net_payable} processed.")
                     elif isinstance(obj, TravelAdvance):
-                        # DO NOT update trip status for Advance as per user requirement
                         update_trip_lifecycle(trip, "Advance Processed", f"Advance payment of ₹{net_payable} processed.")
 
                 Notification.objects.create(
@@ -4934,39 +5419,106 @@ def handle_workflow_action(obj, action, user, data=None):
                 )
                 return Response({"message": "Payment processed successfully"})
 
-            # Sequential Progression — find this user's step via API-aware reverse lookup
-            if is_admin:
-                current_step = FinanceWorkflowStep.objects.filter(position_id=obj.approver_position, is_active=True).first()
-                if not current_step and obj.status == 'PENDING_EXECUTIVE':
-                    current_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('sequence_order').first()
-                elif not current_step and obj.status == 'PENDING_HEAD':
-                    current_step = FinanceWorkflowStep.objects.filter(is_active=True).order_by('-sequence_order').first()
-            else:
-                current_step = None
-                if obj.approver_position:
-                    step = FinanceWorkflowStep.objects.filter(position_id=obj.approver_position, is_active=True).first()
-                    if step:
-                        all_pos_ids = _get_user_all_position_ids(user)
-                        if str(obj.approver_position) in all_pos_ids:
-                            current_step = step
-                elif obj.current_approver == user:
-                    step = FinanceWorkflowStep.objects.filter(user=user, is_active=True).first()
-                    if step:
-                        current_step = step
-                
-                if not current_step:
-                    current_step = _get_finance_step_for_user(user)
-                
-            if current_step:
-                if current_step.can_edit_amount:
+            # 3. Action: APPROVE / CONFIRM
+            if action in ['Approve', 'HRApprove', 'Confirm']:
+                # Resolve steps and settings
+                fin_steps, is_parallel_flow, enable_two_level_flow, project_code = _get_finance_steps_and_settings(obj)
+
+                # Get user's current position configs in Finance
+                pos_ids = user.get_active_position_identifiers() if hasattr(user, 'get_active_position_identifiers') else [user.active_position_id]
+                curr_pos_id = obj.approver_position
+
+                # ---------------------------------------------------------------
+                # Find the active finance step config for the current approver.
+                # Priority:
+                #   1. Match by obj.approver_position (most reliable when set)
+                #   2. Match by the user's intimation that was just read (best for
+                #      sequential flows where approver_position may lag or be null)
+                #   3. Fallback: match any step by the user's position IDs
+                # ---------------------------------------------------------------
+                current_config = None
+                if curr_pos_id:
+                    current_config = fin_steps.filter(position_id=curr_pos_id).first()
+                if not current_config and obj.current_approver:
+                    current_config = fin_steps.filter(user=obj.current_approver).first()
+
+                if not current_config:
+                    # Look up the intimation that this user just approved/read
+                    _inti_base = {}
+                    if isinstance(obj, Trip): _inti_base['trip'] = obj
+                    elif isinstance(obj, TravelClaim): _inti_base['claim'] = obj
+                    elif isinstance(obj, TravelAdvance): _inti_base['advance'] = obj
+                    elif isinstance(obj, BulkActivityBatch): _inti_base['trip'] = obj.trip
+
+                    just_read = FinanceIntimation.objects.filter(
+                        finance_user=user, is_read=True, **_inti_base
+                    ).order_by('-read_at').first()
+
+                    if just_read:
+                        if just_read.finance_position:
+                            current_config = fin_steps.filter(position_id=just_read.finance_position).first()
+                        else:
+                            current_config = fin_steps.filter(user=just_read.finance_user).first()
+
+                if not current_config:
+                    # Last resort: match by any of the user's active position IDs
+                    current_config = fin_steps.filter(position_id__in=pos_ids).first()
+                if not current_config:
+                    current_config = fin_steps.filter(user=user).first()
+
+                    
+                is_finance_hub = False
+                if current_config and current_config.visibility_type in ['FINANCE_HUB', 'BOTH']:
+                    is_finance_hub = True
+                else:
+                    matching_steps = fin_steps.filter(Q(position_id__in=pos_ids) | Q(user=user))
+                    if matching_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH']).exists():
+                        is_finance_hub = True
+
+                # A. Mark current Finance position's intimations as read/approved
+                # If it is a finance hub step, mark all finance hub intimations as read/approved!
+                if is_finance_hub:
+                    hub_pos_ids = list(fin_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH']).values_list('position_id', flat=True))
+                    inti_filter = models.Q(finance_position__in=hub_pos_ids)
+                    hub_users = list(fin_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH'], user__isnull=False).values_list('user_id', flat=True))
+                    if hub_users:
+                        inti_filter |= models.Q(finance_user_id__in=hub_users)
+                        
+                    if isinstance(obj, Trip):
+                        FinanceIntimation.objects.filter(inti_filter, trip=obj).update(is_read=True, read_at=timezone.now())
+                    elif isinstance(obj, TravelClaim):
+                        FinanceIntimation.objects.filter(inti_filter, claim=obj).update(is_read=True, read_at=timezone.now())
+                    elif isinstance(obj, TravelAdvance):
+                        FinanceIntimation.objects.filter(inti_filter, advance=obj).update(is_read=True, read_at=timezone.now())
+                    elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                        FinanceIntimation.objects.filter(inti_filter, trip=obj.trip).update(is_read=True, read_at=timezone.now())
+                else:
+                    if is_admin:
+                        if isinstance(obj, Trip):
+                            FinanceIntimation.objects.filter(trip=obj, is_read=False).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, TravelClaim):
+                            FinanceIntimation.objects.filter(claim=obj, is_read=False).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, TravelAdvance):
+                            FinanceIntimation.objects.filter(advance=obj, is_read=False).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                            FinanceIntimation.objects.filter(trip=obj.trip, is_read=False).update(is_read=True, read_at=timezone.now())
+                    else:
+                        if isinstance(obj, Trip):
+                            FinanceIntimation.objects.filter(finance_user=user, trip=obj).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, TravelClaim):
+                            FinanceIntimation.objects.filter(finance_user=user, claim=obj).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, TravelAdvance):
+                            FinanceIntimation.objects.filter(finance_user=user, advance=obj).update(is_read=True, read_at=timezone.now())
+                        elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                            FinanceIntimation.objects.filter(finance_user=user, trip=obj.trip).update(is_read=True, read_at=timezone.now())
+
+                # B. Edit amount if allowed
+                if current_config and current_config.can_edit_amount:
                     exec_amount = data.get('approved_amount') or data.get('executive_approved_amount')
                     if exec_amount is not None:
                         exec_amount_cleaned = _clean_decimal(exec_amount)
                         if isinstance(obj, TravelClaim):
                             all_exps = obj.trip.expenses.filter(is_deleted=False)
-                            # Only recalculate from per-expense finance_selected_amount
-                            # if Finance has used finance-decide. Otherwise, respect the
-                            # total Finance typed in the UI.
                             has_fin_decisions = all_exps.filter(finance_selected_amount__isnull=False).exists()
                             if has_fin_decisions:
                                 from decimal import Decimal as _Decimal
@@ -4978,43 +5530,274 @@ def handle_workflow_action(obj, action, user, data=None):
                         if hasattr(obj, 'executive_approved_amount'): obj.executive_approved_amount = exec_amount_cleaned
                         if trip: trip.executive_approved_amount = exec_amount_cleaned; trip.save()
 
-                next_step = FinanceWorkflowStep.objects.filter(sequence_order__gt=current_step.sequence_order, is_active=True).order_by('sequence_order').first()
-                if next_step:
-                    target_user = None
-                    target_position = next_step.position_id
-                    pos_users = []
-                    
-                    if target_position:
-                        pos_users = get_users_by_position(target_position)
-                        if pos_users: target_user = pos_users[0]
+                # C. Check two level forwarding AM -> Manager
+                is_two_level_forwarding = False
+                manager_steps = None
+                if is_parallel_flow and enable_two_level_flow:
+                    if current_config and current_config.finance_level_type == 'assistant_manager' and not is_finance_hub:
+                        manager_steps = fin_steps.filter(finance_level_type='manager')
+                        if manager_steps.exists():
+                            is_two_level_forwarding = True
+
+                if is_two_level_forwarding and manager_steps:
+                    # Mark all AM-level intimations as read
+                    am_pos_ids = list(fin_steps.filter(finance_level_type='assistant_manager').values_list('position_id', flat=True))
+                    am_filter = {'finance_position__in': am_pos_ids}
+                    if isinstance(obj, Trip): am_filter['trip'] = obj
+                    elif isinstance(obj, TravelClaim): am_filter['claim'] = obj
+                    elif isinstance(obj, TravelAdvance): am_filter['advance'] = obj
+                    elif isinstance(obj, BulkActivityBatch): am_filter['trip'] = obj.trip
+                    FinanceIntimation.objects.filter(**am_filter).update(is_read=True, read_at=timezone.now())
+
+                    first_manager_step = manager_steps.filter(visibility_type='INBOX').first() or manager_steps.first()
+                    obj.approver_position = first_manager_step.position_id
+
+                    # Dispatch all Manager-level INBOX steps (NOT Finance Hub yet)
+                    manager_users_created = []
+                    for m_step in manager_steps.filter(visibility_type='INBOX'):
+                        m_users = []
+                        if m_step.position_id:
+                            m_users = get_users_by_position(m_step.position_id)
+                        elif m_step.user:
+                            m_users = [m_step.user]
+
+                        for mu in m_users:
+                            intimation_filter = {'finance_user': mu, 'finance_position': m_step.position_id or ''}
+                            if isinstance(obj, Trip): intimation_filter['trip'] = obj
+                            elif isinstance(obj, TravelClaim): intimation_filter['claim'] = obj
+                            elif isinstance(obj, TravelAdvance): intimation_filter['advance'] = obj
+                            elif isinstance(obj, BulkActivityBatch): intimation_filter['trip'] = obj.trip
+
+                            is_appr = (m_step.trip_control == 'APPROVAL') if isinstance(obj, (Trip, BulkActivityBatch)) else True
+
+                            if not FinanceIntimation.objects.filter(**intimation_filter).exists():
+                                FinanceIntimation.objects.create(is_approval=is_appr, is_read=False, **intimation_filter)
+                            if mu not in manager_users_created:
+                                manager_users_created.append(mu)
+
+                    if manager_users_created:
+                        obj.current_approver = manager_users_created[0]
                     else:
-                        target_user = next_step.user
-                        if target_user: pos_users = [target_user]
-                        target_position = getattr(target_user, 'active_position_id', None) if target_user else None
-                        
-                    obj.current_approver = target_user
-                    obj.approver_position = target_position
-                    obj.status = 'PENDING_FINAL_RELEASE' if next_step.visibility_type == 'FINANCE_HUB' else 'PENDING_EXECUTIVE'
+                        obj.current_approver = None
                     obj.save()
-                    
-                    # Alert next finance approvers (Multi-user alert fix)
-                    for p_user in pos_users:
+
+                    if isinstance(obj, Trip) and hasattr(obj, 'activity_batches'):
+                        obj.activity_batches.exclude(status='Rejected').update(
+                            current_approver=obj.current_approver, approver_position=obj.approver_position
+                        )
+                    elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                        obj.trip.current_approver = obj.current_approver
+                        obj.trip.approver_position = obj.approver_position
+                        obj.trip.save()
+
+                    for mu in manager_users_created:
                         Notification.objects.create(
-                            user=p_user, target_position=target_position,
-                            title=f"Finance Approval Required: {request_type}",
-                            message=f"{requester.name}'s {request_type} has been forwarded to you for finance review.",
+                            user=mu, target_position=obj.approver_position,
+                            title="Pending Finance Manager Approval",
+                            message=f"{requester.name}'s {request_type} requires Manager Finance approval.",
                             type='info'
                         )
 
-                    next_name = next_step.position_name or (target_user.name if target_user else f"Position {target_position}")
-                    return Response({"message": f"Forwarded to {next_name}"})
+                    return Response({"message": f"Finance Assistant Manager approved. Request forwarded to Finance Managers."})
+
+                # D-2. Parallel-only: after any inbox approval, dispatch Finance Hub steps
+                if is_parallel_flow and not enable_two_level_flow and not is_finance_hub:
+                    # Mark all inbox intimations as read (this person approved, clear others)
+                    inbox_pos_ids = list(fin_steps.filter(visibility_type='INBOX').values_list('position_id', flat=True))
+                    inbox_user_ids = list(fin_steps.filter(visibility_type='INBOX', user__isnull=False).values_list('user_id', flat=True))
+                    inbox_inti_filter = {}
+                    if isinstance(obj, Trip): inbox_inti_filter['trip'] = obj
+                    elif isinstance(obj, TravelClaim): inbox_inti_filter['claim'] = obj
+                    elif isinstance(obj, TravelAdvance): inbox_inti_filter['advance'] = obj
+                    elif isinstance(obj, BulkActivityBatch): inbox_inti_filter['trip'] = obj.trip
+                    FinanceIntimation.objects.filter(
+                        models.Q(finance_position__in=inbox_pos_ids) | models.Q(finance_user_id__in=inbox_user_ids),
+                        **inbox_inti_filter
+                    ).update(is_read=True, read_at=timezone.now())
+
+                    # Now dispatch Finance Hub steps
+                    hub_steps = fin_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+                    hub_users_dispatched = []
+                    for h_step in hub_steps:
+                        h_users = get_users_by_position(h_step.position_id) if h_step.position_id else ([h_step.user] if h_step.user else [])
+                        for hu in h_users:
+                            inti_filter = {'finance_user': hu, 'finance_position': h_step.position_id or ''}
+                            if isinstance(obj, Trip): inti_filter['trip'] = obj
+                            elif isinstance(obj, TravelClaim): inti_filter['claim'] = obj
+                            elif isinstance(obj, TravelAdvance): inti_filter['advance'] = obj
+                            elif isinstance(obj, BulkActivityBatch): inti_filter['trip'] = obj.trip
+                            if not FinanceIntimation.objects.filter(**inti_filter).exists():
+                                FinanceIntimation.objects.create(is_approval=True, is_read=False, **inti_filter)
+                                hub_users_dispatched.append(hu)
+                                Notification.objects.create(
+                                    user=hu, target_position=h_step.position_id,
+                                    title=f"Finance Hub: {request_type} Pending Release",
+                                    message=f"{requester.name}'s {request_type} has cleared inbox approval and needs your Finance Hub action.",
+                                    type='info'
+                                )
+
+                    if hub_users_dispatched:
+                        obj.approver_position = hub_steps.first().position_id if hub_steps.exists() else obj.approver_position
+                        obj.current_approver = hub_users_dispatched[0]
+                        obj.status = 'PENDING_FINAL_RELEASE'
+                        obj.save()
+                        return Response({"message": "Finance Inbox approved. Forwarded to Finance Hub for final release."})
+                    else:
+                        # No Finance Hub steps — fall through to finalize below
+                        pass
+
+                # D-3. 2-Level: Manager approved — dispatch Finance Hub steps
+                if is_parallel_flow and enable_two_level_flow and not is_finance_hub:
+                    if current_config and current_config.finance_level_type == 'manager':
+                        # Mark all manager intimations as read
+                        mgr_pos_ids = list(fin_steps.filter(finance_level_type='manager').values_list('position_id', flat=True))
+                        mgr_filter = {'finance_position__in': mgr_pos_ids}
+                        if isinstance(obj, Trip): mgr_filter['trip'] = obj
+                        elif isinstance(obj, TravelClaim): mgr_filter['claim'] = obj
+                        elif isinstance(obj, TravelAdvance): mgr_filter['advance'] = obj
+                        elif isinstance(obj, BulkActivityBatch): mgr_filter['trip'] = obj.trip
+                        FinanceIntimation.objects.filter(**mgr_filter).update(is_read=True, read_at=timezone.now())
+
+                        hub_steps = fin_steps.filter(visibility_type__in=['FINANCE_HUB', 'BOTH'])
+                        hub_users_dispatched = []
+                        for h_step in hub_steps:
+                            h_users = get_users_by_position(h_step.position_id) if h_step.position_id else ([h_step.user] if h_step.user else [])
+                            for hu in h_users:
+                                inti_filter = {'finance_user': hu, 'finance_position': h_step.position_id or ''}
+                                if isinstance(obj, Trip): inti_filter['trip'] = obj
+                                elif isinstance(obj, TravelClaim): inti_filter['claim'] = obj
+                                elif isinstance(obj, TravelAdvance): inti_filter['advance'] = obj
+                                elif isinstance(obj, BulkActivityBatch): inti_filter['trip'] = obj.trip
+                                if not FinanceIntimation.objects.filter(**inti_filter).exists():
+                                    FinanceIntimation.objects.create(is_approval=True, is_read=False, **inti_filter)
+                                    hub_users_dispatched.append(hu)
+                                    Notification.objects.create(
+                                        user=hu, target_position=h_step.position_id,
+                                        title=f"Finance Hub: {request_type} Pending Release",
+                                        message=f"{requester.name}'s {request_type} has cleared Manager approval and needs Finance Hub action.",
+                                        type='info'
+                                    )
+
+                        if hub_users_dispatched:
+                            obj.approver_position = hub_steps.first().position_id if hub_steps.exists() else obj.approver_position
+                            obj.current_approver = hub_users_dispatched[0]
+                            obj.status = 'PENDING_FINAL_RELEASE'
+                            obj.save()
+                            return Response({"message": "Finance Manager approved. Forwarded to Finance Hub for final release."})
+
+                # D. Next steps (sequential flow)
+                next_step = None
+                if not is_parallel_flow:
+                    if current_config:
+                        next_step = fin_steps.filter(sequence_order__gt=current_config.sequence_order).first()
+                    else:
+                        # Fallback: if we couldn't resolve current_config directly,
+                        # look at already read intimations to find the highest completed step
+                        _inti_base = {}
+                        if isinstance(obj, Trip): _inti_base['trip'] = obj
+                        elif isinstance(obj, TravelClaim): _inti_base['claim'] = obj
+                        elif isinstance(obj, TravelAdvance): _inti_base['advance'] = obj
+                        elif isinstance(obj, BulkActivityBatch): _inti_base['trip'] = obj.trip
+
+                        read_intimations = FinanceIntimation.objects.filter(is_read=True, **_inti_base)
+                        max_sequence = 0
+                        for ri in read_intimations:
+                            step = None
+                            if ri.finance_position:
+                                step = fin_steps.filter(position_id=ri.finance_position).first()
+                            else:
+                                step = fin_steps.filter(user=ri.finance_user).first()
+                            if step and step.sequence_order > max_sequence:
+                                max_sequence = step.sequence_order
+
+                        if max_sequence > 0:
+                            next_step = fin_steps.filter(sequence_order__gt=max_sequence).first()
+                        else:
+                            next_step = fin_steps.first()
+
+                if next_step:
+                    obj.approver_position = next_step.position_id
+                    if isinstance(obj, (Trip, BulkActivityBatch)):
+                        obj.status = 'PENDING_FINAL_RELEASE' if next_step.visibility_type == 'FINANCE_HUB' else 'PENDING_FINANCE'
+                    else:
+                        obj.status = 'PENDING_FINAL_RELEASE' if next_step.visibility_type == 'FINANCE_HUB' else 'PENDING_EXECUTIVE'
+                    
+                    next_users = []
+                    if next_step.position_id:
+                        next_users = get_users_by_position(next_step.position_id)
+                    elif next_step.user:
+                        next_users = [next_step.user]
+
+                    if next_users:
+                        obj.current_approver = next_users[0]
+                    else:
+                        obj.current_approver = None
+                    obj.save()
+
+                    if isinstance(obj, Trip) and hasattr(obj, 'activity_batches'):
+                        obj.activity_batches.exclude(status='Rejected').update(
+                            current_approver=obj.current_approver, approver_position=obj.approver_position, status=obj.status
+                        )
+                    elif isinstance(obj, BulkActivityBatch) and obj.trip:
+                        obj.trip.current_approver = obj.current_approver
+                        obj.trip.approver_position = obj.approver_position
+                        obj.trip.status = obj.status
+                        obj.trip.save()
+
+                    is_appr_next = (next_step.trip_control == 'APPROVAL')
+                    for n_user in next_users:
+                        intimation_filter = {'finance_user': n_user, 'finance_position': next_step.position_id or ''}
+                        if isinstance(obj, Trip): intimation_filter['trip'] = obj
+                        elif isinstance(obj, TravelClaim): intimation_filter['claim'] = obj
+                        elif isinstance(obj, TravelAdvance): intimation_filter['advance'] = obj
+                        elif isinstance(obj, BulkActivityBatch): intimation_filter['trip'] = obj.trip
+
+                        if not FinanceIntimation.objects.filter(**intimation_filter).exists():
+                            FinanceIntimation.objects.create(is_approval=is_appr_next, is_read=False, **intimation_filter)
+                            
+                            Notification.objects.create(
+                                user=n_user, target_position=next_step.position_id,
+                                title="Pending Finance Action" if not is_appr_next else "Pending Finance Approval",
+                                message=f"{requester.name}'s {request_type} requires your finance action (Forwarded)." if not is_appr_next else f"{requester.name}'s {request_type} requires your finance approval (Forwarded).",
+                                type='info'
+                            )
+
+                    next_name = next_step.position_name or (obj.current_approver.name if obj.current_approver else f"Position {obj.approver_position}")
+                    return Response({"message": f"Finance Action registered. Forwarded to {next_name}."})
+
+                # E. Finalize workflow
+                unread_filter = {'is_approval': True, 'is_read': False}
+                if isinstance(obj, Trip): unread_filter['trip'] = obj
+                elif isinstance(obj, TravelClaim): unread_filter['claim'] = obj
+                elif isinstance(obj, TravelAdvance): unread_filter['advance'] = obj
+                elif isinstance(obj, BulkActivityBatch): unread_filter['trip'] = obj.trip
+
+                unread_approvals = FinanceIntimation.objects.filter(**unread_filter).exists()
+                if unread_approvals:
+                    return Response({"message": "Finance Approval registered. Awaiting other finance approvals."})
+
+                if isinstance(obj, (Trip, BulkActivityBatch)):
+                    active_trip = obj if isinstance(obj, Trip) else obj.trip
+                    finalize_trip_approval(active_trip)
+                    FinanceIntimation.objects.filter(trip=active_trip).update(is_read=True, read_at=timezone.now())
+                    HRIntimation.objects.filter(trip=active_trip).update(is_read=True, read_at=timezone.now())
+                    notify_hr("Trip Approved", f"{requester.name}'s trip has been finalized by Finance.")
+                    return Response({"message": "Finance Approval completed. Trip finalized."})
                 else:
                     obj.status = 'PENDING_FINAL_RELEASE'
                     obj.final_executive = user
+                    obj.current_approver = None
+                    obj.approver_position = None
                     obj.save()
-                    return Response({"message": "Final authorization complete"})
+                    
+                    if isinstance(obj, TravelClaim):
+                        FinanceIntimation.objects.filter(claim=obj).update(is_read=True, read_at=timezone.now())
+                    elif isinstance(obj, TravelAdvance):
+                        FinanceIntimation.objects.filter(advance=obj).update(is_read=True, read_at=timezone.now())
 
-    return Response({"error": "Unknown workflow action"}, status=400)
+                    return Response({"message": "Finance Approval completed. Pending final payout release."})
+
+    return Response({"error": f"Action '{action}' is not allowed for this {request_type} in its current status ({obj.status})."}, status=400)
 
 
 class ExpenseViewSet(viewsets.ModelViewSet):

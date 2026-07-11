@@ -1540,7 +1540,8 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
               .trim()
               .toLowerCase();
           final dateKey = (row['date'] ?? '').toString().trim();
-          if (fallbackKeys.contains('${originKey}_${destKey}_$dateKey'))
+          if (!isRowRejected &&
+              fallbackKeys.contains('${originKey}_${destKey}_$dateKey'))
             continue;
 
           final syntheticRow = {
@@ -1572,7 +1573,10 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           };
 
           if (isRowRejected) {
-            hasRejectedRow = true;
+            if (batchStatus != 'Resolved') {
+              hasRejectedRow = true;
+              sortedExpenses.add(syntheticRow);
+            }
           } else if (isValidated) {
             // Only show in the registry when fully approved
             sortedExpenses.add(syntheticRow);
@@ -1583,82 +1587,85 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           batchActions.add(
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: const Color(0xFFFECACA),
-                    width: 1.5,
+              child: GestureDetector(
+                onTap: () async {
+                  final refresh = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => BulkResolveRejectionsScreen(
+                        tripId: widget.tripId,
+                        batchId: (batch['id'] ?? '').toString(),
+                        allRows: rows,
+                      ),
+                    ),
+                  );
+                  if (refresh == true) _fetchDetails();
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: const Color(0xFFFECACA),
+                      width: 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFEF4444).withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFEF4444).withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFEF4444),
-                        borderRadius: BorderRadius.circular(12),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEF4444),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.error_outline_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                       ),
-                      child: const Icon(
-                        Icons.error_outline_rounded,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Bulk Upload Rejections',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
-                              color: const Color(0xFF991B1B),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Bulk Upload Rejections',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                                color: const Color(0xFF991B1B),
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Action Required: Resubmit rejected rows',
-                            style: GoogleFonts.plusJakartaSans(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: const Color(0xFFEF4444).withOpacity(0.8),
+                            Text(
+                              'Action Required: Resubmit rejected rows',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: const Color(0xFFEF4444).withOpacity(0.8),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () async {
-                        final refresh = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => BulkResolveRejectionsScreen(
-                              tripId: widget.tripId,
-                              batchId: (batch['id'] ?? '').toString(),
-                              allRows: rows,
-                            ),
-                          ),
-                        );
-                        if (refresh == true) _fetchDetails();
-                      },
-                      icon: const Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        color: Color(0xFFEF4444),
-                        size: 18,
+                      const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: Color(0xFFEF4444),
+                          size: 18,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1741,10 +1748,7 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
           ],
         ),
         const SizedBox(height: 16),
-        if (rejectedExpenses.isNotEmpty) ...[
-          _buildBulkRejectionsButton(rejectedExpenses),
-          const SizedBox(height: 24),
-        ],
+
         if (activeExpenses.isEmpty)
           Container(
             width: double.infinity,
@@ -3543,13 +3547,52 @@ class _TravelStoryScreenState extends State<TravelStoryScreen> {
       return;
     }
 
+    // Find the actual batch from _bulkHistory to get all rows (Rejected & Approved)
+    dynamic batch;
+    for (var b in _bulkHistory) {
+      if (b['id'].toString() == batchId) {
+        batch = b;
+        break;
+      }
+    }
+
+    if (batch == null || batch['data_json'] == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: Batch data not found for ID: $batchId'),
+        ),
+      );
+      return;
+    }
+
+    dynamic allRows = batch['data_json'];
+    if (allRows is String) {
+      try {
+        allRows = jsonDecode(allRows);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error decoding batch records: $e')),
+        );
+        return;
+      }
+    }
+
+    if (allRows is! List) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error: Invalid bulk data format (not a list).'),
+        ),
+      );
+      return;
+    }
+
     final refresh = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => BulkResolveRejectionsScreen(
           tripId: widget.tripId,
           batchId: batchId!,
-          allRows: rejected,
+          allRows: allRows,
         ),
       ),
     );

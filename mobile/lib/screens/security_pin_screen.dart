@@ -6,6 +6,7 @@ import '../constants/api_constants.dart';
 import '../services/api_service.dart';
 import 'role_based_dashboard.dart';
 import 'forgot_password_screen.dart';
+import 'login_screen.dart';
 
 enum PinMode { setup, verify }
 
@@ -173,8 +174,9 @@ class _SecurityPinScreenState extends State<SecurityPinScreen>
               ),
             );
           } catch (e) {
+            debugPrint('Error saving PIN: $e');
             setState(() {
-              _errorText = 'Failed to save PIN. Please try again.';
+              _errorText = 'Failed to save PIN: $e';
               _isBusy = false;
               _pin = '';
             });
@@ -289,6 +291,86 @@ class _SecurityPinScreenState extends State<SecurityPinScreen>
             child: _isVerifyingPassword
                 ? _buildPasswordVerificationView()
                 : _buildPinInputView(),
+          ),
+          // Floating Logout Button
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            right: 16,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF0F172A).withOpacity(0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                icon: const Icon(
+                  Icons.logout_rounded,
+                  color: Colors.redAccent,
+                  size: 22,
+                ),
+                tooltip: 'Logout',
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      title: Text(
+                        'Logout',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      content: Text(
+                        'Are you sure you want to log out?',
+                        style: GoogleFonts.inter(),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: Text(
+                            'Cancel',
+                            style: GoogleFonts.inter(
+                              color: _slate,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.red,
+                          ),
+                          child: Text(
+                            'Logout',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    await ApiService().clearToken();
+                    if (!mounted) return;
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const LoginScreen(),
+                      ),
+                    );
+                  }
+                },
+              ),
+            ),
           ),
         ],
       ),
@@ -523,206 +605,221 @@ class _SecurityPinScreenState extends State<SecurityPinScreen>
   }
 
   // Beautiful numeric keypad PIN view
+  // Beautiful, responsive numeric keypad PIN view
   Widget _buildPinInputView() {
-    return Column(
-      children: [
-        const SizedBox(height: 40),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: _primary.withOpacity(0.1),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(
-            Icons.lock_rounded,
-            color: _primary,
-            size: 36,
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          _currentMode == PinMode.setup ? 'Setup PIN' : 'Welcome Back',
-          style: GoogleFonts.plusJakartaSans(
-            color: _primaryDark,
-            fontSize: 26,
-            fontWeight: FontWeight.w900,
-            letterSpacing: -0.5,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          widget.username,
-          style: GoogleFonts.inter(
-            color: _slate,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 28),
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 40),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(
-            color: _primary.withOpacity(0.07),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            _statusText,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              color: _primaryDark,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: constraints.maxHeight,
             ),
-          ),
-        ),
-        const SizedBox(height: 36),
-        // Dots showing progress
-        AnimatedBuilder(
-          animation: _shakeAnimation,
-          builder: (context, child) => Transform.translate(
-            offset: Offset(
-              _isError
-                  ? _shakeAnimation.value * sin(_shakeController.value * pi * 6)
-                  : 0.0,
-              0.0,
-            ),
-            child: child,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(4, (index) {
-              final filled = index < _pin.length;
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                margin: const EdgeInsets.symmetric(horizontal: 14),
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _isError
-                      ? Colors.red.shade400
-                      : (filled ? _primary : Colors.transparent),
-                  border: Border.all(
-                    color: _isError
-                        ? Colors.red.shade400
-                        : (filled ? _primary : _slate.withOpacity(0.4)),
-                    width: 2,
-                  ),
-                  boxShadow: filled && !_isError
-                      ? [
-                          BoxShadow(
-                            color: _primary.withOpacity(0.3),
-                            blurRadius: 8,
-                            spreadRadius: 1,
-                          )
-                        ]
-                      : null,
-                ),
-              );
-            }),
-          ),
-        ),
-        SizedBox(
-          height: 44,
-          child: Center(
-            child: _isBusy
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: _primary,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                : (_errorText.isNotEmpty
-                    ? Text(
-                        _errorText,
-                        style: GoogleFonts.inter(
-                          color: Colors.red.shade600,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      )
-                    : const SizedBox.shrink()),
-          ),
-        ),
-        const Spacer(),
-        // Numeric keypad card
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(32),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF0F172A).withOpacity(0.07),
-                blurRadius: 30,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              _buildKeyRow(['1', '2', '3']),
-              const SizedBox(height: 12),
-              _buildKeyRow(['4', '5', '6']),
-              const SizedBox(height: 12),
-              _buildKeyRow(['7', '8', '9']),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            child: IntrinsicHeight(
+              child: Column(
                 children: [
-                  SizedBox(
-                    width: 72,
-                    height: 64,
-                    child: _currentMode == PinMode.setup
-                        ? _buildActionButton(
-                            icon: Icons.refresh_rounded,
-                            onTap: _resetState,
-                          )
-                        : const SizedBox.shrink(),
-                  ),
-                  _buildDigitButton('0'),
-                  SizedBox(
-                    width: 72,
-                    height: 64,
-                    child: _buildActionButton(
-                      icon: Icons.backspace_outlined,
-                      onTap: _onBackspace,
+                  const SizedBox(height: 24),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _primary.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.lock_rounded,
+                      color: _primary,
+                      size: 32,
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _currentMode == PinMode.setup ? 'Setup PIN' : 'Welcome Back',
+                    style: GoogleFonts.plusJakartaSans(
+                      color: _primaryDark,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.username,
+                    style: GoogleFonts.inter(
+                      color: _slate,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _primary.withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _statusText,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(
+                        color: _primaryDark,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Dots showing progress
+                  AnimatedBuilder(
+                    animation: _shakeAnimation,
+                    builder: (context, child) => Transform.translate(
+                      offset: Offset(
+                        _isError
+                            ? _shakeAnimation.value * sin(_shakeController.value * pi * 6)
+                            : 0.0,
+                        0.0,
+                      ),
+                      child: child,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(4, (index) {
+                        final filled = index < _pin.length;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOut,
+                          margin: const EdgeInsets.symmetric(horizontal: 12),
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isError
+                                ? Colors.red.shade400
+                                : (filled ? _primary : Colors.transparent),
+                            border: Border.all(
+                              color: _isError
+                                  ? Colors.red.shade400
+                                  : (filled ? _primary : _slate.withOpacity(0.4)),
+                              width: 2,
+                            ),
+                            boxShadow: filled && !_isError
+                                ? [
+                                    BoxShadow(
+                                      color: _primary.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      spreadRadius: 1,
+                                    )
+                                  ]
+                                : null,
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                  SizedBox(
+                    height: 36,
+                    child: Center(
+                      child: _isBusy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                color: _primary,
+                                strokeWidth: 2.5,
+                              ),
+                            )
+                          : (_errorText.isNotEmpty
+                              ? Text(
+                                  _errorText,
+                                  style: GoogleFonts.inter(
+                                    color: Colors.red.shade600,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                )
+                              : const SizedBox.shrink()),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Numeric keypad card
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF0F172A).withOpacity(0.07),
+                          blurRadius: 30,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        _buildKeyRow(['1', '2', '3']),
+                        const SizedBox(height: 10),
+                        _buildKeyRow(['4', '5', '6']),
+                        const SizedBox(height: 10),
+                        _buildKeyRow(['7', '8', '9']),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            SizedBox(
+                              width: 72,
+                              height: 60,
+                              child: _currentMode == PinMode.setup
+                                  ? _buildActionButton(
+                                      icon: Icons.refresh_rounded,
+                                      onTap: _resetState,
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                            _buildDigitButton('0'),
+                            SizedBox(
+                              width: 72,
+                              height: 60,
+                              child: _buildActionButton(
+                                icon: Icons.backspace_outlined,
+                                onTap: _onBackspace,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () {
+                            if (_currentMode == PinMode.setup) {
+                              Navigator.pop(context);
+                            } else {
+                              setState(() {
+                                _isVerifyingPassword = true;
+                                _passwordController.clear();
+                                _passwordErrorText = null;
+                              });
+                            }
+                          },
+                          child: Text(
+                            _currentMode == PinMode.setup ? 'Cancel' : 'Forgot PIN?',
+                            style: GoogleFonts.inter(
+                              color: _primary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                 ],
               ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () {
-                  if (_currentMode == PinMode.setup) {
-                    Navigator.pop(context);
-                  } else {
-                    setState(() {
-                      _isVerifyingPassword = true;
-                      _passwordController.clear();
-                      _passwordErrorText = null;
-                    });
-                  }
-                },
-                child: Text(
-                  _currentMode == PinMode.setup ? 'Cancel' : 'Forgot PIN?',
-                  style: GoogleFonts.inter(
-                    color: _primary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: 20),
-      ],
+        );
+      },
     );
   }
 
@@ -739,7 +836,7 @@ class _SecurityPinScreenState extends State<SecurityPinScreen>
       borderRadius: BorderRadius.circular(36),
       child: Container(
         width: 72,
-        height: 64,
+        height: 60,
         decoration: BoxDecoration(
           color: _inputBg,
           borderRadius: BorderRadius.circular(18),

@@ -873,81 +873,28 @@ class JurisdictionViewSet(viewsets.ModelViewSet):
         
         # 2. If cache is empty or force_fresh, trigger a background task to rebuild it
         if not cached_projects or force_fresh:
-            # Rebuild in background
             def bg_sync_task():
                 # Prevent parallel sync runs
                 if cache.get('UNIQUE_PROJECTS_SYNC_RUNNING'):
                     return
                 cache.set('UNIQUE_PROJECTS_SYNC_RUNNING', True, 3600)
                 try:
-                    from api_management.models import SystemConfig
-                    from api_management.utils import decrypt_key
-                    import requests, math, time
-                    
-                    api_url = SystemConfig.objects.get(key='external_api_url').value
-                    api_key = decrypt_key(SystemConfig.objects.get(key='external_api_key').value)
-                    headers = {'X-Api-Key': api_key, 'Accept': 'application/json'}
-                    
-                    # Fetch page 1
-                    r = requests.get(api_url, params={'page': 1}, headers=headers, timeout=15)
-                    if r.status_code == 200:
-                        data = r.json()
-                        count = data.get('count', 0)
+                    from api_management.services import fetch_employee_data
+                    data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
+                    if "error" not in data:
                         results = data.get('results', [])
-                        
                         unique_projects = {}
-                        for emp in results:
-                            proj = emp.get('project', {})
+                        for item in results:
+                            proj = item.get('project', {})
                             if proj and isinstance(proj, dict):
                                 name = proj.get('name')
                                 code = proj.get('code')
                                 if name and code:
                                     unique_projects[code] = {"name": name, "code": code}
-                                    
-                        total_pages = math.ceil(count / 10)
-                        
-                        # Store page 1 results to cache immediately so user gets something!
-                        existing = cache.get('UNIQUE_PROJECTS_LIST') or []
-                        for p in existing:
-                            if p['code'] not in unique_projects:
-                                unique_projects[p['code']] = p
-                        cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
-                        
-                        # Scan remaining pages in background
-                        for p_num in range(2, total_pages + 1):
-                            if not cache.get('UNIQUE_PROJECTS_SYNC_RUNNING'):
-                                break
-                            try:
-                                # 20s timeout per parallel page — don't let slow pages stall the pool
-                                pr = requests.get(api_url, params={'page': p_num}, headers=headers, timeout=20)
-                                if pr.status_code == 200:
-                                    p_results = pr.json().get('results', [])
-                                    page_projects = {}
-                                    for emp in p_results:
-                                        proj = emp.get('project', {})
-                                        if proj and isinstance(proj, dict):
-                                            name = proj.get('name')
-                                            code = proj.get('code')
-                                            if name and code:
-                                                page_projects[code] = {"name": name, "code": code}
-                                    if page_projects:
-                                        # Merge and update cache
-                                        current = cache.get('UNIQUE_PROJECTS_LIST') or []
-                                        curr_dict = {p['code']: p for p in current}
-                                        updated = False
-                                        for code, p in page_projects.items():
-                                            if code not in curr_dict:
-                                                curr_dict[code] = p
-                                                updated = True
-                                        if updated:
-                                            cache.set('UNIQUE_PROJECTS_LIST', list(curr_dict.values()), 30 * 86400)
-                                elif pr.status_code == 429:
-                                    time.sleep(5)
-                            except Exception:
-                                pass
-                            time.sleep(0.5) # Sleep 0.5s to be gentle on external API
-                except Exception:
-                    pass
+                        if unique_projects:
+                            cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+                except Exception as e:
+                    print(f"Background projects sync failed: {e}")
                 finally:
                     cache.delete('UNIQUE_PROJECTS_SYNC_RUNNING')
                     

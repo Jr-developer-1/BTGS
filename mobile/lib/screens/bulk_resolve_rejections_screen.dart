@@ -109,7 +109,7 @@ class _BulkResolveRejectionsScreenState
 
       await _tripService.uploadBulkJson(
         tripId: widget.tripId,
-        jsonData: finalPayload, // Send all rows
+        jsonData: finalPayload, // Send only corrected/resubmitted rows
         parentBatchId: widget.batchId,
         status: status,
       );

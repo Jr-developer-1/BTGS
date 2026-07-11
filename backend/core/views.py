@@ -578,16 +578,9 @@ def switch_position_view(request):
             session.save()
         
         # Force refresh properties by clearing cache
-        from django.core.cache import cache
-        from api_management.services import CACHE_EMPLOYEE_DATA, safe_cache_delete
-        if user.employee_id in CACHE_EMPLOYEE_DATA:
-            del CACHE_EMPLOYEE_DATA[user.employee_id]
-        
-        # Clear persistent employee cache and position maps
-        cache_key = f"EMP_DATA_PERSISTENT_{str(user.employee_id).strip().upper()}"
-        safe_cache_delete(cache_key)
-        safe_cache_delete('position_to_employee_codes_map')
-        safe_cache_delete('user_position_identifiers')
+        from api_management.services import evict_employee_cache
+        evict_employee_cache(user.employee_id)
+
             
         # Safely resolve role and permissions
         user_role_obj = user.role

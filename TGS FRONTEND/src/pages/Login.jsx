@@ -64,7 +64,7 @@ const Login = () => {
                     navigate('/');
                     break;
                 case 'finance':
-                    navigate('/finance');
+                    navigate('/');
                     break;
                 case 'reporting_authority':
                     navigate('/approvals');

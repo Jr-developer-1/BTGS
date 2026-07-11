@@ -516,7 +516,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                 try:
                     detail_cache_key = f"emp_detail_data_{emp_id_api}"
                     cached_item = safe_cache_get(detail_cache_key)
-                    if cached_item:
+                    if cached_item and not force_fresh:
                         transformed_results.append(cached_item)
                         continue
 
@@ -719,6 +719,11 @@ def _bg_refresh_global_employee_cache():
             safe_cache_set('GLOBAL_EMPLOYEE_DATA_TIMESTAMP', now, timeout=86400)
             GLOBAL_EMPLOYEE_CACHE['timestamp'] = now
             GLOBAL_EMPLOYEE_CACHE['data'] = data
+            
+            # Clear position maps & in-memory caches to guarantee fresh recalculation on next access
+            CACHE_EMPLOYEE_DATA.clear()
+            safe_cache_delete('position_to_employee_codes_map')
+            safe_cache_delete('user_position_identifiers')
     except Exception as e:
         print(f"Background global cache refresh failed: {e}")
     finally:
@@ -893,3 +898,38 @@ def fetch_geo_data():
     except Exception as e:
         print(f"An unexpected error occurred in Geo API: {str(e)}")
         return {"error": "An unexpected error occurred while fetching location data.", "status_code": 500}
+
+def evict_employee_cache(employee_code):
+    """
+    Evicts all cached entries for a given employee code, including individual
+    persistent caches, local process caches, and global/position maps.
+    """
+    if not employee_code:
+        return
+        
+    code_clean = str(employee_code).strip().upper()
+    
+    # 1. Clear individual persistent employee cache
+    cache_key = f"EMP_DATA_PERSISTENT_{code_clean}"
+    safe_cache_delete(cache_key)
+    
+    # 2. Clear process-level cache if it exists
+    from api_management.services import CACHE_EMPLOYEE_DATA
+    if code_clean in CACHE_EMPLOYEE_DATA:
+        del CACHE_EMPLOYEE_DATA[code_clean]
+    # Check case-insensitive versions
+    for k in list(CACHE_EMPLOYEE_DATA.keys()):
+        if str(k).strip().upper() == code_clean:
+            del CACHE_EMPLOYEE_DATA[k]
+            
+    # 3. Clear position-to-employee maps and user position identifiers
+    safe_cache_delete('position_to_employee_codes_map')
+    safe_cache_delete('user_position_identifiers')
+    
+    # 4. Clear/invalidate the global employee cache to force reload
+    safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
+    safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
+    
+    from api_management.services import GLOBAL_EMPLOYEE_CACHE
+    GLOBAL_EMPLOYEE_CACHE['data'] = None
+    GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0

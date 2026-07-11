@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny
 from core.views import hash_password
 from core.models import Role, User
 from .models import SystemConfig, APIKeyHistory
-from .services import fetch_employee_data, fetch_geo_data
+from .services import fetch_employee_data, fetch_geo_data, evict_employee_cache
 from core.permissions import IsCustomAuthenticated, IsAdmin
 from .utils import encrypt_key, decrypt_key
 import uuid
@@ -279,7 +279,18 @@ class SyncAllUsersView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request):
-        data = fetch_employee_data(fetch_all_pages=True)
+        from api_management.services import safe_cache_delete, GLOBAL_EMPLOYEE_CACHE
+        # Clear caches
+        safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
+        safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
+        safe_cache_delete('UNIQUE_PROJECTS_LIST')
+        safe_cache_delete('EXTERNAL_ROLES_LIST')
+        safe_cache_delete('position_to_employee_codes_map')
+        safe_cache_delete('user_position_identifiers')
+        GLOBAL_EMPLOYEE_CACHE['data'] = []
+        GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
+
+        data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
         if "error" in data:
             status_code = data.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
             return Response({'error': data['error']}, status=status_code)
@@ -290,20 +301,44 @@ class SyncAllUsersView(APIView):
         role_name = 'Employee'
         role, _ = Role.objects.get_or_create(name=role_name)
 
+        from api_management.services import safe_cache_delete
+        from datetime import datetime, date
+        today = date.today()
+
         for item in results:
             emp = item.get('employee', {})
             code = emp.get('employee_code')
             if not code: continue
             
-            user, created = User.objects.get_or_create(
-                employee_id=code,
-                defaults={
-                    'role': role,
-                    'password_hash': hash_password('user123'),
-                    'is_active': True
-                }
-            )
-            if created:
+            evict_employee_cache(code)
+            emp_id_api = emp.get('id')
+            if emp_id_api:
+                safe_cache_delete(f"emp_detail_data_{emp_id_api}")
+                
+            status_clean = str(item.get('employee', {}).get('status') or item.get('status') or '').strip().lower()
+            is_blocked = status_clean in ['inactive', 'suspended', 'blocked', 'resigned']
+            
+            for field in ['resignation_date', 'end_date', 'scheduled_to_date', 'scheduled_to', 'leaving_date', 'last_working_day', 'last_working_date']:
+                val_str = emp.get(field) or item.get(field)
+                if val_str:
+                    try:
+                        limit_date = datetime.strptime(str(val_str).split('T')[0], '%Y-%m-%d').date()
+                        if limit_date < today:
+                            is_blocked = True
+                    except:
+                        pass
+            
+            user = User.objects.filter(employee_id=code).first()
+            if user:
+                user.is_active = not is_blocked
+                user.save()
+            else:
+                user = User.objects.create(
+                    employee_id=code,
+                    role=role,
+                    password_hash=hash_password('user123'),
+                    is_active=not is_blocked
+                )
                 created_count += 1
                 
         return Response({
@@ -316,7 +351,20 @@ class SyncUsersPageView(APIView):
 
     def post(self, request):
         page = request.data.get('page', 1)
-        data = fetch_employee_data(page=page)
+        # 1. Clear global cache on page 1 of sync to ensure it doesn't return stale records
+        if int(page) == 1:
+            from api_management.services import safe_cache_delete, GLOBAL_EMPLOYEE_CACHE
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
+            safe_cache_delete('UNIQUE_PROJECTS_LIST')
+            safe_cache_delete('EXTERNAL_ROLES_LIST')
+            safe_cache_delete('position_to_employee_codes_map')
+            safe_cache_delete('user_position_identifiers')
+            GLOBAL_EMPLOYEE_CACHE['data'] = []
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
+
+        # 2. Fetch employee data page-by-page bypassing cache
+        data = fetch_employee_data(page=page, force_fresh=True)
         
         if "error" in data:
             status_code = data.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -328,26 +376,71 @@ class SyncUsersPageView(APIView):
         role_name = 'Employee'
         role, _ = Role.objects.get_or_create(name=role_name)
 
+        from api_management.services import safe_cache_delete
+        from datetime import datetime, date
+        today = date.today()
+
         for item in results:
             emp = item.get('employee', {})
             code = emp.get('employee_code')
             if not code: continue
             
-            user, created = User.objects.get_or_create(
-                employee_id=code,
-                defaults={
-                    'role': role,
-                    'password_hash': hash_password('user123'),
-                    'is_active': True
-                }
-            )
-            if created:
+            # Clear individual cache for this employee so they immediately resolve fresh next time
+            evict_employee_cache(code)
+            emp_id_api = emp.get('id')
+            if emp_id_api:
+                safe_cache_delete(f"emp_detail_data_{emp_id_api}")
+            
+            # Check if employee is blocked/resigned/inactive
+            status_clean = str(item.get('employee', {}).get('status') or item.get('status') or '').strip().lower()
+            is_blocked = status_clean in ['inactive', 'suspended', 'blocked', 'resigned']
+            
+            # Check resignation and other dates
+            for field in ['resignation_date', 'end_date', 'scheduled_to_date', 'scheduled_to', 'leaving_date', 'last_working_day', 'last_working_date']:
+                val_str = emp.get(field) or item.get(field)
+                if val_str:
+                    try:
+                        limit_date = datetime.strptime(str(val_str).split('T')[0], '%Y-%m-%d').date()
+                        if limit_date < today:
+                            is_blocked = True
+                    except:
+                        pass
+            
+            # Try to get existing user
+            user = User.objects.filter(employee_id=code).first()
+            if user:
+                # Update status of existing user based on API
+                user.is_active = not is_blocked
+                user.save()
+            else:
+                # Create new user
+                user = User.objects.create(
+                    employee_id=code,
+                    role=role,
+                    password_hash=hash_password('user123'),
+                    is_active=not is_blocked
+                )
                 created_count += 1
+
+        # 3. Rebuild global employee cache on the last page of sync
+        # Determine total count and if we've reached the end
+        total_count = data.get('count', 0)
+        import math
+        page_size = 20
+        total_pages = math.ceil(total_count / page_size) if total_count else 1
+        if int(page) >= total_pages:
+            import threading
+            from api_management.services import _bg_refresh_global_employee_cache
+            # Trigger background refresh of the cache so it's fully populated and fresh
+            t = threading.Thread(target=_bg_refresh_global_employee_cache)
+            t.daemon = True
+            t.start()
                 
         return Response({
             'batch_processed': len(results),
             'new_created': created_count
         }, status=status.HTTP_200_OK)
+
 
 class UserListView(APIView):
     permission_classes = [IsCustomAuthenticated]

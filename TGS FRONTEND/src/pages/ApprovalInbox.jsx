@@ -617,6 +617,8 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                 receipt_file: receiptFile
             };
 
+            console.log('[handleAction] Sending payload:', JSON.stringify(payload));
+            console.log('[handleAction] selectedTask.id:', selectedTask?.id, '| action:', action);
             await api.post('/api/approvals/', payload);
             const friendlyAction = action === 'MarkRead' ? 'marked as read' : `${action}ed`;
             showToast(`Request ${friendlyAction} successfully`, "success");

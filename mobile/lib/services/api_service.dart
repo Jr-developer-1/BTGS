@@ -184,25 +184,57 @@ class ApiService {
     return headers;
   }
 
-  Uri _buildUri(String endpoint) {
-    if (endpoint.startsWith('http')) {
-      return Uri.parse(endpoint);
+  String get _rootBaseUrl {
+    var url = ApiConstants.baseUrl;
+    if (url.endsWith('/')) {
+      url = url.substring(0, url.length - 1);
     }
-    // Remove leading slash if present
-    final path = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
-    return Uri.parse('${ApiConstants.baseUrl}/$path');
+    if (url.endsWith('/api')) {
+      url = url.substring(0, url.length - 4);
+    }
+    return url;
+  }
+
+  Uri _buildUri(String endpoint) {
+    String urlString;
+    if (endpoint.startsWith('http')) {
+      urlString = endpoint;
+    } else {
+      // Remove leading slash if present
+      final path = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
+      urlString = '${ApiConstants.baseUrl}/$path';
+    }
+
+    // Normalize the URL:
+    // 1. Split protocol and path to avoid modifying 'https://'
+    final protocolIndex = urlString.indexOf('://');
+    if (protocolIndex != -1) {
+      final protocol = urlString.substring(0, protocolIndex + 3);
+      var path = urlString.substring(protocolIndex + 3);
+      
+      // Replace duplicate slashes '//' with '/'
+      path = path.replaceAll(RegExp(r'/+'), '/');
+      
+      // Replace duplicate '/api/api/' or '/api//api/' with '/api/'
+      path = path.replaceAll(RegExp(r'/api/api/'), '/api/');
+      path = path.replaceAll(RegExp(r'/api//api/'), '/api/');
+      
+      urlString = protocol + path;
+    }
+    
+    return Uri.parse(urlString);
   }
 
   /// Get a full URL for an image source.
   /// If it starts with 'data:', it handles as Base64.
   /// If it starts with 'http', it returns it as is.
-  /// Otherwise, it prepends the baseUrl.
+  /// Otherwise, it prepends the root baseUrl.
   String getImageUrl(String source) {
     if (source.startsWith('data:')) return source;
     if (source.startsWith('http')) return source;
     // Remove leading slash if present
     final path = source.startsWith('/') ? source.substring(1) : source;
-    return '${ApiConstants.baseUrl}/$path';
+    return '$_rootBaseUrl/$path';
   }
 
   // ─── HTTP Methods ─────────────────────────────────────────────────────────

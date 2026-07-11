@@ -1361,9 +1361,28 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
     final taskId = task['id']?.toString() ?? '';
     final isClaim = taskId.startsWith('CLAIM-');
 
-    final filteredRows = rows.where((r) {
+    final List<Map<String, dynamic>> indexedRows = [];
+    for (int i = 0; i < rows.length; i++) {
+      final r = Map<String, dynamic>.from(rows[i] as Map);
+      r['_original_index_in_batch'] = i;
+      indexedRows.add(r);
+    }
+
+    final filteredRows = indexedRows.where((r) {
       final dateStr = r['date']?.toString() ?? '';
       return !dateStr.toLowerCase().contains('instruc');
+    }).toList();
+
+    final String batchStatus = task['status']?.toString() ?? 'Pending Approval';
+    final bool isResubmittedBatch = batchStatus.toLowerCase().contains('resubmitted');
+    
+    final displayRows = filteredRows.where((r) {
+      if (isResubmittedBatch) {
+        final rowStatus = (r['_status'] ?? r['status'] ?? '').toString().toLowerCase().trim();
+        final isValidated = rowStatus == 'validated' || rowStatus == 'ok' || rowStatus == 'approved';
+        return !isValidated;
+      }
+      return true;
     }).toList();
 
     final List<dynamic> allExpenses =
@@ -1547,7 +1566,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                                   const SizedBox(width: 4),
                                   Flexible(
                                     child: Text(
-                                      '${filteredRows.length} daily entries',
+                                      '${displayRows.length} daily entries',
                                       style: GoogleFonts.plusJakartaSans(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w800,
@@ -1671,7 +1690,7 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                           Text(
                             isClaim
                                 ? '${allExpenses.length} Expense Items'
-                                : '${filteredRows.length} Activities',
+                                : '${displayRows.length} Activities',
                             style: GoogleFonts.plusJakartaSans(
                               fontSize: 13,
                               fontWeight: FontWeight.w800,
@@ -1753,9 +1772,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                       ],
                     ),
                     const SizedBox(height: 12),
-                    ...filteredRows.asMap().entries.map((entry) {
-                      final idx = entry.key;
-                      final row = Map<String, dynamic>.from(entry.value as Map);
+                    ...displayRows.map((row) {
+                      final idx = row['_original_index_in_batch'] as int;
                       return _buildBulkRowCard(idx, row, task);
                     }),
                   ],
@@ -5039,12 +5057,32 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
         task['file_name']?.toString() ??
         task['purpose']?.toString() ??
         'Monthly Tour Plan';
-    final filteredRows = rows.where((r) {
+
+    final List<Map<String, dynamic>> indexedRows = [];
+    for (int i = 0; i < rows.length; i++) {
+      final r = Map<String, dynamic>.from(rows[i] as Map);
+      r['_original_index_in_batch'] = i;
+      indexedRows.add(r);
+    }
+
+    final filteredRows = indexedRows.where((r) {
       final dateStr = r['date']?.toString() ?? '';
       return !dateStr.toLowerCase().contains('instruc');
     }).toList();
 
-    if (filteredRows.isEmpty) {
+    final String batchStatus = task['status']?.toString() ?? 'Pending Approval';
+    final bool isResubmittedBatch = batchStatus.toLowerCase().contains('resubmitted');
+    
+    final displayRows = filteredRows.where((r) {
+      if (isResubmittedBatch) {
+        final rowStatus = (r['_status'] ?? r['status'] ?? '').toString().toLowerCase().trim();
+        final isValidated = rowStatus == 'validated' || rowStatus == 'ok' || rowStatus == 'approved';
+        return !isValidated;
+      }
+      return true;
+    }).toList();
+
+    if (displayRows.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -5076,7 +5114,7 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Daily Activities — ${filteredRows.length} Entries',
+                'Daily Activities — ${displayRows.length} Entries',
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 16,
                   fontWeight: FontWeight.w900,
@@ -5097,9 +5135,8 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
           overflow: TextOverflow.ellipsis,
         ),
         const SizedBox(height: 16),
-        ...filteredRows.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final row = Map<String, dynamic>.from(entry.value as Map);
+        ...displayRows.map((row) {
+          final idx = row['_original_index_in_batch'] as int;
           return _buildBulkRowCard(idx, row, task);
         }),
       ],

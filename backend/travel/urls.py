@@ -16,7 +16,7 @@ from .views import (
     MasterBulkExportView, MasterBulkImportView,
     ClaimReportView, ClaimReportExportExcelView
 )
-from .views_finance_config import FinanceWorkflowConfigViewSet, HRPositionConfigViewSet
+from .views_finance_config import FinanceWorkflowConfigViewSet, HRPositionConfigViewSet, COOProjectSettingViewSet
 from .views_export import ExpenseStatementPDFView, ExpenseStatementExcelView
 
 router = DefaultRouter()
@@ -30,6 +30,7 @@ router.register(r'bulk-activities', BulkActivityBatchViewSet)
 router.register(r'job-reports', JobReportViewSet)
 router.register(r'finance-workflow-config', FinanceWorkflowConfigViewSet, basename='finance-workflow-config')
 router.register(r'hr-position-config', HRPositionConfigViewSet, basename='hr-position-config')
+router.register(r'coo-project-setting', COOProjectSettingViewSet, basename='coo-project-setting')
 
 
 # Master route registers (Travel)

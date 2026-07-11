@@ -868,7 +868,7 @@ class FinanceWorkflowStep(SoftDeleteModel):
     position_id = models.CharField(max_length=50, null=True, blank=True)
     position_name = models.CharField(max_length=100, null=True, blank=True)
     
-    sequence_order = models.PositiveIntegerField(unique=True)
+    sequence_order = models.PositiveIntegerField(default=1)
     can_edit_amount = models.BooleanField(default=False)
     visibility_type = models.CharField(max_length=20, choices=VISIBILITY_CHOICES, default='INBOX')
     is_active = models.BooleanField(default=True)
@@ -876,6 +876,12 @@ class FinanceWorkflowStep(SoftDeleteModel):
     trip_type = models.CharField(max_length=20, choices=TRIP_TYPE_CHOICES, default='BOTH')
     trip_control = models.CharField(max_length=20, choices=TRIP_CONTROL_CHOICES, default='APPROVAL')
     can_view_reports = models.BooleanField(default=False)
+    project_code = models.CharField(max_length=100, default='General', blank=True)
+    finance_level_type = models.CharField(
+        max_length=50, 
+        choices=[('assistant_manager', 'Assistant Manager'), ('manager', 'Manager')], 
+        default='assistant_manager'
+    )
 
     class Meta:
         ordering = ['sequence_order']
@@ -884,11 +890,13 @@ class FinanceWorkflowStep(SoftDeleteModel):
 
     def __str__(self):
         name = self.position_name or (self.user.name if self.user else 'Unknown')
-        return f"Step {self.sequence_order}: {name} ({self.visibility_type})"
+        return f"Step {self.sequence_order}: {name} ({self.visibility_type}) for Project {self.project_code}"
 
 
 class FinanceIntimation(models.Model):
-    trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='finance_intimations')
+    trip = models.ForeignKey(Trip, on_delete=models.CASCADE, related_name='finance_intimations', null=True, blank=True)
+    claim = models.ForeignKey(TravelClaim, on_delete=models.CASCADE, related_name='finance_intimations', null=True, blank=True)
+    advance = models.ForeignKey(TravelAdvance, on_delete=models.CASCADE, related_name='finance_intimations', null=True, blank=True)
     finance_user = models.ForeignKey('core.User', on_delete=models.CASCADE, related_name='finance_intimations')
     finance_position = models.CharField(max_length=50, blank=True)
     is_approval = models.BooleanField(default=False)
@@ -901,7 +909,21 @@ class FinanceIntimation(models.Model):
         verbose_name_plural = "Finance Intimations"
 
     def __str__(self):
-        return f"Finance Intimation: {self.finance_user.name} for Trip {self.trip.trip_id} (Approval: {self.is_approval})"
+        target = self.trip or self.claim or self.advance
+        return f"Finance Intimation: {self.finance_user.name} for {target} (Approval: {self.is_approval})"
+
+
+class FinanceWorkflowSetting(models.Model):
+    project_code = models.CharField(max_length=100, default='General', unique=True)
+    is_parallel = models.BooleanField(default=False)
+    enable_two_level_flow = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Finance Workflow Setting"
+        verbose_name_plural = "Finance Workflow Settings"
+
+    def __str__(self):
+        return f"Finance Workflow Setting for {self.project_code}: {'Parallel' if self.is_parallel else 'Sequential'}"
 
 class HRPositionConfig(SoftDeleteModel):
     TRIPS_APPROVAL_CHOICES = [
@@ -933,6 +955,11 @@ class HRPositionConfig(SoftDeleteModel):
     claims_approval = models.CharField(max_length=20, choices=CLAIMS_APPROVAL_CHOICES, default='MARK_READ')
     edit_claims = models.CharField(max_length=20, choices=EDIT_CLAIMS_CHOICES, default='READ_ONLY')
     can_view_reports = models.BooleanField(default=False)
+    hr_level_type = models.CharField(
+        max_length=50, 
+        choices=[('assistant_manager', 'Assistant Manager'), ('manager', 'Manager')], 
+        default='assistant_manager'
+    )
 
     class Meta:
         verbose_name = "HR Position Configuration"
@@ -962,6 +989,36 @@ class HRIntimation(models.Model):
     def __str__(self):
         target = self.trip or self.claim or self.advance
         return f"Intimation for {target} to {self.hr_user.name} ({'Read' if self.is_read else 'Unread'})"
+
+
+class HRWorkflowSetting(models.Model):
+    project_code = models.CharField(max_length=100, default='General', unique=True)
+    is_parallel = models.BooleanField(default=False)
+    enable_two_level_flow = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "HR Workflow Setting"
+        verbose_name_plural = "HR Workflow Settings"
+
+    def __str__(self):
+        return f"HR Workflow Setting for {self.project_code}: {'Parallel' if self.is_parallel else 'Sequential'}"
+
+
+class COOProjectSetting(models.Model):
+    project_code = models.CharField(max_length=100)
+    coo_position_id = models.CharField(max_length=100)
+    coo_position_name = models.CharField(max_length=200)
+    enable_coo_approval = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ('project_code', 'coo_position_id')
+        verbose_name = "COO Project Setting"
+        verbose_name_plural = "COO Project Settings"
+
+    def __str__(self):
+        status = "Enabled" if self.enable_coo_approval else "Disabled"
+        return f"Project {self.project_code} - COO Position {self.coo_position_name} ({self.coo_position_id}): {status}"
+
 
 
 

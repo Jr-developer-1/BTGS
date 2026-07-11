@@ -217,7 +217,17 @@ def build_approval_chain(user):
         # SPECIAL CASE: Stop building the management chain if the next approver is the COO.
         # This ensures the flow ends at the level reporting to the COO.
         if _is_coo_position(next_pos_name, mgr_user.designation, employee_id=mgr_user.employee_id):
-            break
+            from travel.models import COOProjectSetting
+            proj_code = getattr(user, 'project_code', 'General') or 'General'
+            coo_enabled = False
+            if next_pos_id:
+                coo_enabled = COOProjectSetting.objects.filter(
+                    project_code=proj_code, 
+                    coo_position_id=str(next_pos_id), 
+                    enable_coo_approval=True
+                ).exists()
+            if not coo_enabled:
+                break
 
         # 3. Append position-centric hop to timeline if not consecutive duplicate (by both employee ID and position ID)
         is_duplicate = False

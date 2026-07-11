@@ -19,18 +19,21 @@ class FinanceWorkflowStepSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'user_name', 'user_emp_id', 'position_id', 'position_name', 
             'sequence_order', 'can_edit_amount', 'visibility_type', 'is_active', 
-            'trip_type', 'trip_control', 'can_view_reports'
+            'trip_type', 'trip_control', 'can_view_reports', 'project_code', 'finance_level_type'
         ]
 
 class FinanceIntimationSerializer(serializers.ModelSerializer):
     finance_user_name = serializers.ReadOnlyField(source='finance_user.name')
     trip_id = serializers.ReadOnlyField(source='trip.trip_id')
+    claim_id = serializers.ReadOnlyField(source='claim.id')
+    advance_id = serializers.ReadOnlyField(source='advance.id')
 
     class Meta:
         model = FinanceIntimation
         fields = [
-            'id', 'trip', 'trip_id', 'finance_user', 'finance_user_name', 
-            'finance_position', 'is_approval', 'is_read', 'read_at', 'created_at'
+            'id', 'trip', 'trip_id', 'claim', 'claim_id', 'advance', 'advance_id',
+            'finance_user', 'finance_user_name', 'finance_position', 'is_approval',
+            'is_read', 'read_at', 'created_at'
         ]
 
 class HRPositionConfigSerializer(serializers.ModelSerializer):
@@ -38,7 +41,8 @@ class HRPositionConfigSerializer(serializers.ModelSerializer):
         model = HRPositionConfig
         fields = [
             'id', 'position_id', 'position_name', 'department_name', 'can_approve', 'is_active',
-            'sequence_order', 'project_code', 'trips_approval', 'bulk_approval', 'claims_approval', 'edit_claims', 'can_view_reports'
+            'sequence_order', 'project_code', 'trips_approval', 'bulk_approval', 'claims_approval', 'edit_claims', 'can_view_reports',
+            'hr_level_type'
         ]
 
 class HRIntimationSerializer(serializers.ModelSerializer):
@@ -779,24 +783,52 @@ class TripSerializer(serializers.ModelSerializer):
         return obj.reporting_manager_name or (obj.user.reporting_manager.name if obj.user and obj.user.reporting_manager else None)
 
     def get_current_approver_name(self, obj):
+        from travel.models import FinanceIntimation, TravelClaim
         approver_obj = obj
+        is_claim_stage = False
         if hasattr(obj, 'claim') and obj.claim and obj.claim.status not in ['Paid', 'Draft']:
             approver_obj = obj.claim
+            is_claim_stage = True
 
+        # If no position set, try direct current_approver first
         if not approver_obj.approver_position:
-            return approver_obj.current_approver.name if approver_obj.current_approver else 'Pending'
-        
+            if approver_obj.current_approver:
+                return approver_obj.current_approver.name
+
+            # Check if in a finance pending stage — look up FinanceIntimation
+            finance_pending_statuses = ['PENDING_FINANCE', 'PENDING_EXECUTIVE', 'PENDING_FINAL_RELEASE']
+            status = getattr(approver_obj, 'status', None) or getattr(obj, 'status', None)
+            if status in finance_pending_statuses:
+                # Build the correct filter based on whether we're dealing with a claim or trip
+                if is_claim_stage and isinstance(approver_obj, TravelClaim):
+                    intimation = FinanceIntimation.objects.filter(
+                        claim=approver_obj, is_read=False, is_approval=True
+                    ).select_related('finance_user').first()
+                    if not intimation:
+                        # Fallback: check trip-level intimation
+                        intimation = FinanceIntimation.objects.filter(
+                            trip=obj, is_read=False, is_approval=True
+                        ).select_related('finance_user').first()
+                else:
+                    intimation = FinanceIntimation.objects.filter(
+                        trip=obj, is_read=False, is_approval=True
+                    ).select_related('finance_user').first()
+                if intimation and intimation.finance_user:
+                    return intimation.finance_user.name
+
+            return 'Pending'
+
         # Try to find user by position ID
         from travel.views import get_users_by_position
         users = get_users_by_position(approver_obj.approver_position)
         target_user = users[0] if users else None
         if target_user:
             return target_user.name
-        
+
         # Fallback to current_approver name if it exists
         if approver_obj.current_approver:
             return approver_obj.current_approver.name
-            
+
         return f"Position {approver_obj.approver_position}"
 
     def get_total_approved_advance(self, obj):

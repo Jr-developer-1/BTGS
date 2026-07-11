@@ -50,6 +50,7 @@ import ChangePassword from './pages/ChangePassword';
 import ForgotPassword from './pages/ForgotPassword';
 import FinanceWorkflowConfig from './pages/FinanceWorkflowConfig';
 import HRPositionConfig from './pages/HRPositionConfig';
+import COOProjectConfig from './pages/COOProjectConfig';
 import ClaimReport from './pages/ClaimReport';
 import TravelReports from './pages/TravelReports';
 
@@ -386,6 +387,7 @@ function App() {
               <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
               <Route path="/finance-workflow" element={<AdminRoute><FinanceWorkflowConfig /></AdminRoute>} />
               <Route path="/hr-positions" element={<AdminRoute><HRPositionConfig /></AdminRoute>} />
+              <Route path="/coo-positions" element={<AdminRoute><COOProjectConfig /></AdminRoute>} />
               <Route path="/claim-report" element={<ClaimReportRoute><ClaimReport /></ClaimReportRoute>} />
               <Route path="/trip-travel-reports" element={<ReportRoute><TravelReports /></ReportRoute>} />
 
