@@ -366,8 +366,13 @@ const ApprovalInbox = ({ enforceTab = null }) => {
             } catch (e) {}
         }
 
-        if ((dec.source !== 'claimed' || hasDaDeviation) && (!dec.note || !dec.note.trim())) {
-            showToast("Policy deviation note is mandatory when applied DA exceeds eligible DA or for adjustments", "error");
+        const ea = allowanceData?.expense_allowances?.find(a => a.expense_id === expenseId);
+        const isNoteRequired = !!(
+            ea?.exceeds_limit ||
+            hasDaDeviation
+        );
+        if (isNoteRequired && (!dec.note || !dec.note.trim())) {
+            showToast("Policy deviation note / remarks is mandatory for over-limit claims or DA deviations", "error");
             return;
         }
 
@@ -1971,7 +1976,11 @@ const ApprovalInbox = ({ enforceTab = null }) => {
                                                                                                 const hasDaDeviation = parsedDetails.daily_allowance !== undefined &&
                                                                                                     parsedDetails.eligible_da !== undefined &&
                                                                                                     parseFloat(parsedDetails.daily_allowance) > parseFloat(parsedDetails.eligible_da);
-                                                                                                const isSaveDisabled = hasError || ((dec.source !== 'claimed' || hasDaDeviation) && (!dec.note || !dec.note.trim()));
+                                                                                                const isNoteRequired = !!(
+                                                                                                    ea.exceeds_limit ||
+                                                                                                    hasDaDeviation
+                                                                                                );
+                                                                                                const isSaveDisabled = hasError || (isNoteRequired && (!dec.note || !dec.note.trim()));
                                                                                                 return (
                                                                                                     <div>
                                                                                                         {hasDaDeviation && (
@@ -2153,7 +2162,7 @@ const ApprovalInbox = ({ enforceTab = null }) => {
 
                                                                                                     <div style={{ marginBottom: '12px' }}>
                                                                                                         <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '4px' }}>
-                                                                                                            Policy Deviation Note / Remarks <span style={{ color: '#ef4444' }}>*</span>:
+                                                                                                            Policy Deviation Note / Remarks {isNoteRequired && <span style={{ color: '#ef4444' }}>*</span>}:
                                                                                                         </label>
                                                                                                         <textarea
                                                                                                             value={dec.note}

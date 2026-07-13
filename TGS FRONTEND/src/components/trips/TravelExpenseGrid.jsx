@@ -2391,7 +2391,7 @@ const TravelExpenseGrid = ({
                                                                                 <div className="input-with-label-mini" style={{ gridColumn: 'span 2' }}>
                                                                                     <label style={{ color: '#4f46e5' }}>Fare Paid (₹)</label>
                                                                                     <div style={{ display: 'flex', gap: '6px' }}>
-                                                                                        <input type="number" placeholder="0.00" value={row.amount || ''} onChange={e => updateRow(row.id, 'amount', e.target.value)} className="cat-input" style={{ borderColor: '#4f46e5', fontWeight: 700, flex: 1 }} disabled={isLocked} />
+                                                                                        <input type="number" placeholder="0.00" value={row.details.fare_or_fuel !== undefined ? row.details.fare_or_fuel : ''} onChange={e => updateDetails(row.id, 'fare_or_fuel', e.target.value)} className="cat-input" style={{ borderColor: '#4f46e5', fontWeight: 700, flex: 1 }} disabled={isLocked} />
                                                                                         {!isLocked && (
                                                                                             <button type="button" className="upload-bill-btn" style={{ height: '34px', padding: '0 10px' }} onClick={() => document.getElementById(`f-pt-${row.id}`).click()}>
                                                                                                 <Upload size={14} />

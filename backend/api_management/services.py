@@ -364,6 +364,13 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             "Accept": "application/json"
         }
         
+        session = requests.Session()
+        # Configure connection pool adapter to keep connections alive
+        adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=4)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.headers.update(headers)
+        
         # Determine internal start page for the external API
         # If internal page_size is 20 and external is 10:
         # Internal Page 1 -> External Pages 1, 2
@@ -396,7 +403,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
             start_time = time.time()
             # Fast fail-fast timeout of 35 seconds for single records, 120 seconds for full listing
             t_val = 35 if (employee_id_filter or search) else 120
-            response = requests.get(api_url, params=params, headers=headers, timeout=t_val)
+            response = session.get(api_url, params=params, timeout=t_val)
             latency = (time.time() - start_time) * 1000
 
             try:
@@ -452,8 +459,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                             try:
                                 p_params = params.copy()
                                 p_params['page'] = p_num
-                                # 15s timeout per page — frees thread-pool fast when API is slow
-                                p_resp = requests.get(api_url, params=p_params, headers=headers, timeout=15)
+                                # 25s timeout per page — gives headroom, while keep-alive keeps handshake latency low
+                                p_resp = session.get(api_url, params=p_params, timeout=25)
                                 if p_resp.status_code == 200:
                                     return p_resp.json().get('results', [])
                                 elif p_resp.status_code == 429:
@@ -466,8 +473,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                     delay *= 1.5
                         return []
 
-                    # Lower concurrency to prevent external system connection exhaustion
-                    with ThreadPoolExecutor(max_workers=15) as executor:
+                    # Lower concurrency to 4 workers to prevent rate-limiting and overloading the external API server
+                    with ThreadPoolExecutor(max_workers=4) as executor:
                         extra_results_list = list(executor.map(fetch_single_page, pages_to_fetch))
                     
                     for er in extra_results_list:
@@ -521,7 +528,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         continue
 
                     detail_url = api_url.rstrip('/') + f"/{emp_id_api}/"
-                    detail_resp = requests.get(detail_url, headers=headers, timeout=8)  # fast-fail
+                    detail_resp = session.get(detail_url, timeout=8)  # fast-fail
                     if detail_resp.status_code == 200:
                         detail_data = detail_resp.json() or {}
                         pos_list = detail_data.get('positions_details') or []
@@ -555,7 +562,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                                 code = cached_code
                                             else:
                                                 try:
-                                                    s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=10.0)
+                                                    s_resp = session.get(api_url, params={'search': name}, timeout=10.0)
                                                     if s_resp.status_code == 200:
                                                         s_data = s_resp.json() or {}
                                                         s_res = s_data.get('results', [])
@@ -590,7 +597,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                         code = cached_code
                                     else:
                                         try:
-                                            s_resp = requests.get(api_url, params={'search': name}, headers=headers, timeout=10.0)
+                                            s_resp = session.get(api_url, params={'search': name}, timeout=10.0)
                                             if s_resp.status_code == 200:
                                                 s_data = s_resp.json() or {}
                                                 s_res = s_data.get('results', [])
@@ -932,4 +939,4 @@ def evict_employee_cache(employee_code):
     
     from api_management.services import GLOBAL_EMPLOYEE_CACHE
     GLOBAL_EMPLOYEE_CACHE['data'] = None
-    GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
+    GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
