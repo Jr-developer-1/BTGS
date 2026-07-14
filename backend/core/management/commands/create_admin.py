@@ -15,7 +15,8 @@ class Command(BaseCommand):
 
         admin_role = Role.objects.get(name='Admin')
         if not User.objects.filter(employee_id='ADMIN001').exists():
-            pwd_hash = hashlib.sha256("admin123".encode()).hexdigest()
+            from api_management.utils import encrypt_key
+            pwd_hash = encrypt_key("admin123")
                 
             User.objects.create(
                 employee_id='ADMIN001',

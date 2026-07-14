@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Shield, Key, AlertCircle, CheckCircle2, Copy, Trash2, Activity, ArrowUpRight, BarChart2, AlertTriangle, Plus, X, Users, MapPin } from 'lucide-react';
+import { Save, Shield, Key, AlertCircle, CheckCircle2, Copy, Trash2, Activity, ArrowUpRight, BarChart2, AlertTriangle, Plus, X, Users, MapPin, RefreshCw } from 'lucide-react';
 import api from '../api/api';
 import { useToast } from '../context/ToastContext';
 
@@ -17,6 +17,8 @@ const ApiManagement = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [isGeoSaving, setIsGeoSaving] = useState(false);
     const [error, setError] = useState(null);
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [syncSuccess, setSyncSuccess] = useState(false);
 
     // New Key Modal State
     const [showKeyModal, setShowKeyModal] = useState(false);
@@ -148,6 +150,24 @@ const ApiManagement = () => {
         } finally {
             if (isGeo) setIsGeoSaving(false);
             else setIsSaving(false);
+        }
+    };
+
+    const handleSyncEmployeeCache = async () => {
+        setIsSyncing(true);
+        setError(null);
+        try {
+            await api.post('/api/employees/sync-cache/');
+            setSyncSuccess(true);
+            showToast("Employee cache successfully synchronized from external API.", "success");
+            setTimeout(() => setSyncSuccess(false), 3000);
+        } catch (err) {
+            console.error("Failed to sync employee cache:", err);
+            const errMsg = err.response?.data?.error || "Failed to sync employee cache.";
+            setError(errMsg);
+            showToast(errMsg, "error");
+        } finally {
+            setIsSyncing(false);
         }
     };
 
@@ -638,7 +658,7 @@ const ApiManagement = () => {
                                     </div>
                                 </div>
 
-                                <div className="action-row">
+                                <div className="action-row flex flex-wrap gap-3">
                                     <button
                                         className={`btn-primary-premium ${saved ? 'success' : ''}`}
                                         onClick={() => handleSave('external')}
@@ -646,6 +666,14 @@ const ApiManagement = () => {
                                     >
                                         {saved ? <CheckCircle2 size={18} /> : <Save size={18} />}
                                         <span>{isSaving ? 'Saving...' : saved ? 'Saved Successfully' : 'Update Employee API'}</span>
+                                    </button>
+                                    <button
+                                        className={`btn-primary-premium bg-slate-700 hover:bg-slate-800 ${syncSuccess ? 'success' : ''}`}
+                                        onClick={handleSyncEmployeeCache}
+                                        disabled={isSyncing}
+                                    >
+                                        {syncSuccess ? <CheckCircle2 size={18} /> : <RefreshCw className={isSyncing ? "animate-spin" : ""} size={18} />}
+                                        <span>{isSyncing ? 'Syncing...' : syncSuccess ? 'Sync Completed' : 'Sync Cache Now'}</span>
                                     </button>
                                 </div>
 

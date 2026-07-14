@@ -1,7 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import EmployeeListView, EmployeeDropdownView, SignupView, SyncAllUsersView, UserListView, AccessKeyViewSet, DashboardStatsView, ApiKeyUpdateView, DynamicEndpointViewSet, DynamicIngestionView, GeoHierarchyView
-from .views import EmployeeListView, EmployeeDropdownView, SignupView, SyncAllUsersView, UserListView, AccessKeyViewSet, DashboardStatsView, ApiKeyUpdateView, DynamicEndpointViewSet, DynamicIngestionView, GeoHierarchyView, SyncUsersPageView
+from .views import (
+    EmployeeListView, EmployeeDropdownView, SignupView, SyncAllUsersView, 
+    UserListView, AccessKeyViewSet, DashboardStatsView, ApiKeyUpdateView, 
+    DynamicEndpointViewSet, DynamicIngestionView, GeoHierarchyView, 
+    SyncUsersPageView, SyncEmployeeCacheView
+)
 
 router = DefaultRouter()
 router.register(r'access-keys', AccessKeyViewSet)
@@ -10,6 +14,7 @@ router.register(r'dynamic-endpoints', DynamicEndpointViewSet)
 urlpatterns = [
     path('employees/', EmployeeListView.as_view(), name='employee-list'),
     path('employees/dropdown/', EmployeeDropdownView.as_view(), name='employee-dropdown'),
+    path('employees/sync-cache/', SyncEmployeeCacheView.as_view(), name='sync-employee-cache'),
     path('signup/', SignupView.as_view(), name='signup'),
     path('sync-users/', SyncAllUsersView.as_view(), name='sync-users'),
     path('sync-users-page/', SyncUsersPageView.as_view(), name='sync-users-page'),

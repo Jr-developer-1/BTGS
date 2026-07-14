@@ -515,8 +515,13 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
         for item in all_results:
             if not isinstance(item, dict): continue
             
-            # If we are filtering for a specific employee, get more details
             employee = item.get('employee') or {}
+            
+            # Filter out inactive employees
+            status = str(employee.get('status') or '').strip().lower()
+            if status == 'inactive':
+                continue
+                
             emp_id_api = employee.get('id')
             
             if employee_id_filter and emp_id_api:
@@ -659,6 +664,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                     "photo": emp_info.get("photo"),
                     "email": emp_info.get("email") or "",
                     "phone": emp_info.get("phone") or "",
+                    "status": emp_info.get("status"),
                 },
                 "position": {
                     "id": pos_info.get("id"),

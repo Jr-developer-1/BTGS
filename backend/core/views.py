@@ -37,7 +37,8 @@ def get_client_ip(request):
 from .frs_util import get_face_encoding_from_image, compare_faces, base64_to_file
 
 def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+    from api_management.utils import encrypt_key
+    return encrypt_key(password)
 
 def check_user_can_view_reports(user):
     try:
@@ -150,8 +151,18 @@ def login_view(request):
         if not user.is_active or user.is_blocked_by_api:
              return Response({'error': 'Your account has been deactivated. Kindly contact the administrator.'}, status=status.HTTP_401_UNAUTHORIZED)
              
-        hashed_input = hash_password(password)
-        if user.password_hash != hashed_input:
+        from api_management.utils import decrypt_key
+        decrypted_pwd = decrypt_key(user.password_hash)
+        is_valid = False
+        if decrypted_pwd:
+            is_valid = (decrypted_pwd == password)
+        else:
+            # Fallback for legacy SHA-256 hashes
+            import hashlib
+            legacy_hash = hashlib.sha256(password.encode()).hexdigest()
+            is_valid = (user.password_hash == legacy_hash)
+
+        if not is_valid:
             try:
                 AuditLog.objects.create(
                     action='LOGIN_FAILED',

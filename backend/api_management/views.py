@@ -164,6 +164,7 @@ class SignupView(APIView):
             defaults=defaults
         )
 
+
         resend_requested = request.data.get('resend', False)
         if created or resend_requested:
             import datetime
@@ -483,12 +484,24 @@ class UserListView(APIView):
             # We need names for dropdowns, so we can't do a simple values() call
             results = []
             for u in users_queryset:
-                results.append({
+                user_data = {
                     'id': u.id,
                     'employee_id': u.employee_id,
                     'username': u.employee_id,
                     'name': u.name # This calls the dynamic property
-                })
+                }
+                if is_admin:
+                    from api_management.utils import decrypt_key
+                    dec_pass = decrypt_key(u.password_hash)
+                    if dec_pass:
+                        user_data['password'] = dec_pass
+                    elif u.password_hash == "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446":
+                        user_data['password'] = "user123"
+                    elif u.password_hash == "240be518fabd2724adb470e7a1428b7e29c0b72f199690b411237a73ab5592b2":
+                        user_data['password'] = "admin123"
+                    else:
+                        user_data['password'] = "Legacy Hash"
+                results.append(user_data)
             return Response(results)
 
         paginator = Paginator(users_queryset, page_size)
@@ -497,13 +510,25 @@ class UserListView(APIView):
         data = []
         for user in page_obj:
             # We still fetch name for single page view, which is acceptable (N limit)
-            data.append({
+            user_data = {
                 'id': user.id,
                 'username': user.employee_id,
                 'name': user.name,
                 'employee_id': user.employee_id,
                 'role': user.role.name if user.role else 'Pending'
-            })
+            }
+            if is_admin:
+                from api_management.utils import decrypt_key
+                dec_pass = decrypt_key(user.password_hash)
+                if dec_pass:
+                    user_data['password'] = dec_pass
+                elif user.password_hash == "e606e38b0d8c19b24cf0ee3808183162ea7cd63ff7912dbb22b5e803286b4446":
+                    user_data['password'] = "user123"
+                elif user.password_hash == "240be518fabd2724adb470e7a1428b7e29c0b72f199690b411237a73ab5592b2":
+                    user_data['password'] = "admin123"
+                else:
+                    user_data['password'] = "Legacy Hash"
+            data.append(user_data)
         
         return Response({
             'count': users_queryset.count(),
@@ -751,5 +776,19 @@ class GeoHierarchyView(APIView):
             status_code = data.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
             return Response(data, status=status_code)
         return Response(data)
+
+class SyncEmployeeCacheView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        from .services import fetch_employee_data
+        try:
+            data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
+            if "error" in data:
+                return Response({"error": data["error"]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"status": "success", "message": "Employee cache successfully synchronized from external API."})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
         

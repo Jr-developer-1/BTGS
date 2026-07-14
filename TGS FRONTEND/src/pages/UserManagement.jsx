@@ -14,7 +14,10 @@ import {
     ChevronDown,
     Building2,
     CheckCircle2,
-    RefreshCcw
+    RefreshCcw,
+    Eye,
+    EyeOff,
+    Copy
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../api/api';
@@ -33,6 +36,14 @@ const UserManagement = () => {
     const [isSyncingAll, setIsSyncingAll] = useState(false);
     const [showSyncModal, setShowSyncModal] = useState(false);
     const [syncProgress, setSyncProgress] = useState(null);
+    const [visiblePasswords, setVisiblePasswords] = useState({});
+
+    const togglePasswordVisibility = (code) => {
+        setVisiblePasswords(prev => ({
+            ...prev,
+            [code]: !prev[code]
+        }));
+    };
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
@@ -90,11 +101,15 @@ const UserManagement = () => {
 
             const processedEmployees = employeeList.map(emp => {
                 const code = String(emp.employee_code || emp.employee?.employee_code || '').toLowerCase();
-                const isAlreadyUser = userList.some(u => {
+                const matchedUser = userList.find(u => {
                     const uCode = String(u.employee_id || u.username || '').toLowerCase();
                     return uCode && uCode === code;
                 });
-                return { ...emp, isUser: isAlreadyUser };
+                return { 
+                    ...emp, 
+                    isUser: !!matchedUser,
+                    password: matchedUser ? matchedUser.password : null
+                };
             });
 
             const sortedEmployees = processedEmployees.sort((a, b) => {
@@ -396,6 +411,7 @@ const UserManagement = () => {
                                     <th style={{ padding: '16px 24px', color: '#475569', fontSize: '13px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Employee</th>
                                     <th style={{ padding: '16px 24px', color: '#475569', fontSize: '13px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Department</th>
                                     <th style={{ padding: '16px 24px', color: '#475569', fontSize: '13px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</th>
+                                    <th style={{ padding: '16px 24px', color: '#475569', fontSize: '13px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Password</th>
                                     <th style={{ padding: '16px 24px', color: '#475569', fontSize: '13px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'right' }}>Actions</th>
                                 </tr>
                             </thead>
@@ -443,6 +459,50 @@ const UserManagement = () => {
                                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', backgroundColor: '#f3f4f6', color: '#4b5563', borderRadius: '20px', fontSize: '12px', fontWeight: '600' }}>
                                                             <span style={{ width: '6px', height: '6px', backgroundColor: '#9ca3af', borderRadius: '50%' }}></span> Pending
                                                         </span>
+                                                    )}
+                                                </td>
+                                                <td style={{ padding: '16px 24px' }}>
+                                                    {emp.isUser ? (
+                                                        emp.password ? (
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                                <input
+                                                                    type={visiblePasswords[displayCode] ? "text" : "password"}
+                                                                    value={emp.password}
+                                                                    readOnly
+                                                                    style={{
+                                                                        border: 'none',
+                                                                        background: 'transparent',
+                                                                        fontSize: '14px',
+                                                                        fontWeight: '600',
+                                                                        color: '#334155',
+                                                                        width: '90px',
+                                                                        fontFamily: visiblePasswords[displayCode] ? 'monospace' : 'inherit',
+                                                                        outline: 'none'
+                                                                    }}
+                                                                />
+                                                                <button
+                                                                    onClick={() => togglePasswordVisibility(displayCode)}
+                                                                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
+                                                                    title={visiblePasswords[displayCode] ? "Hide Password" : "Show Password"}
+                                                                >
+                                                                    {visiblePasswords[displayCode] ? <EyeOff size={16} /> : <Eye size={16} />}
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        navigator.clipboard.writeText(emp.password);
+                                                                        showToast('Password copied to clipboard!', 'success');
+                                                                    }}
+                                                                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center', padding: '4px' }}
+                                                                    title="Copy Password"
+                                                                >
+                                                                    <Copy size={14} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <span style={{ color: '#94a3b8', fontSize: '13px', fontStyle: 'italic' }}>Not Available</span>
+                                                        )
+                                                    ) : (
+                                                        <span style={{ color: '#cbd5e1', fontSize: '14px' }}>—</span>
                                                     )}
                                                 </td>
                                                 <td style={{ padding: '16px 24px', textAlign: 'right' }}>
@@ -514,7 +574,7 @@ const UserManagement = () => {
                                     })
                                 ) : (
                                     <tr>
-                                        <td colSpan="4" style={{ padding: '60px 24px', textAlign: 'center', color: '#64748b' }}>
+                                        <td colSpan="5" style={{ padding: '60px 24px', textAlign: 'center', color: '#64748b' }}>
                                             <div style={{ width: '48px', height: '48px', backgroundColor: '#f1f5f9', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                                                 <Search size={24} color="#94a3b8" />
                                             </div>
