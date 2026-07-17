@@ -2513,6 +2513,11 @@ class _TripExpenseFormDetailedScreenState
         }
       }
     } else if (widget.category == 'Local Travel') {
+      if (_isPublicTransport && !_isTravelo) {
+        _endDate = _startDate;
+        _endTime = _startTime;
+      }
+
       // --- Origin == Destination check (web parity) ---
       if (_originController.text.trim().isNotEmpty &&
           _destController.text.trim().isNotEmpty &&
@@ -2539,7 +2544,7 @@ class _TripExpenseFormDetailedScreenState
         );
         return;
       }
-      if (_endTime.minute % 5 != 0) {
+      if ((!_isPublicTransport || _isTravelo) && _endTime.minute % 5 != 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -2776,7 +2781,7 @@ class _TripExpenseFormDetailedScreenState
         _endTime.minute,
       );
 
-      if (localEnd.isBefore(localStart) || localEnd == localStart) {
+      if ((!_isPublicTransport || _isTravelo) && (localEnd.isBefore(localStart) || localEnd == localStart)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('End Time must be greater than Start Time.'),
@@ -5949,27 +5954,73 @@ class _TripExpenseFormDetailedScreenState
             icon: Icons.alt_route_rounded,
             color: const Color(0xFF0D9488),
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: _buildDatePickerMini(
-                      'DATE',
-                      _startDate,
-                      (d) => setState(() => _startDate = d),
+              if (_isTravelo) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildDatePickerMini(
+                        'START DATE',
+                        _startDate,
+                        (d) => setState(() => _startDate = d),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: _buildTimePickerMini(
-                      'TIME',
-                      _startTime,
-                      (t) => setState(() => _startTime = t),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: _buildTimePickerMini(
+                        'START TIME',
+                        _startTime,
+                        (t) => setState(() => _startTime = t),
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildDatePickerMini(
+                        'END DATE',
+                        _endDate,
+                        (d) => setState(() => _endDate = d),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: _buildTimePickerMini(
+                        'END TIME',
+                        _endTime,
+                        (t) => setState(() => _endTime = t),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...[
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: _buildDatePickerMini(
+                        'DATE',
+                        _startDate,
+                        (d) => setState(() => _startDate = d),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: _buildTimePickerMini(
+                        'TIME',
+                        _startTime,
+                        (t) => setState(() => _startTime = t),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [

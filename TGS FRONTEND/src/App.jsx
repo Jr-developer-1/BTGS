@@ -53,8 +53,46 @@ import HRPositionConfig from './pages/HRPositionConfig';
 import COOProjectConfig from './pages/COOProjectConfig';
 import ClaimReport from './pages/ClaimReport';
 import TravelReports from './pages/TravelReports';
+import RolePermissions from './pages/RolePermissions';
 
 
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '24px', backgroundColor: '#fff', minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ maxWidth: '600px', width: '100%', padding: '32px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+            <h2 style={{ color: '#991b1b', fontSize: '20px', fontWeight: 'bold', margin: '0 0 12px 0' }}>Application Error</h2>
+            <p style={{ color: '#7f1d1d', fontSize: '14px', marginBottom: '20px' }}>A runtime rendering error occurred in the front-end application.</p>
+            <pre style={{ backgroundColor: '#fff', padding: '16px', borderRadius: '8px', border: '1px solid #fca5a5', overflowX: 'auto', fontSize: '12px', color: '#dc2626', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+              {this.state.error?.toString()}
+              {"\n\n"}
+              {this.state.error?.stack}
+            </pre>
+            <button onClick={() => window.location.reload()} style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', cursor: 'pointer' }}>
+              Reload Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -340,7 +378,8 @@ function App() {
           <ReminderHandler />
           <Router>
             <SupportBotWrapper />
-            <Routes>
+            <ErrorBoundary>
+              <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/change-password" element={<ChangePassword />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -388,12 +427,14 @@ function App() {
               <Route path="/finance-workflow" element={<AdminRoute><FinanceWorkflowConfig /></AdminRoute>} />
               <Route path="/hr-positions" element={<AdminRoute><HRPositionConfig /></AdminRoute>} />
               <Route path="/coo-positions" element={<AdminRoute><COOProjectConfig /></AdminRoute>} />
+              <Route path="/role-permissions" element={<AdminRoute><RolePermissions /></AdminRoute>} />
               <Route path="/claim-report" element={<ClaimReportRoute><ClaimReport /></ClaimReportRoute>} />
               <Route path="/trip-travel-reports" element={<ReportRoute><TravelReports /></ReportRoute>} />
 
               <Route path="/app-version" element={<AdminRoute><AppVersionManagement /></AdminRoute>} />
             </Routes>
-          </Router>
+          </ErrorBoundary>
+        </Router>
         </ThemeProvider>
       </AuthProvider>
     </ToastProvider>

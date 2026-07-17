@@ -19,12 +19,12 @@ TYPE_MAPPING = {
     'landmarks': 'Landmark'
 }
 
-def sync_geo_locations():
+def sync_geo_locations(force_fresh=False):
     """
     Syncs hierarchical location data from the Geo API into the local master database.
     Handles complex nested structures like clusters, panchayats, and wards.
     """
-    data = fetch_geo_data()
+    data = fetch_geo_data(force_fresh=force_fresh)
     if not data or "error" in data:
         return {"error": "Failed to fetch Geo data"}
 

@@ -259,7 +259,7 @@ def login_view(request):
                 'employee_id': user.employee_id,
                 'name': getattr(user, 'name', user.employee_id),
                 'role': user.role.name if user.role else 'Employee',
-                'role_permissions': (lambda u: (Role.objects.filter(Q(name__iexact=u.role_from_api) | Q(name__iexact=u.designation)).first() or u.role).permissions if u.role else {})(user),
+                'role_permissions': user.role_permissions,
                 'department': getattr(user, 'department', 'N/A'),
                 'designation': getattr(user, 'designation', 'N/A'),
                 'office_level': getattr(user, 'office_level', 3),
@@ -495,7 +495,7 @@ def me_view(request):
             'employee_id': user.employee_id,
             'name': getattr(user, 'name', user.employee_id),
             'role': user.active_role,
-            'role_permissions': (lambda u: (Role.objects.filter(Q(name__iexact=u.role_from_api) | Q(name__iexact=u.designation)).first() or u.role).permissions if u.role else {})(user),
+            'role_permissions': user.role_permissions,
             'department': getattr(user, 'department', 'N/A'),
             'designation': getattr(user, 'designation', 'N/A'),
             'office_level': getattr(user, 'office_level', 3),
@@ -597,16 +597,7 @@ def switch_position_view(request):
         user_role_obj = user.role
         role_name = user.active_role
         
-        permissions = {}
-        if user_role_obj:
-            permissions = user_role_obj.permissions
-            try:
-                # Attempt to find a more specific role based on API data
-                api_role = Role.objects.filter(Q(name__iexact=user.role_from_api) | Q(name__iexact=user.designation)).first()
-                if api_role:
-                    permissions = api_role.permissions
-            except:
-                pass
+        permissions = user.role_permissions
 
         # Return updated user data (sync with login/me response structure)
         return Response({
@@ -1384,6 +1375,35 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
                 log.ip_address
             ])
         return response
+def sync_roles_from_employees(employees):
+    if not employees:
+        return
+    from core.models import Role
+    unique_names = set()
+    
+    # Default roles
+    system_roles = ['Admin', 'Employee', 'Finance', 'GuestHouseManager', 'HR', 'CFO']
+    for r in system_roles:
+        unique_names.add(r)
+        
+    for emp in employees:
+        for pos in emp.get('positions_details', []):
+            role_name = pos.get('role_name')
+            if role_name:
+                role_name_clean = role_name.strip()
+                if role_name_clean and not any(ind in role_name_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
+                    unique_names.add(role_name_clean)
+                
+        pos_info = emp.get('position') or {}
+        role_top = pos_info.get('role_name')
+        if role_top:
+            role_top_clean = role_top.strip()
+            if role_top_clean and not any(ind in role_top_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
+                unique_names.add(role_top_clean)
+            
+    for name in unique_names:
+        if name:
+            Role.objects.get_or_create(name=name)
 
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all()
@@ -1391,6 +1411,67 @@ class RoleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCustomAuthenticated]
     filter_backends = [filters.SearchFilter]
     search_fields = ['name']
+    pagination_class = None
+
+    @action(detail=False, methods=['get', 'post'])
+    def enforcement(self, request):
+        from api_management.models import SystemConfig
+        if request.method == 'POST':
+            enabled = request.data.get('enabled', True)
+            SystemConfig.objects.update_or_create(
+                key='use_dynamic_role_permissions',
+                defaults={'value': 'true' if enabled else 'false'}
+            )
+            return Response({'status': 'success', 'enabled': enabled})
+        else:
+            config = SystemConfig.objects.filter(key='use_dynamic_role_permissions').first()
+            enabled = config.value.lower() == 'true' if config else True
+            return Response({'enabled': enabled})
+
+    def list(self, request, *args, **kwargs):
+        try:
+            from api_management.services import safe_cache_get, fetch_employee_data
+            
+            # Fetch global employee list from cache or API
+            employees = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+            if not employees:
+                resp = fetch_employee_data(fetch_all_pages=True)
+                if resp and not resp.get('error'):
+                    employees = resp.get('results', [])
+            
+            if employees:
+                sync_roles_from_employees(employees)
+                
+            # Filter returned roles to only active ones from API, defaults, or custom configured ones
+            from django.db.models import Q
+            custom_configured_roles = Role.objects.exclude(Q(permissions={}) | Q(permissions__isnull=True)).values_list('name', flat=True)
+            
+            unique_names = set(['Admin', 'Employee', 'Finance', 'GuestHouseManager', 'HR', 'CFO'])
+            for r in custom_configured_roles:
+                unique_names.add(r)
+                
+            if employees:
+                for emp in employees:
+                    for pos in emp.get('positions_details', []):
+                        role_name = pos.get('role_name')
+                        if role_name:
+                            role_name_clean = role_name.strip()
+                            if role_name_clean and not any(ind in role_name_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
+                                unique_names.add(role_name_clean)
+                                
+                    pos_info = emp.get('position') or {}
+                    role_top = pos_info.get('role_name')
+                    if role_top:
+                        role_top_clean = role_top.strip()
+                        if role_top_clean and not any(ind in role_top_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
+                            unique_names.add(role_top_clean)
+                            
+            queryset = self.filter_queryset(self.get_queryset()).filter(name__in=list(unique_names))
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
+        except Exception as e:
+            print(f"Error syncing roles in RoleViewSet.list: {e}")
+            return super().list(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
         from django.db.models.deletion import ProtectedError

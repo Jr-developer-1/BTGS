@@ -285,29 +285,63 @@ class ModuleConstants {
     ),
   ];
 
+  static String _getPermissionKey(String title) {
+    switch (title) {
+      case 'Trips': return 'mobile_trips';
+      case 'Inbox': return 'mobile_inbox';
+      case 'Outbox': return 'mobile_outbox';
+      case 'Finance Hub': return 'mobile_finance_hub';
+      case 'Settlements': return 'mobile_settlements';
+      case 'Documents': return 'mobile_documents';
+      case 'System Policy': return 'mobile_system_policy';
+      case 'CFO Room': return 'mobile_cfo_room';
+      case 'User Management': return 'mobile_user_management';
+      case 'Guest Houses': return 'mobile_guest_houses';
+      case 'Fleet Management': return 'mobile_fleet_management';
+      case 'API Management': return 'mobile_api_management';
+      case 'Fuel Masters': return 'mobile_fuel_masters';
+      case 'Master Management': return 'mobile_master_management';
+      case 'Admin Masters': return 'mobile_admin_masters';
+      case 'Location Codes': return 'mobile_location_codes';
+      case 'Route Masters': return 'mobile_route_masters';
+      case 'Login History': return 'mobile_login_history';
+      case 'Audit Logs': return 'mobile_audit_logs';
+      case 'Job Report': return 'mobile_job_report';
+      case 'FRS Attendance': return 'mobile_frs_attendance';
+      case 'Location Tracking': return 'mobile_location_tracking';
+      case 'FRS Requests': return 'mobile_frs_requests';
+      default: return 'mobile_${title.toLowerCase().replaceAll(' ', '_')}';
+    }
+  }
+
   static List<NavigationModule> getModulesForUser(String? userRole, Map<String, dynamic>? permissions) {
     final normalizedRole = normalizeRole(userRole);
     List<NavigationModule> result = [];
 
     bool checkPermission(NavigationModule m) {
-      if (m.permissionKey == null) return true;
-      // If permission key exists, it must be explicitly true or not false (default true)
-      return permissions?[m.permissionKey] != false;
+      final dynamicKey = _getPermissionKey(m.title);
+      if (permissions != null && permissions.containsKey(dynamicKey)) {
+        return permissions[dynamicKey] == true;
+      }
+      if (m.permissionKey != null) {
+        return permissions?[m.permissionKey] != false;
+      }
+      return m.allowedRoles.contains(normalizedRole);
     }
 
     // 1. Add matching mainNav
     result.addAll(
-      mainNavModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
+      mainNavModules.where((m) => checkPermission(m)),
     );
 
     // 2. Add matching managementNav
     result.addAll(
-      managementNavModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
+      managementNavModules.where((m) => checkPermission(m)),
     );
 
     // 3. Add matching mobile specific
     result.addAll(
-      mobileSpecificModules.where((m) => m.allowedRoles.contains(normalizedRole) && checkPermission(m)),
+      mobileSpecificModules.where((m) => checkPermission(m)),
     );
 
     return result;

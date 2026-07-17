@@ -297,6 +297,20 @@ class SyncAllUsersView(APIView):
             return Response({'error': data['error']}, status=status_code)
 
         results = data.get('results', [])
+        
+        # Extract and cache unique projects list
+        unique_projects = {}
+        for item in results:
+            proj = item.get('project', {})
+            if proj and isinstance(proj, dict):
+                name = proj.get('name')
+                code = proj.get('code')
+                if name and code:
+                    unique_projects[code] = {"name": name, "code": code}
+        if unique_projects:
+            from django.core.cache import cache
+            cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+
         created_count = 0
         
         role_name = 'Employee'
@@ -358,6 +372,7 @@ class SyncUsersPageView(APIView):
             safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
             safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
             safe_cache_delete('UNIQUE_PROJECTS_LIST')
+            safe_cache_delete('TEMP_SYNC_PROJECTS')
             safe_cache_delete('EXTERNAL_ROLES_LIST')
             safe_cache_delete('position_to_employee_codes_map')
             safe_cache_delete('user_position_identifiers')
@@ -372,6 +387,19 @@ class SyncUsersPageView(APIView):
             return Response({'error': data['error']}, status=status_code)
 
         results = data.get('results', [])
+        
+        # Accumulate projects for this page
+        from api_management.services import safe_cache_get, safe_cache_set
+        temp_projects = safe_cache_get('TEMP_SYNC_PROJECTS') or {}
+        for item in results:
+            proj = item.get('project', {})
+            if proj and isinstance(proj, dict):
+                name = proj.get('name')
+                code = proj.get('code')
+                if name and code:
+                    temp_projects[code] = {"name": name, "code": code}
+        safe_cache_set('TEMP_SYNC_PROJECTS', temp_projects, 3600)
+
         created_count = 0
         
         role_name = 'Employee'
@@ -430,6 +458,13 @@ class SyncUsersPageView(APIView):
         page_size = 20
         total_pages = math.ceil(total_count / page_size) if total_count else 1
         if int(page) >= total_pages:
+            # Save accumulated projects to UNIQUE_PROJECTS_LIST cache
+            temp_projects = safe_cache_get('TEMP_SYNC_PROJECTS') or {}
+            if temp_projects:
+                from django.core.cache import cache
+                cache.set('UNIQUE_PROJECTS_LIST', list(temp_projects.values()), 30 * 86400)
+            safe_cache_delete('TEMP_SYNC_PROJECTS')
+
             import threading
             from api_management.services import _bg_refresh_global_employee_cache
             # Trigger background refresh of the cache so it's fully populated and fresh
@@ -786,6 +821,29 @@ class SyncEmployeeCacheView(APIView):
             data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
             if "error" in data:
                 return Response({"error": data["error"]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Extract list of employees from api response
+            employees = data.get("results", []) if isinstance(data, dict) else []
+            if employees:
+                # Extract and cache unique projects list
+                unique_projects = {}
+                for item in employees:
+                    proj = item.get('project', {})
+                    if proj and isinstance(proj, dict):
+                        name = proj.get('name')
+                        code = proj.get('code')
+                        if name and code:
+                            unique_projects[code] = {"name": name, "code": code}
+                if unique_projects:
+                    from django.core.cache import cache
+                    cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+
+                try:
+                    from core.views import sync_roles_from_employees
+                    sync_roles_from_employees(employees)
+                except Exception as ex:
+                    print(f"Error executing sync_roles_from_employees: {ex}")
+                    
             return Response({"status": "success", "message": "Employee cache successfully synchronized from external API."})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

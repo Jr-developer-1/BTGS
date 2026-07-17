@@ -365,17 +365,6 @@ const TravelReports = () => {
 
     // Projects list fetching
     const fetchProjects = async () => {
-        const cached = sessionStorage.getItem('tgs_login_history_projects');
-        if (cached) {
-            try {
-                const parsed = JSON.parse(cached);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    setProjects(parsed);
-                    return;
-                }
-            } catch (_) {}
-        }
-
         setProjectsLoading(true);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -387,7 +376,6 @@ const TravelReports = () => {
             const data = response.data.results || response.data;
             const list = Array.isArray(data) ? data : [];
             setProjects(list);
-            sessionStorage.setItem('tgs_login_history_projects', JSON.stringify(list));
         } catch (error) {
             clearTimeout(timeoutId);
             console.error("Failed to fetch projects for filter:", error);

@@ -13,17 +13,7 @@ class UserSerializer(serializers.ModelSerializer):
     available_positions = serializers.SerializerMethodField()
     
     def get_role_permissions(self, obj):
-        if not obj.role:
-            return {}
-        
-        # Priority: Role from API > Designation from API > Default local role
-        role_from_api = obj.role_from_api
-        designation = obj.designation
-        
-        matching_role = Role.objects.filter(Q(name__iexact=role_from_api) | Q(name__iexact=designation)).first()
-        if matching_role:
-            return matching_role.permissions
-        return obj.role.permissions
+        return obj.role_permissions
 
     def get_available_positions(self, obj):
         return obj.get_available_positions()

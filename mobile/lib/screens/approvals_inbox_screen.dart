@@ -1061,7 +1061,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                     : const Color(0xFFF59E0B)));
 
     final bool isClaim =
-        task['type']?.toString().toLowerCase().contains('claim') == true;
+        task['type']?.toString().toLowerCase().contains('claim') == true ||
+        task['id']?.toString().toUpperCase().startsWith('CLAIM-') == true;
 
     Color cardBg = Colors.white;
     Color cardBorder = const Color(0xFFF1F5F9);
@@ -1222,22 +1223,23 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                         ),
                       ],
                     ),
-                    Text(
-                      (task['details']?['executive_approved_amount'] != null &&
-                              double.tryParse(
-                                    task['details']?['executive_approved_amount']
-                                            .toString() ??
-                                        '0',
-                                  )! >
-                                  0)
-                          ? '₹${NumberFormat('#,##,###.##').format(double.parse(task['details']['executive_approved_amount'].toString()))}'
-                          : (task['cost'] ?? '₹0'),
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: accentColor,
+                    if (isClaim)
+                      Text(
+                        (task['details']?['executive_approved_amount'] != null &&
+                                double.tryParse(
+                                      task['details']?['executive_approved_amount']
+                                              .toString() ??
+                                          '0',
+                                    )! >
+                                    0)
+                            ? '₹${NumberFormat('#,##,###.##').format(double.parse(task['details']['executive_approved_amount'].toString()))}'
+                            : (task['cost'] ?? '₹0'),
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: accentColor,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ],
@@ -1651,7 +1653,8 @@ class _ApprovalsInboxScreenState extends State<ApprovalsInboxScreen>
                             },
                           ),
                           const SizedBox(height: 12),
-                          if ((task['cost'] ?? '').toString().isNotEmpty &&
+                          if (isClaim &&
+                              (task['cost'] ?? '').toString().isNotEmpty &&
                               task['cost'] != '—' &&
                               task['cost'] != '0')
                             Text(
@@ -3503,6 +3506,12 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
 
   bool get canEditAmount => (widget.task['details']?['permissions']?['can_edit_amount'] ?? widget.task['permissions']?['can_edit_amount']) == true;
 
+  bool get isClaim {
+    final type = widget.task['type']?.toString().toLowerCase();
+    final id = widget.task['id']?.toString().toUpperCase();
+    return (type?.contains('claim') == true) || (id?.startsWith('CLAIM-') == true);
+  }
+
   // allowance compliance state
   Map<String, dynamic>? allowanceData;
   bool allowanceLoading = false;
@@ -4216,9 +4225,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                 ],
                 _buildInfoGrid(task),
                 // Dynamic Finance Editing: Show edit field if permission is granted from Admin configuration
-                if (widget.task['permissions']?['can_edit_amount'] == true ||
-                    widget.task['details']?['permissions']?['can_edit_amount'] ==
-                        true) ...[
+                if (isClaim &&
+                    (widget.task['permissions']?['can_edit_amount'] == true ||
+                     widget.task['details']?['permissions']?['can_edit_amount'] ==
+                         true)) ...[
                   const SizedBox(height: 32),
                   Text(
                     'Audit Finalization (Edit Amount)',
@@ -4406,9 +4416,10 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
                       color: const Color(0xFF94A3B8),
                     ),
                   ),
-                ] else if ((widget.task['executive_approved_amount'] ??
+                ] else if (isClaim &&
+                    ((widget.task['executive_approved_amount'] ??
                         widget.task['details']?['executive_approved_amount']) !=
-                    null) ...[
+                    null)) ...[
                   const SizedBox(height: 32),
                   Container(
                     padding: const EdgeInsets.all(16),
@@ -4869,12 +4880,16 @@ class _TaskDetailsContentState extends State<_TaskDetailsContent> {
     final bool canEdit = (widget.task['details']?['permissions']?['can_edit_amount'] ??
         widget.task['permissions']?['can_edit_amount']) == true;
 
-    if (canEdit) {
-      approveLabel = 'Verify & Approve (₹$execAmount)';
-    } else if (isFinanceHead || isFinanceExec) {
-      approveLabel = 'Authorize Payment (₹$execAmount)';
-    } else if (isBulk) {
-      approveLabel = 'Authorize Valid Entries';
+    if (isClaim) {
+      if (canEdit) {
+        approveLabel = 'Verify & Approve (₹$execAmount)';
+      } else if (isFinanceHead || isFinanceExec) {
+        approveLabel = 'Authorize Payment (₹$execAmount)';
+      } else if (isBulk) {
+        approveLabel = 'Authorize Valid Entries';
+      } else {
+        approveLabel = 'Approve';
+      }
     } else {
       approveLabel = 'Approve';
     }

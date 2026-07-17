@@ -196,28 +196,159 @@ class User(models.Model):
         if base_role.lower() == 'admin':
             return 'Admin'
 
-        # 2. Extract context from active position designation/role
+        # 2. If the user is assigned a specific custom role in the database (not generic Employee), prioritize it
+        if base_role and base_role.lower() != 'employee':
+            return base_role
+
+        # 3. Dynamic custom role check from API (for users with default 'Employee' role in database)
+        if self.role_from_api:
+            db_role = Role.objects.filter(name__iexact=self.role_from_api.strip()).first()
+            if db_role:
+                return db_role.name
+
+        # 4. Extract context from active position designation/role (default keyword match mapping)
         desig = (self.designation or '').lower()
         role_api = (self.role_from_api or '').lower()
         dept = (self.department or '').lower()
 
         # CFO
-        if 'cfo' in desig or 'cfo' in role_api or base_role.lower() == 'cfo':
+        if 'cfo' in desig or 'cfo' in role_api:
             return 'CFO'
 
         # Finance
-        if 'finance' in desig or 'finance' in role_api or 'finance' in dept or base_role.lower() == 'finance':
+        if 'finance' in desig or 'finance' in role_api or 'finance' in dept:
             return 'Finance'
 
         # HR
-        if 'hr' in desig or 'hr' in role_api or 'hr' in dept or 'human resource' in desig or 'human resource' in dept or base_role.lower() == 'hr':
+        if 'hr' in desig or 'hr' in role_api or 'hr' in dept or 'human resource' in desig or 'human resource' in dept:
             return 'HR'
 
         # Guest House Manager
-        if 'guesthouse' in desig or 'guesthouse' in role_api or 'facility' in desig or base_role.lower() == 'guesthousemanager':
+        if 'guesthouse' in desig or 'guesthouse' in role_api or 'facility' in desig:
             return 'GuestHouseManager'
 
         return base_role
+
+    @property
+    def role_permissions(self):
+        from django.db.models import Q
+        role_name = self.active_role
+        
+        # 1. Try to find Role object matching active_role name (case-insensitive)
+        matching_role = Role.objects.filter(name__iexact=role_name).first()
+        if not matching_role:
+            # Fallback: try role_from_api or designation
+            role_from_api = self.role_from_api
+            designation = self.designation
+            matching_role = Role.objects.filter(Q(name__iexact=role_from_api) | Q(name__iexact=designation)).first()
+            
+        if not matching_role:
+            matching_role = self.role
+
+        db_permissions = matching_role.permissions if matching_role else {}
+        if not isinstance(db_permissions, dict):
+            db_permissions = {}
+
+        # 2. Compute defaults
+        defaults = {}
+        r = (role_name or '').lower()
+        import re
+        normalized = re.sub(r'[^a-z0-9_]', '', r)
+        
+        if 'admin' in r:
+            mapped_role = 'admin'
+        elif 'finance' in r:
+            mapped_role = 'finance'
+        elif 'hr' in r or 'human resource' in r:
+            mapped_role = 'hr'
+        elif 'cfo' in r:
+            mapped_role = 'cfo'
+        elif 'guesthouse' in r or r == 'guesthousemanager' or 'cro' in normalized:
+            mapped_role = 'guesthousemanager'
+        elif any(x in normalized for x in ['reporting', 'manager', 'supervisor', 'lead', 'director', 'head', 'approver', 'officer', 'authority']):
+            mapped_role = 'reporting_authority'
+        elif 'management' in normalized or 'mgmt' in normalized:
+            mapped_role = 'management'
+        elif any(x in normalized for x in ['employee', 'oe', 'staff']):
+            mapped_role = 'employee'
+        else:
+            mapped_role = normalized
+
+        # Web modules pathMap
+        web_map = {
+            'web_dashboard': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'web_my_trips': ['employee', 'reporting_authority', 'finance', 'admin'],
+            'web_inbox': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'web_outbox': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'web_claim_report': ['hr', 'finance', 'admin'],
+            'web_trip_travel_reports': ['hr', 'finance', 'admin'],
+            'web_finance_hub': ['finance', 'admin'],
+            'web_job_report': ['employee', 'reporting_authority', 'admin'],
+            'web_settlements': ['finance', 'admin'],
+            'web_documents': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'],
+            'web_system_policy': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'],
+            'web_user_management': ['admin'],
+            'web_role_permissions': ['admin'],
+            'web_finance_workflow': ['admin'],
+            'web_hr_positions': ['admin'],
+            'web_coo_positions': ['admin'],
+            'web_room_requests': ['admin', 'cfo', 'guesthousemanager'],
+            'web_vehicle_requests': ['admin', 'guesthousemanager'],
+            'web_api_management': ['admin'],
+            'web_route_masters': ['admin'],
+            'web_fuel_master': ['admin'],
+            'web_master_management': ['admin'],
+            'web_help_support': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'web_login_history': ['admin'],
+            'web_audit_logs': ['admin'],
+            'web_app_version_config': ['admin']
+        }
+
+        # Mobile modules mobileMap
+        mobile_map = {
+            'mobile_trips': ['employee', 'reporting_authority', 'finance', 'admin'],
+            'mobile_inbox': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'mobile_outbox': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'mobile_finance_hub': ['finance', 'admin'],
+            'mobile_settlements': ['finance', 'admin'],
+            'mobile_documents': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'],
+            'mobile_system_policy': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'],
+            'mobile_cfo_room': ['cfo', 'admin'],
+            'mobile_user_management': ['admin'],
+            'mobile_guest_houses': ['admin', 'cfo', 'guesthousemanager'],
+            'mobile_fleet_management': ['admin', 'guesthousemanager'],
+            'mobile_api_management': ['admin'],
+            'mobile_fuel_masters': ['admin'],
+            'mobile_master_management': ['admin'],
+            'mobile_admin_masters': ['admin'],
+            'mobile_location_codes': ['admin', 'finance'],
+            'mobile_route_masters': ['admin'],
+            'mobile_login_history': ['admin'],
+            'mobile_audit_logs': ['admin'],
+            'mobile_job_report': ['employee', 'reporting_authority', 'admin'],
+            'mobile_frs_attendance': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'mobile_location_tracking': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager'],
+            'mobile_frs_requests': ['employee', 'reporting_authority', 'finance', 'admin', 'cfo', 'guesthousemanager']
+        }
+
+        # Merge defaults
+        for k, allowed in web_map.items():
+            defaults[k] = mapped_role in allowed
+        for k, allowed in mobile_map.items():
+            defaults[k] = mapped_role in allowed
+
+        # Override defaults with explicitly set database permissions if dynamic permissions are enabled
+        from api_management.models import SystemConfig
+        config = SystemConfig.objects.filter(key='use_dynamic_role_permissions').first()
+        use_dynamic = config.value.lower() == 'true' if config else True
+
+        if not use_dynamic:
+            return defaults
+
+        merged = {}
+        merged.update(defaults)
+        merged.update(db_permissions)
+        return merged
 
     @property
     def name(self):

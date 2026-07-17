@@ -114,7 +114,11 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
     // Refresh profile in background to catch any position changes
     try {
       _apiService.fetchFreshUser().then((_) {
-        if (mounted) _initializeModules();
+        if (mounted) {
+          setState(() {
+            _initializeModules();
+          });
+        }
       });
     } catch (e) {
       debugPrint('INIT_SAFE_PROFILE_REFRESH: $e');
@@ -306,8 +310,10 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
     final desig = user?['designation']?.toString();
     final permissions = user?['role_permissions'] as Map<String, dynamic>?;
 
+    final currentRole = user?['role']?.toString() ?? widget.userRole;
+
     _refinedRole = ModuleConstants.normalizeRole(
-      widget.userRole,
+      currentRole,
       dept: dept,
       desig: desig,
     );
@@ -515,7 +521,11 @@ class _RoleBasedDashboardState extends State<RoleBasedDashboard> {
       onRefresh: () async {
         try {
           await _apiService.fetchFreshUser();
-          if (mounted) _initializeModules(); // Re-sync modules if role changed
+          if (mounted) {
+            setState(() {
+              _initializeModules(); // Re-sync modules if role changed
+            });
+          }
         } catch (e) {
           debugPrint('Profile refresh failed: $e');
         }

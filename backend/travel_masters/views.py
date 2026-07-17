@@ -151,7 +151,7 @@ class LocationViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def sync(self, request):
-        stats = sync_geo_locations()
+        stats = sync_geo_locations(force_fresh=True)
         return Response(stats)
 
 class RouteViewSet(viewsets.ModelViewSet):

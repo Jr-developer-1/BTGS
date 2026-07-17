@@ -733,6 +733,19 @@ def _bg_refresh_global_employee_cache():
             GLOBAL_EMPLOYEE_CACHE['timestamp'] = now
             GLOBAL_EMPLOYEE_CACHE['data'] = data
             
+            # Extract and cache unique projects list
+            unique_projects = {}
+            for item in data:
+                proj = item.get('project', {})
+                if proj and isinstance(proj, dict):
+                    name = proj.get('name')
+                    code = proj.get('code')
+                    if name and code:
+                        unique_projects[code] = {"name": name, "code": code}
+            if unique_projects:
+                from django.core.cache import cache
+                cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+
             # Clear position maps & in-memory caches to guarantee fresh recalculation on next access
             CACHE_EMPLOYEE_DATA.clear()
             safe_cache_delete('position_to_employee_codes_map')
@@ -849,24 +862,41 @@ def sync_user_hierarchy(user):
     """
     return None
 
-def fetch_geo_data():
+def fetch_geo_data(force_fresh=False):
     """
     Fetches full hierarchy data from the external Geo API.
     """
+    cache_key = "GEO_HIERARCHY_DATA"
+    fallback_key = "GEO_HIERARCHY_DATA_FALLBACK"
+
+    if not force_fresh:
+        cached_data = safe_cache_get(cache_key)
+        if cached_data:
+            return cached_data
+
     try:
         # Get configured API Key
         if SystemConfig.objects.filter(key='geo_api_key').exists():
             encrypted_key = SystemConfig.objects.get(key='geo_api_key').value
             api_key = decrypt_key(encrypted_key)
             if not api_key:
-                 return {"error": "Failed to decrypt Geo API Key. Please re-type the key in settings.", "status_code": 500}
+                fallback_data = safe_cache_get(fallback_key)
+                if fallback_data:
+                    return fallback_data
+                return {"error": "Failed to decrypt Geo API Key. Please re-type the key in settings.", "status_code": 500}
         else:
+            fallback_data = safe_cache_get(fallback_key)
+            if fallback_data:
+                return fallback_data
             return {"error": "Geo API Key not configured in system settings.", "status_code": 500}
 
         # Get configured API URL
         if SystemConfig.objects.filter(key='geo_api_url').exists():
             api_url = SystemConfig.objects.get(key='geo_api_url').value
         else:
+            fallback_data = safe_cache_get(fallback_key)
+            if fallback_data:
+                return fallback_data
             return {"error": "Geo API URL not configured in system settings."}
             
         headers = {
@@ -891,10 +921,20 @@ def fetch_geo_data():
             print(f"Failed to log geo API call: {log_err}")
 
         response.raise_for_status()
-        return response.json() or {}
+        data = response.json() or {}
+        
+        if data and "error" not in data:
+            safe_cache_set(cache_key, data, timeout=3600)  # Cache for 1 hour
+            safe_cache_set(fallback_key, data, timeout=2592000)  # Persistent fallback for 30 days
+            
+        return data
 
     except requests.exceptions.Timeout as e:
         print(f"Geo API Connection Timed Out: {str(e)}")
+        fallback_data = safe_cache_get(fallback_key)
+        if fallback_data:
+            print("Returning fallback cached geo data.")
+            return fallback_data
         return {"error": "Geo API Connection Timed Out. Please try again later.", "status_code": 408}
     except requests.RequestException as e:
         status_code = getattr(e.response, 'status_code', 'Unknown')
@@ -907,9 +947,19 @@ def fetch_geo_data():
             error_msg = f"Geo API Service Unavailable (Status {status_code})."
             
         print(f"Geo API Connection Error (Status {status_code}): {str(e)}")
+        
+        fallback_data = safe_cache_get(fallback_key)
+        if fallback_data:
+            print("Returning fallback cached geo data.")
+            return fallback_data
+            
         return {"error": error_msg, "status_code": status_code}
     except Exception as e:
         print(f"An unexpected error occurred in Geo API: {str(e)}")
+        fallback_data = safe_cache_get(fallback_key)
+        if fallback_data:
+            print("Returning fallback cached geo data.")
+            return fallback_data
         return {"error": "An unexpected error occurred while fetching location data.", "status_code": 500}
 
 def evict_employee_cache(employee_code):

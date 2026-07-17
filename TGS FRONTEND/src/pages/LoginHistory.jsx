@@ -206,18 +206,6 @@ const LoginHistory = () => {
     const [projectsLoading, setProjectsLoading] = useState(false);
 
     const fetchProjects = async () => {
-        // Check sessionStorage cache first — avoids hitting the slow external API on every page visit
-        const cached = sessionStorage.getItem('tgs_login_history_projects');
-        if (cached) {
-            try {
-                const parsed = JSON.parse(cached);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    setProjects(parsed);
-                    return; // serve from cache, no loading spinner needed
-                }
-            } catch (_) { /* ignore bad cache */ }
-        }
-
         setProjectsLoading(true);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s max
@@ -229,8 +217,6 @@ const LoginHistory = () => {
             const data = response.data.results || response.data;
             const list = Array.isArray(data) ? data : [];
             setProjects(list);
-            // Cache for the rest of this browser session
-            sessionStorage.setItem('tgs_login_history_projects', JSON.stringify(list));
         } catch (error) {
             clearTimeout(timeoutId);
             if (error.name === 'AbortError' || error.code === 'ERR_CANCELED') {

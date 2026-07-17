@@ -109,6 +109,7 @@ const Header = () => {
         { title: 'System Policy', icon: <BookOpen size={18} />, path: '/policy', roles: ['employee', 'reporting_authority', 'finance', 'admin', 'cfo'] },
         // { title: 'CFO Room', icon: <BarChart3 size={18} />, path: '/cfo-war-room', roles: ['cfo', 'admin'] },
         { title: 'User Management', icon: <Users size={18} />, path: '/employees', roles: ['admin'] },
+        { title: 'Role Permissions', icon: <ShieldCheck size={18} />, path: '/role-permissions', roles: ['admin'] },
         { title: 'Finance Workflow', icon: <ShieldCheck size={18} />, path: '/finance-workflow', roles: ['admin'] },
         { title: 'HR Positions', icon: <Users size={18} />, path: '/hr-positions', roles: ['admin'] },
         { title: 'COO Positions', icon: <Settings size={18} />, path: '/coo-positions', roles: ['admin'] },
@@ -125,8 +126,43 @@ const Header = () => {
         { title: 'App Version Config', icon: <Settings size={18} />, path: '/app-version', roles: ['admin'] },
     ];
 
-    const filteredMain = mainNav.filter(item => !item.roles || item.roles.includes(userRole));
-    const filteredManagement = managementNav.filter(item => {
+    const checkPermission = (item) => {
+        // Map paths to permission keys
+        const permissionKeys = {
+            '/': 'web_dashboard',
+            '/trips': 'web_my_trips',
+            '/inbox': 'web_inbox',
+            '/outbox': 'web_outbox',
+            '/claim-report': 'web_claim_report',
+            '/trip-travel-reports': 'web_trip_travel_reports',
+            '/finance': 'web_finance_hub',
+            '/job-report': 'web_job_report',
+            '/settlement': 'web_settlements',
+            '/documents': 'web_documents',
+            '/policy': 'web_system_policy',
+            '/employees': 'web_user_management',
+            '/role-permissions': 'web_role_permissions',
+            '/finance-workflow': 'web_finance_workflow',
+            '/hr-positions': 'web_hr_positions',
+            '/coo-positions': 'web_coo_positions',
+            '/guesthouse': 'web_room_requests',
+            '/fleet': 'web_vehicle_requests',
+            '/api-management': 'web_api_management',
+            '/route-management': 'web_route_masters',
+            '/fuel-master': 'web_fuel_master',
+            '/master-management': 'web_master_management',
+            '/help': 'web_help_support',
+            '/login-history': 'web_login_history',
+            '/audit-logs': 'web_audit_logs',
+            '/app-version': 'web_app_version_config'
+        };
+
+        const key = permissionKeys[item.path];
+        if (key && user?.role_permissions && user.role_permissions[key] !== undefined) {
+            return !!user.role_permissions[key];
+        }
+
+        // Fallbacks
         if (item.path === '/trip-travel-reports') {
             return !!user?.can_view_reports;
         }
@@ -135,7 +171,10 @@ const Header = () => {
         }
         if (item.roles && !item.roles.includes(userRole)) return false;
         return true;
-    });
+    };
+
+    const filteredMain = mainNav.filter(item => checkPermission(item));
+    const filteredManagement = managementNav.filter(item => checkPermission(item));
 
     return (
         <header className="header">

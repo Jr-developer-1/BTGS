@@ -105,8 +105,8 @@ const UserManagement = () => {
                     const uCode = String(u.employee_id || u.username || '').toLowerCase();
                     return uCode && uCode === code;
                 });
-                return { 
-                    ...emp, 
+                return {
+                    ...emp,
                     isUser: !!matchedUser,
                     password: matchedUser ? matchedUser.password : null
                 };

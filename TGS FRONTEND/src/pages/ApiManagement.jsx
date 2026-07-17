@@ -673,7 +673,7 @@ const ApiManagement = () => {
                                         disabled={isSyncing}
                                     >
                                         {syncSuccess ? <CheckCircle2 size={18} /> : <RefreshCw className={isSyncing ? "animate-spin" : ""} size={18} />}
-                                        <span>{isSyncing ? 'Syncing...' : syncSuccess ? 'Sync Completed' : 'Sync Cache Now'}</span>
+                                        <span>{isSyncing ? 'Syncing...' : syncSuccess ? 'Sync Completed' : 'Sync Data'}</span>
                                     </button>
                                 </div>
 

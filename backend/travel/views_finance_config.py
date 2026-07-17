@@ -353,9 +353,26 @@ class COOProjectSettingViewSet(viewsets.ViewSet):
             for s in COOProjectSetting.objects.all()
         }
         
+        # Get active project codes from employee cache
+        from django.core.cache import cache
+        api_project_codes = set()
+        for item in global_data:
+            proj = item.get('project', {}) or {}
+            proj_code = proj.get('code')
+            if proj_code and proj_code != 'N/A':
+                api_project_codes.add(proj_code)
+                
+        # Also check UNIQUE_PROJECTS_LIST cache
+        unique_projects_cached = cache.get('UNIQUE_PROJECTS_LIST') or []
+        for p in unique_projects_cached:
+            if isinstance(p, dict) and p.get('code') and p.get('code') != 'N/A':
+                api_project_codes.add(p.get('code'))
+
         # Merge
         results = []
         for d in detected:
+            if api_project_codes and d['project_code'] not in api_project_codes:
+                continue
             key = (d['project_code'], d['coo_position_id'])
             # Fetch toggle from DB, default to False
             enabled = db_settings.get(key, False)
@@ -371,6 +388,9 @@ class COOProjectSettingViewSet(viewsets.ViewSet):
         # Also include any settings stored in DB that might not have active users in the current cache scan
         for key, enabled in db_settings.items():
             if key not in seen:
+                # Filter by active API project codes if available
+                if api_project_codes and key[0] not in api_project_codes:
+                    continue
                 # Find matching config details if we can or just display
                 db_item = COOProjectSetting.objects.filter(project_code=key[0], coo_position_id=key[1]).first()
                 if db_item:

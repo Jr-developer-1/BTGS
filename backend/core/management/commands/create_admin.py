@@ -7,7 +7,7 @@ class Command(BaseCommand):
     help = 'Seeds initial roles and admin user'
 
     def handle(self, *args, **kwargs):
-        roles = ['Admin', 'Employee', 'Finance', 'GuestHouseManager']
+        roles = ['Admin', 'Employee', 'Finance', 'GuestHouseManager', 'HR', 'CFO']
         for role_name in roles:
             Role.objects.get_or_create(name=role_name)                              
         
