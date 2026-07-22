@@ -677,7 +677,7 @@ const TravelStory = () => {
                                                                             );
                                                                         });
                                                                     }
-                                                                } catch (e) {}
+                                                                } catch (e) { }
                                                                 return null;
                                                             })()}
 

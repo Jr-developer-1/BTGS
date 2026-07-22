@@ -1430,53 +1430,50 @@ class RoleViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         try:
-            from api_management.services import safe_cache_get, fetch_employee_data
+            from django.core.cache import cache
+            from api_management.services import safe_cache_get
             
-            # Fetch global employee list from cache or API
+            cache_key = 'ROLES_LIST_CACHE'
+            cached_roles = cache.get(cache_key)
+            if cached_roles:
+                return Response(cached_roles)
+
+            # Ensure default system roles exist in DB
+            system_roles = ['Admin', 'Employee', 'Finance', 'GuestHouseManager', 'HR', 'CFO']
+            for r in system_roles:
+                Role.objects.get_or_create(name=r)
+
+            # Fast memory cache lookup for employee data (if already warm, sync role names non-blockingly)
             employees = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
-            if not employees:
-                resp = fetch_employee_data(fetch_all_pages=True)
-                if resp and not resp.get('error'):
-                    employees = resp.get('results', [])
-            
             if employees:
                 sync_roles_from_employees(employees)
                 
-            # Filter returned roles to only active ones from API, defaults, or custom configured ones
-            from django.db.models import Q
-            custom_configured_roles = Role.objects.exclude(Q(permissions={}) | Q(permissions__isnull=True)).values_list('name', flat=True)
-            
-            unique_names = set(['Admin', 'Employee', 'Finance', 'GuestHouseManager', 'HR', 'CFO'])
-            for r in custom_configured_roles:
-                unique_names.add(r)
-                
-            if employees:
-                for emp in employees:
-                    for pos in emp.get('positions_details', []):
-                        role_name = pos.get('role_name')
-                        if role_name:
-                            role_name_clean = role_name.strip()
-                            if role_name_clean and not any(ind in role_name_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
-                                unique_names.add(role_name_clean)
-                                
-                    pos_info = emp.get('position') or {}
-                    role_top = pos_info.get('role_name')
-                    if role_top:
-                        role_top_clean = role_top.strip()
-                        if role_top_clean and not any(ind in role_top_clean.lower() for ind in ['ap-', 'ap_', '@', ' - ', '104', '1962', 'mmu', 'mvu']):
-                            unique_names.add(role_top_clean)
-                            
-            queryset = self.filter_queryset(self.get_queryset()).filter(name__in=list(unique_names))
+            queryset = self.filter_queryset(self.get_queryset()).order_by('id')
             serializer = self.get_serializer(queryset, many=True)
-            return Response(serializer.data)
+            data = serializer.data
+            cache.set(cache_key, data, 86400) # Cache for 24 hours
+            return Response(data)
         except Exception as e:
-            print(f"Error syncing roles in RoleViewSet.list: {e}")
+            print(f"Error in RoleViewSet.list: {e}")
             return super().list(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        from django.core.cache import cache
+        serializer.save()
+        cache.delete('ROLES_LIST_CACHE')
+
+    def perform_update(self, serializer):
+        from django.core.cache import cache
+        serializer.save()
+        cache.delete('ROLES_LIST_CACHE')
 
     def destroy(self, request, *args, **kwargs):
         from django.db.models.deletion import ProtectedError
+        from django.core.cache import cache
         try:
-            return super().destroy(request, *args, **kwargs)
+            res = super().destroy(request, *args, **kwargs)
+            cache.delete('ROLES_LIST_CACHE')
+            return res
         except ProtectedError as e:
             referencing_users = list(e.protected_objects)
             user_names = [f"{u.name}" for u in referencing_users[:5]]
