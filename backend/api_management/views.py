@@ -15,6 +15,56 @@ from django.db.models import Avg
 from django.core.mail import send_mail
 from django.conf import settings
 
+def promote_active_position(data, request):
+    active_position_id = request.headers.get('X-Active-Position-Id') or (
+        request.custom_user.active_position_id if hasattr(request, 'custom_user') and request.custom_user else None
+    )
+    if active_position_id and isinstance(data, dict) and "results" in data:
+        active_pos_str = str(active_position_id).strip()
+        user_emp_id = request.custom_user.employee_id if hasattr(request, 'custom_user') and request.custom_user else None
+        
+        for item in data.get('results', []):
+            emp_code = item.get('employee', {}).get('employee_code')
+            if emp_code and user_emp_id and str(emp_code).strip().lower() == str(user_emp_id).strip().lower():
+                pos_details = item.get('positions_details', []) or []
+                active_pos_obj = None
+                for p in pos_details:
+                    if str(p.get('id')).strip() == active_pos_str:
+                        active_pos_obj = p
+                        break
+                if active_pos_obj:
+                    item['position'] = active_pos_obj
+                    other_pos = [p for p in pos_details if str(p.get('id')).strip() != active_pos_str]
+                    item['positions_details'] = [active_pos_obj] + other_pos
+                    
+                    # Dynamically set root project object from active position project name
+                    proj_name = active_pos_obj.get('project_name') or active_pos_obj.get('project')
+                    if proj_name:
+                        from django.core.cache import cache as django_cache
+                        unique_projs = django_cache.get('UNIQUE_PROJECTS_LIST') or []
+                        proj_code = None
+                        for p in unique_projs:
+                            if str(p.get('name')).strip().lower() == str(proj_name).strip().lower():
+                                proj_code = p.get('code')
+                                break
+                        if not proj_code:
+                            import re
+                            if '104' in proj_name:
+                                proj_code = 'AP-104-MMUS'
+                            elif '1962' in proj_name:
+                                proj_code = 'AP-1962-MVU'
+                            elif '108' in proj_name:
+                                proj_code = 'AP-108'
+                            else:
+                                num_match = re.search(r'(\d+)', proj_name)
+                                proj_code = f"PROJ-{num_match.group(1)}" if num_match else proj_name[:6].upper()
+                                
+                        item['project'] = {
+                            'name': proj_name,
+                            'code': proj_code
+                        }
+    return data
+
 class EmployeeListView(APIView):
     permission_classes = [IsCustomAuthenticated]
 
@@ -41,6 +91,7 @@ class EmployeeListView(APIView):
             status_code = data.get("status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
             return Response({"error": data["error"]}, status=status_code)
             
+        data = promote_active_position(data, request)
         return Response(data)
 
 class EmployeeDropdownView(APIView):
@@ -80,6 +131,7 @@ class EmployeeDropdownView(APIView):
                 "count": 0
             }, status=status.HTTP_200_OK) # Return 200 so frontend can handle it gracefully
             
+        data = promote_active_position(data, request)
         results = []
         for item in data.get('results', []):
             emp = item.get('employee', {})

@@ -62,6 +62,11 @@ class _MyTripsScreenState extends State<MyTripsScreen> {
       _hasMore = true;
     });
     try {
+      try {
+        await _apiService.fetchFreshUser();
+      } catch (e) {
+        debugPrint("Silent refresh of user permissions failed: $e");
+      }
       final trips = await _tripService.fetchTrips(
         search: _searchTerm,
         page: _currentPage,

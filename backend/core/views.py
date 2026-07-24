@@ -582,11 +582,10 @@ def switch_position_view(request):
             'active_position_id': str(position_id),
             'exp': expiration
         }
-        new_token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
-        
         if session:
-            session.token = new_token
-            session.save()
+            new_token = session.token
+        else:
+            new_token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
         
         # Force refresh properties by clearing cache
         from api_management.services import evict_employee_cache
@@ -841,11 +840,17 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
         end_date_str = request.query_params.get('end_date')
         search_query = request.query_params.get('search', '')
 
-        # Base querysets
-        history_qs = LoginHistory.objects.all().select_related('user')
+        # Base querysets excluding static system accounts (since they are not employees)
+        static_system_ids = ['admin', 'admin001', 'admino01', 'hr', 'guesthousemanager', 'finance', 'cfo']
+        exclude_ids = []
+        for sid in static_system_ids:
+            exclude_ids.extend([sid.lower(), sid.upper(), sid.capitalize()])
+        exclude_ids = list(set(exclude_ids))
+
+        history_qs = LoginHistory.objects.exclude(user__employee_id__in=exclude_ids).select_related('user')
         bulk_trip_ids = BulkActivityBatch.all_objects.values_list('trip_id', flat=True).distinct()
-        trip_qs = Trip.objects.exclude(trip_id__in=bulk_trip_ids).select_related('user')
-        batch_qs = BulkActivityBatch.objects.all().select_related('user')
+        trip_qs = Trip.objects.exclude(trip_id__in=bulk_trip_ids).exclude(user__employee_id__in=exclude_ids).select_related('user')
+        batch_qs = BulkActivityBatch.objects.exclude(user__employee_id__in=exclude_ids).select_related('user')
 
         if not is_privileged:
             history_qs = history_qs.filter(user=user)
@@ -926,7 +931,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
                 if isinstance(item, dict):
                     emp = item.get('employee', {})
                     code = emp.get('employee_code')
-                    if code and code not in emp_codes:
+                    if code and code.lower() not in static_system_ids and code not in emp_codes:
                         emp_codes.append(code)
 
         if project_code and project_code != 'All':
@@ -948,7 +953,7 @@ class LoginHistoryViewSet(viewsets.ReadOnlyModelViewSet):
 
                         if match:
                             code = emp.get('employee_code')
-                            if code:
+                            if code and code.lower() not in static_system_ids:
                                 project_emp_codes.append(code)
             history_qs = history_qs.filter(user__employee_id__in=project_emp_codes)
             trip_qs = trip_qs.filter(user__employee_id__in=project_emp_codes)

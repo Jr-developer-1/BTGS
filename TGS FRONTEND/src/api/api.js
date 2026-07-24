@@ -55,8 +55,12 @@ api.interceptors.response.use((response) => {
             if (!error.config.url.includes('/auth/login')) {
                 console.warn("Session expired or unauthorized. Logging out...");
                 sessionStorage.removeItem('tgs_user');
-                if (window.location.pathname !== '/' && window.location.pathname !== '/login') {
-                    window.location.href = '/';
+                const pathParts = window.location.pathname.split('/');
+                const isSubpath = pathParts.length > 2 && pathParts[1] !== 'login';
+                const baseAppPath = isSubpath ? `/${pathParts[1]}` : '';
+                
+                if (window.location.pathname !== `${baseAppPath}/` && window.location.pathname !== `${baseAppPath}/login`) {
+                    window.location.href = `${baseAppPath}/`;
                 }
             }
         }
