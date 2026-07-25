@@ -74,6 +74,40 @@ const ApiManagement = () => {
         fetchKeys();
         fetchEndpoints();
         fetchConfig();
+
+        // Check if there is an active background sync running
+        const checkActiveSync = async () => {
+            try {
+                const statusRes = await api.get('/api/employees/sync-cache/');
+                if (statusRes.data.status === 'running') {
+                    setIsSyncing(true);
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const innerRes = await api.get('/api/employees/sync-cache/');
+                            const innerStatus = innerRes.data.status;
+                            if (innerStatus === 'success') {
+                                clearInterval(pollInterval);
+                                setIsSyncing(false);
+                                setSyncSuccess(true);
+                                showToast("Employee cache successfully synchronized from external API.", "success");
+                                setTimeout(() => setSyncSuccess(false), 3000);
+                            } else if (innerStatus.startsWith('failed:')) {
+                                clearInterval(pollInterval);
+                                setIsSyncing(false);
+                                const errMsg = innerStatus.replace('failed:', '');
+                                setError(errMsg);
+                                showToast(`Sync failed: ${errMsg}`, "error");
+                            }
+                        } catch (pollErr) {
+                            console.error("Error polling sync status:", pollErr);
+                        }
+                    }, 3000);
+                }
+            } catch (err) {
+                console.error("Error checking active sync:", err);
+            }
+        };
+        checkActiveSync();
     }, []);
 
     const fetchConfig = async () => {
@@ -160,15 +194,35 @@ const ApiManagement = () => {
         setError(null);
         try {
             await api.post('/api/employees/sync-cache/');
-            setSyncSuccess(true);
-            showToast("Employee cache successfully synchronized from external API.", "success");
-            setTimeout(() => setSyncSuccess(false), 3000);
+            showToast("Employee cache synchronization started in background.", "info");
+            
+            // Poll for status
+            const pollInterval = setInterval(async () => {
+                try {
+                    const statusRes = await api.get('/api/employees/sync-cache/');
+                    const status = statusRes.data.status;
+                    if (status === 'success') {
+                        clearInterval(pollInterval);
+                        setIsSyncing(false);
+                        setSyncSuccess(true);
+                        showToast("Employee cache successfully synchronized from external API.", "success");
+                        setTimeout(() => setSyncSuccess(false), 3000);
+                    } else if (status.startsWith('failed:')) {
+                        clearInterval(pollInterval);
+                        setIsSyncing(false);
+                        const errMsg = status.replace('failed:', '');
+                        setError(errMsg);
+                        showToast(`Sync failed: ${errMsg}`, "error");
+                    }
+                } catch (pollErr) {
+                    console.error("Error polling sync status:", pollErr);
+                }
+            }, 3000);
         } catch (err) {
             console.error("Failed to sync employee cache:", err);
             const errMsg = err.response?.data?.error || "Failed to sync employee cache.";
             setError(errMsg);
             showToast(errMsg, "error");
-        } finally {
             setIsSyncing(false);
         }
     };

@@ -882,41 +882,64 @@ class GeoHierarchyView(APIView):
             return Response(data, status=status_code)
         return Response(data)
 
+import threading
+from django.core.cache import cache
+
+def _run_employee_sync_task():
+    from .services import fetch_employee_data
+    try:
+        cache.set('EMPLOYEE_SYNC_STATUS', 'running', 3600)
+        data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
+        if not data or "error" in data:
+            err_msg = data.get("error") if data else "Empty response received"
+            cache.set('EMPLOYEE_SYNC_STATUS', f'failed: {err_msg}', 3600)
+            return
+        
+        employees = data.get("results", []) if isinstance(data, dict) else []
+        if employees:
+            unique_projects = {}
+            for item in employees:
+                proj = item.get('project', {})
+                if proj and isinstance(proj, dict):
+                    name = proj.get('name')
+                    code = proj.get('code')
+                    if name and code:
+                        unique_projects[code] = {"name": name, "code": code}
+            if unique_projects:
+                cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+
+            try:
+                from core.views import sync_roles_from_employees
+                sync_roles_from_employees(employees)
+            except Exception as ex:
+                print(f"Error executing sync_roles_from_employees: {ex}")
+                
+        cache.set('EMPLOYEE_SYNC_STATUS', 'success', 3600)
+    except Exception as e:
+        cache.set('EMPLOYEE_SYNC_STATUS', f'failed: {str(e)}', 3600)
+
 class SyncEmployeeCacheView(APIView):
     permission_classes = [IsAdmin]
 
-    def post(self, request):
-        from .services import fetch_employee_data
-        try:
-            data = fetch_employee_data(fetch_all_pages=True, force_fresh=True)
-            if "error" in data:
-                return Response({"error": data["error"]}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            # Extract list of employees from api response
-            employees = data.get("results", []) if isinstance(data, dict) else []
-            if employees:
-                # Extract and cache unique projects list
-                unique_projects = {}
-                for item in employees:
-                    proj = item.get('project', {})
-                    if proj and isinstance(proj, dict):
-                        name = proj.get('name')
-                        code = proj.get('code')
-                        if name and code:
-                            unique_projects[code] = {"name": name, "code": code}
-                if unique_projects:
-                    from django.core.cache import cache
-                    cache.set('UNIQUE_PROJECTS_LIST', list(unique_projects.values()), 30 * 86400)
+    def get(self, request):
+        status_val = cache.get('EMPLOYEE_SYNC_STATUS', 'idle')
+        return Response({"status": status_val})
 
-                try:
-                    from core.views import sync_roles_from_employees
-                    sync_roles_from_employees(employees)
-                except Exception as ex:
-                    print(f"Error executing sync_roles_from_employees: {ex}")
-                    
-            return Response({"status": "success", "message": "Employee cache successfully synchronized from external API."})
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def post(self, request):
+        status_val = cache.get('EMPLOYEE_SYNC_STATUS')
+        if status_val == 'running':
+            return Response({
+                "status": "running",
+                "message": "Synchronization is already in progress in the background."
+            }, status=status.HTTP_200_OK)
+            
+        t = threading.Thread(target=_run_employee_sync_task, daemon=True)
+        t.start()
+        
+        return Response({
+            "status": "pending",
+            "message": "Employee cache synchronization started in the background."
+        }, status=status.HTTP_202_ACCEPTED)
 
 class ClearCacheView(APIView):
     permission_classes = [IsAdmin]
