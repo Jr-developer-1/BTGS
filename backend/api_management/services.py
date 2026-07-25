@@ -128,7 +128,7 @@ def resolve_hr_id_to_info(hr_id, api_url, headers):
     try:
         url = f"{api_url.rstrip('/')}/{hr_id_str}/"
         url = url.replace('//', '/').replace(':/', '://')
-        resp = requests.get(url, headers=headers, timeout=5.0)  # Short timeout — non-blocking per-ID lookup
+        resp = requests.get(url, headers=headers, timeout=25.0)  # Increased timeout for slow external API
         if resp.status_code == 200:
             data = resp.json() or {}
             emp_obj = data.get('employee', {})
@@ -533,7 +533,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                         continue
 
                     detail_url = api_url.rstrip('/') + f"/{emp_id_api}/"
-                    detail_resp = session.get(detail_url, timeout=8)  # fast-fail
+                    detail_resp = session.get(detail_url, timeout=25.0)  # Increased timeout for slow external API
                     if detail_resp.status_code == 200:
                         detail_data = detail_resp.json() or {}
                         pos_list = detail_data.get('positions_details') or []
@@ -567,7 +567,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                                 code = cached_code
                                             else:
                                                 try:
-                                                    s_resp = session.get(api_url, params={'search': name}, timeout=10.0)
+                                                    s_resp = session.get(api_url, params={'search': name}, timeout=25.0)
                                                     if s_resp.status_code == 200:
                                                         s_data = s_resp.json() or {}
                                                         s_res = s_data.get('results', [])
@@ -602,7 +602,7 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
                                         code = cached_code
                                     else:
                                         try:
-                                            s_resp = session.get(api_url, params={'search': name}, timeout=10.0)
+                                            s_resp = session.get(api_url, params={'search': name}, timeout=25.0)
                                             if s_resp.status_code == 200:
                                                 s_data = s_resp.json() or {}
                                                 s_res = s_data.get('results', [])
@@ -905,7 +905,7 @@ def fetch_geo_data(force_fresh=False):
         }
         
         start_time = time.time()
-        response = requests.get(api_url, headers=headers, timeout=10)  # geo API — fast-fail
+        response = requests.get(api_url, headers=headers, timeout=30.0)  # Increased timeout for geo API
         latency = (time.time() - start_time) * 1000
 
         try:

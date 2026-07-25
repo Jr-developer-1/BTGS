@@ -19,6 +19,8 @@ const ApiManagement = () => {
     const [error, setError] = useState(null);
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncSuccess, setSyncSuccess] = useState(false);
+    const [isClearingCache, setIsClearingCache] = useState(false);
+    const [clearCacheSuccess, setClearCacheSuccess] = useState(false);
 
     // New Key Modal State
     const [showKeyModal, setShowKeyModal] = useState(false);
@@ -170,6 +172,29 @@ const ApiManagement = () => {
             setIsSyncing(false);
         }
     };
+
+    const handleClearCache = async () => {
+        const confirmed = await confirm("Are you sure you want to clear all system caches? This will clear the persistent and in-memory caches, forcing a fresh load from the external API on next request.");
+        if (!confirmed) return;
+        
+        setIsClearingCache(true);
+        setError(null);
+        try {
+            await api.post('/api/clear-cache/');
+            setClearCacheSuccess(true);
+            showToast("System cache cleared successfully.", "success");
+            setTimeout(() => setClearCacheSuccess(false), 3000);
+            await fetchConfig();
+        } catch (err) {
+            console.error("Failed to clear cache:", err);
+            const errMsg = err.response?.data?.error || "Failed to clear system cache.";
+            setError(errMsg);
+            showToast(errMsg, "error");
+        } finally {
+            setIsClearingCache(false);
+        }
+    };
+
 
     const handleGenerateKey = async () => {
         setError(null);
@@ -674,6 +699,14 @@ const ApiManagement = () => {
                                     >
                                         {syncSuccess ? <CheckCircle2 size={18} /> : <RefreshCw className={isSyncing ? "animate-spin" : ""} size={18} />}
                                         <span>{isSyncing ? 'Syncing...' : syncSuccess ? 'Sync Completed' : 'Sync Data'}</span>
+                                    </button>
+                                    <button
+                                        className={`btn-primary-premium bg-red-600 hover:bg-red-700 ${clearCacheSuccess ? 'success' : ''}`}
+                                        onClick={handleClearCache}
+                                        disabled={isClearingCache}
+                                    >
+                                        {clearCacheSuccess ? <CheckCircle2 size={18} /> : <Trash2 className={isClearingCache ? "animate-spin" : ""} size={18} />}
+                                        <span>{isClearingCache ? 'Clearing...' : clearCacheSuccess ? 'Cache Cleared' : 'Clear Cache'}</span>
                                     </button>
                                 </div>
 

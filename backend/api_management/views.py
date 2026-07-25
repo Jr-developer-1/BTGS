@@ -852,6 +852,24 @@ class ApiKeyUpdateView(APIView):
                 defaults={'value': api_url}
             )
         
+        # Automatically clear cache on config update to prevent stale data
+        from django.core.cache import cache
+        from .services import CACHE_EMPLOYEE_DATA, HR_ID_TO_INFO_CACHE, GLOBAL_EMPLOYEE_CACHE, safe_cache_delete
+        try:
+            cache.clear()
+            CACHE_EMPLOYEE_DATA.clear()
+            HR_ID_TO_INFO_CACHE.clear()
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
+            GLOBAL_EMPLOYEE_CACHE['data'] = []
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
+            safe_cache_delete('UNIQUE_PROJECTS_LIST')
+            safe_cache_delete('EXTERNAL_ROLES_LIST')
+            safe_cache_delete('position_to_employee_codes_map')
+            safe_cache_delete('user_position_identifiers')
+        except Exception as e:
+            print(f"Error clearing cache on config update: {e}")
+        
         return Response({'message': f'{key_type} configuration updated successfully'})
 
 class GeoHierarchyView(APIView):
@@ -899,6 +917,35 @@ class SyncEmployeeCacheView(APIView):
             return Response({"status": "success", "message": "Employee cache successfully synchronized from external API."})
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ClearCacheView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        from django.core.cache import cache
+        from .services import CACHE_EMPLOYEE_DATA, HR_ID_TO_INFO_CACHE, GLOBAL_EMPLOYEE_CACHE, safe_cache_delete
+        try:
+            # 1. Clear Django cache backend
+            cache.clear()
+            
+            # 2. Clear service level in-memory caches
+            CACHE_EMPLOYEE_DATA.clear()
+            HR_ID_TO_INFO_CACHE.clear()
+            GLOBAL_EMPLOYEE_CACHE['timestamp'] = 0
+            GLOBAL_EMPLOYEE_CACHE['data'] = []
+            
+            # 3. Explicitly delete known keys
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA')
+            safe_cache_delete('GLOBAL_EMPLOYEE_DATA_TIMESTAMP')
+            safe_cache_delete('UNIQUE_PROJECTS_LIST')
+            safe_cache_delete('EXTERNAL_ROLES_LIST')
+            safe_cache_delete('position_to_employee_codes_map')
+            safe_cache_delete('user_position_identifiers')
+            
+            return Response({"status": "success", "message": "All cache (persistent and in-memory) has been cleared successfully."})
+        except Exception as e:
+            return Response({"error": f"Failed to clear cache: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
         

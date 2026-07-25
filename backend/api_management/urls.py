@@ -4,7 +4,7 @@ from .views import (
     EmployeeListView, EmployeeDropdownView, SignupView, SyncAllUsersView, 
     UserListView, AccessKeyViewSet, DashboardStatsView, ApiKeyUpdateView, 
     DynamicEndpointViewSet, DynamicIngestionView, GeoHierarchyView, 
-    SyncUsersPageView, SyncEmployeeCacheView
+    SyncUsersPageView, SyncEmployeeCacheView, ClearCacheView
 )
 
 router = DefaultRouter()
@@ -21,7 +21,9 @@ urlpatterns = [
     path('users/', UserListView.as_view(), name='user-list'),
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     path('apikey/', ApiKeyUpdateView.as_view(), name='update-api-key'),
+    path('clear-cache/', ClearCacheView.as_view(), name='clear-cache'),
     path('connect/<str:endpoint_path>/', DynamicIngestionView.as_view(), name='dynamic-ingest'),
     path('geo/hierarchy/', GeoHierarchyView.as_view(), name='geo-hierarchy'),
     path('', include(router.urls)),
 ]
+
