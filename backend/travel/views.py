@@ -2794,6 +2794,14 @@ class TripListCreateView(generics.ListCreateAPIView):
             update_trip_lifecycle(trip, "Auto-Approved", f"{label} request auto-approved for Administrator.")
             return
 
+        # Check if Employee API is unreachable (to prevent accidental auto-approval for standard users)
+        from core.middleware import should_skip_external_api
+        if not user._get_api_data() and not should_skip_external_api():
+            raise ValidationError({
+                "detail": "Failed to resolve your employee profile from the HCM API. "
+                          "Please contact support or ensure the staging server has network access to the API."
+            })
+
         members_data = serializer.validated_data.get('members', [])
         current_approver, h_level, rm, sm, hod, pos_id = resolve_approver(user, members_data)
 
@@ -7405,6 +7413,15 @@ class BulkActivityBatchViewSet(viewsets.ModelViewSet):
             
             def is_mgmt(u):
                 return u and hasattr(u, 'role') and u.role and u.role.name.lower() in ['admin', 'superuser', 'it admin']
+
+            # Check if Employee API is unreachable (to prevent accidental auto-approval for standard users)
+            from core.middleware import should_skip_external_api
+            user_role = (user.role.name.lower() if user.role else '')
+            if not user._get_api_data() and not should_skip_external_api() and user_role not in ['admin', 'superuser', 'it-admin']:
+                raise ValidationError({
+                    "detail": "Failed to resolve employee profile from the HCM API. "
+                              "Please contact support or ensure the staging server has network access to the API."
+                })
 
             # ALWAYS start from the beginning of the management chain for Bulk Uploads and Resubmissions
             # (Following the flow of bulk upload records only, as requested)

@@ -424,8 +424,8 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
         # Fetch the first page to get metadata
         try:
             start_time = time.time()
-            # Fast fail-fast timeout of 35 seconds for single records, 120 seconds for full listing
-            t_val = 35 if (employee_id_filter or search) else 120
+            # Fast fail-fast timeout of 3 seconds for single records, 30 seconds for full listing
+            t_val = 3 if (employee_id_filter or search) else 30
             response = session.get(api_url, params=params, timeout=t_val)
             latency = (time.time() - start_time) * 1000
 

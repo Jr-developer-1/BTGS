@@ -12,7 +12,7 @@ class ApiConstants {
   // static const String baseUrl = 'https://one.bhspl.in/tgs-uat';
   // static const String baseUrl = 'http://10.2.1.31:4567';
   // static const String baseUrl = 'http://10.0.2.2:4567';
-  static const String baseUrl = 'http://103.174.161.68:8005/';
+  static const String baseUrl = 'http://103.174.161.68:8005';
 
   // Authentication Endpoints
   static const String authLogin = '$baseUrl/api/auth/login';
