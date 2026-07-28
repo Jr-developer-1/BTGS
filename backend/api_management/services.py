@@ -118,34 +118,26 @@ def _find_best_matching_employee_code(s_res, target_position_name):
 def resolve_hr_id_to_info(hr_id, api_url, headers):
     """Resolves an internal HR ID to (employee_code, name) by fetching details."""
     if not hr_id: return None, None
-    hr_id_str = str(hr_id)
+    hr_id_str = str(hr_id).strip()
     
     cache_key = f"hr_id_info_{hr_id_str}"
     cached_info = safe_cache_get(cache_key)
     if cached_info is not None:
         return cached_info.get('code'), cached_info.get('name')
-    
-    try:
-        url = f"{api_url.rstrip('/')}/{hr_id_str}/"
-        url = url.replace('//', '/').replace(':/', '://')
-        resp = requests.get(url, headers=headers, timeout=25.0)  # Increased timeout for slow external API
-        if resp.status_code == 200:
-            data = resp.json() or {}
-            emp_obj = data.get('employee', {})
-            code = emp_obj.get('employee_code') or data.get('employee_code')
-            name = emp_obj.get('name') or data.get('name')
-            
-            info = {'code': code, 'name': name} if code else {'code': None, 'name': None}
-            safe_cache_set(cache_key, info, 2592000) # Cache for 30 days since these mappings are static
-            return info.get('code'), info.get('name')
-        else:
-            info = {'code': None, 'name': None}
-            safe_cache_set(cache_key, info, 300) # Cache failures for 5 min
-            return None, None
-    except Exception as e:
-        print(f"Error resolving HR ID {hr_id}: {e}")
-        safe_cache_set(cache_key, {'code': None, 'name': None}, 300)
-    
+        
+    # Check global employee data cache
+    persistent_global = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
+    if persistent_global:
+        for item in persistent_global:
+            emp = item.get('employee', {})
+            if str(emp.get('id')).strip() == hr_id_str or str(emp.get('employee_code')).strip().lower() == hr_id_str.lower():
+                code = emp.get('employee_code')
+                name = emp.get('name')
+                if code:
+                    info = {'code': code, 'name': name}
+                    safe_cache_set(cache_key, info, 2592000)
+                    return code, name
+                    
     return None, None
 
 def resolve_hr_id_to_code(hr_id, api_url, headers):
@@ -233,7 +225,7 @@ def get_dynamic_employee_data(employee_code, force_fresh=False):
                     return persistent_data
 
     # 3. Fetch from API (Cold start fallback - executed max once per hour per employee)
-    data = fetch_employee_data(employee_id_filter=employee_code, page_size=1)
+    data = fetch_employee_data(employee_id_filter=employee_code, page_size=1, force_fresh=force_fresh)
     if data and not data.get('error'):
         if data.get('results'):
             emp_data = data['results'][0]
@@ -313,32 +305,42 @@ def fetch_employee_data(employee_id_filter=None, page=1, search=None, api_key_ov
     Fetches employee data with direct pagination and search forwarding.
     Supports a custom page_size by fetching multiple pages from external API if needed.
     """
-    # Early Cache check for full downloads (massive performance boost & timeout avoidance)
-    if fetch_all_pages and not employee_id_filter and not search and not force_fresh:
-        now = time.time()
+    # If not forcing a fresh API sync, fetch entirely from local cache
+    if not force_fresh:
+        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA') or []
+        matched_items = []
         
-        # 1. Check per-worker in-memory global cache first
-        cached = GLOBAL_EMPLOYEE_CACHE
-        if now - cached['timestamp'] < GLOBAL_CACHE_TIMEOUT and cached['data']:
-            data_list = cached['data']
-            return {
-                "count": len(data_list),
-                "next": None,
-                "previous": None,
-                "results": data_list
-            }
+        if employee_id_filter:
+            filter_lower = str(employee_id_filter).strip().lower()
+            for item in persistent_data:
+                emp = item.get('employee', {})
+                code = str(emp.get('employee_code') or '').strip().lower()
+                if code == filter_lower:
+                    matched_items.append(item)
+                    break
+        elif search:
+            search_lower = str(search).strip().lower()
+            for item in persistent_data:
+                emp = item.get('employee', {})
+                code = str(emp.get('employee_code') or '').strip().lower()
+                name = str(emp.get('name') or '').strip().lower()
+                if search_lower in code or search_lower in name:
+                    matched_items.append(item)
+        else:
+            matched_items = persistent_data
             
-        # 2. Fallback to persistent Django cache framework
-        persistent_data = safe_cache_get('GLOBAL_EMPLOYEE_DATA')
-        if persistent_data:
-            GLOBAL_EMPLOYEE_CACHE['timestamp'] = safe_cache_get('GLOBAL_EMPLOYEE_DATA_TIMESTAMP') or now
-            GLOBAL_EMPLOYEE_CACHE['data'] = persistent_data
-            return {
-                "count": len(persistent_data),
-                "next": None,
-                "previous": None,
-                "results": persistent_data
-            }
+        # Apply pagination on matched_items
+        total_count = len(matched_items)
+        start_idx = (int(page) - 1) * int(page_size)
+        end_idx = start_idx + int(page_size)
+        sliced = matched_items[start_idx:end_idx] if not fetch_all_pages else matched_items
+        
+        return {
+            "count": total_count,
+            "next": None,
+            "previous": None,
+            "results": sliced
+        }
 
     try:
 

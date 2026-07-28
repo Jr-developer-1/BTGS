@@ -911,8 +911,51 @@ def _run_employee_sync_task():
             try:
                 from core.views import sync_roles_from_employees
                 sync_roles_from_employees(employees)
+                # Invalidate roles list cache so the updated positions appear instantly in the UI
+                cache.delete('ROLES_LIST_CACHE')
+                
+                # Update position names in HRPositionConfig and FinanceWorkflowStep database records
+                position_id_to_name = {}
+                for item in employees:
+                    pos = item.get('position')
+                    if pos and isinstance(pos, dict):
+                        p_raw_id = str(pos.get('id') or pos.get('position_id') or '')
+                        p_code = str(pos.get('code') or pos.get('position_code') or '').strip()
+                        p_id = p_code if p_code else p_raw_id
+                        p_name = (pos.get('name') or pos.get('position_name') or '').strip()
+                        if p_id and p_name:
+                            position_id_to_name[p_id] = p_name
+                    for pos in item.get('positions_details', []):
+                        if pos and isinstance(pos, dict):
+                            p_raw_id = str(pos.get('id') or pos.get('position_id') or '')
+                            p_code = str(pos.get('code') or pos.get('position_code') or '').strip()
+                            p_id = p_code if p_code else p_raw_id
+                            p_name = (pos.get('name') or pos.get('position_name') or '').strip()
+                            if p_id and p_name:
+                                position_id_to_name[p_id] = p_name
+
+                if position_id_to_name:
+                    from travel.models import HRPositionConfig, FinanceWorkflowStep
+                    
+                    # Update HR configs
+                    hr_configs = HRPositionConfig.objects.all()
+                    for cfg in hr_configs:
+                        if cfg.position_id in position_id_to_name:
+                            new_name = position_id_to_name[cfg.position_id]
+                            if cfg.position_name != new_name:
+                                cfg.position_name = new_name
+                                cfg.save()
+                                
+                    # Update Finance steps
+                    fin_steps = FinanceWorkflowStep.objects.all()
+                    for step in fin_steps:
+                        if step.position_id in position_id_to_name:
+                            new_name = position_id_to_name[step.position_id]
+                            if step.position_name != new_name:
+                                step.position_name = new_name
+                                step.save()
             except Exception as ex:
-                print(f"Error executing sync_roles_from_employees: {ex}")
+                print(f"Error executing sync_roles_from_employees or updating position names: {ex}")
                 
         cache.set('EMPLOYEE_SYNC_STATUS', 'success', 3600)
     except Exception as e:
