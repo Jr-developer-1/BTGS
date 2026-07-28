@@ -323,7 +323,7 @@ const TravelCreation = () => {
                 title: 'Tour Plan Created!',
                 message: (
                     <div className="text-center p-4">
-                        <p className="text-slate-600 mb-6 font-medium">Request has been sent to your reporting manager <span className="text-emerald-600 font-extrabold">{reportingInfo.name}</span> for approval.</p>
+                        <p className="text-slate-600 mb-6 font-medium">Request has been sent to your reporting manager for approval.</p>
                         <div className="flex flex-col gap-2 items-center bg-slate-50 p-6 rounded-2xl border border-slate-100 shadow-inner">
                             <span className="text-xs font-bold text-slate-400 uppercase tracking-[0.2em]">Tour Plan ID</span>
                             <span className="text-3xl font-black text-primary tracking-tight">{tripId}</span>
