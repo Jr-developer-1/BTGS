@@ -1060,7 +1060,11 @@ const TravelReports = () => {
                                 <div>
                                     <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#64748b' }}>Bulk Uploads (Tour Plans)</div>
                                     <div style={{ fontSize: '2rem', fontWeight: 800, color: '#0f172a', margin: '4px 0' }}>
-                                        {statsLoading ? <Loader2 className="animate-spin" size={24} /> : stats.batches_count}
+                                        {statsLoading ? (
+                                            <Loader2 className="animate-spin" size={24} />
+                                        ) : (
+                                            `${stats.batches_count} / ${new Set((stats.batches || []).map(b => b.user_id).filter(Boolean)).size}`
+                                        )}
                                     </div>
                                     <div style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--primary)' }}>Click to view details</div>
                                 </div>
