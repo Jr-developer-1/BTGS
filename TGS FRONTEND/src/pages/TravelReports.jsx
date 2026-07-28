@@ -1724,7 +1724,7 @@ const TravelReports = () => {
                                             }}
                                         >
                                             <Download size={14} />
-                                            Export CSV
+                                            Download CSV
                                         </button>
                                     </div>
 

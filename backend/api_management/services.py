@@ -10,11 +10,18 @@ _cache_warming = False
 _cache_warm_lock = threading.Lock()
 
 def safe_cache_get(key, default=None):
-    """Wraps cache.get to handle Windows file-lock PermissionErrors gracefully."""
-    try:
-        val = cache.get(key, default)
-    except (PermissionError, OSError):
-        val = default
+    """Wraps cache.get to handle Windows file-lock PermissionErrors gracefully with retries."""
+    import time
+    val = default
+    for attempt in range(5):
+        try:
+            val = cache.get(key, default)
+            break
+        except (PermissionError, OSError):
+            if attempt < 4:
+                time.sleep(0.01)
+            else:
+                val = default
 
     if key == 'GLOBAL_EMPLOYEE_DATA' and not val:
         global _cache_warming
@@ -36,18 +43,32 @@ def safe_cache_get(key, default=None):
 
 
 def safe_cache_set(key, value, timeout=None):
-    """Wraps cache.set to handle Windows file-lock PermissionErrors gracefully."""
-    try:
-        cache.set(key, value, timeout)
-    except (PermissionError, OSError):
-        pass
+    """Wraps cache.set to handle Windows file-lock PermissionErrors gracefully with retries."""
+    import time
+    for attempt in range(5):
+        try:
+            cache.set(key, value, timeout)
+            return True
+        except (PermissionError, OSError):
+            if attempt < 4:
+                time.sleep(0.01)
+            else:
+                pass
+    return False
 
 def safe_cache_delete(key):
-    """Wraps cache.delete to handle Windows file-lock PermissionErrors gracefully."""
-    try:
-        cache.delete(key)
-    except (PermissionError, OSError):
-        pass
+    """Wraps cache.delete to handle Windows file-lock PermissionErrors gracefully with retries."""
+    import time
+    for attempt in range(5):
+        try:
+            cache.delete(key)
+            return True
+        except (PermissionError, OSError):
+            if attempt < 4:
+                time.sleep(0.01)
+            else:
+                pass
+    return False
 
 # EXTERNAL_API_URL = "http://192.168.1.235:8000/api/employees/"  
 

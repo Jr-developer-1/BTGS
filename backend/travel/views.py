@@ -2066,8 +2066,9 @@ def _generate_expenses_from_batches(trip):
     Implements strict deduplication to prevent duplicate entries from multiple approval triggers.
     """
     from .models import BulkActivityBatch
-    from travel_masters.models import FuelRateMaster
+    from travel_masters.models import FuelRateMaster, Cadre, EligibilityRule
     import json
+    from datetime import datetime, timedelta
     
     # 1. Pre-fetch all existing expenses for this trip to avoid repeated DB queries
     existing_expenses = list(Expense.objects.filter(trip=trip))
@@ -2097,15 +2098,24 @@ def _generate_expenses_from_batches(trip):
         except:
             continue
 
-    # 1. Cleanup: Remove any expenses associated with batches that are NOT in an authorized state
+    expenses_to_delete = []
+
+    # 1. Cleanup: Identify any expenses associated with batches that are NOT in an authorized state
     unauthorized_batches = trip.activity_batches.exclude(status__in=['Approved', 'Manager Approved', 'HR Approved', 'Resolved', 'Resubmitted', 'Submitted', 'Forwarded', 'Under Process'])
     for batch in unauthorized_batches:
         for e in existing_expenses:
             try:
                 d = json.loads(e.description)
                 if int(d.get('batch_id', -1)) == batch.id:
-                    e.delete()
+                    expenses_to_delete.append(e)
             except: continue
+
+    # Perform first batch deletion
+    if expenses_to_delete:
+        delete_ids = [e.id for e in expenses_to_delete]
+        Expense.objects.filter(id__in=delete_ids).delete()
+        existing_expenses = [x for x in existing_expenses if x.id not in delete_ids]
+        expenses_to_delete = []
 
     # 2. Process authorized batches
     batches = trip.activity_batches.filter(status__in=['Approved', 'Manager Approved', 'HR Approved', 'Resolved', 'Resubmitted', 'Submitted', 'Forwarded', 'Under Process'])
@@ -2120,6 +2130,62 @@ def _generate_expenses_from_batches(trip):
                     processed_da_dates.add(str(e.date)[:10])
         except:
             pass
+
+    # Pre-resolve static values for trip/user to avoid CPU/DB bottlenecks in inner loop
+    user = trip.user
+    user_designation = (user.designation or '').strip().lower()
+    user_base_location = user.base_location or 'Other'
+    user_active_role = getattr(user, 'active_role', '').lower()
+
+    # Pre-resolve matched cadre and eligibility rule
+    matched_cadre = None
+    if user_designation:
+        keyword_cadre_pairs = []
+        for cadre in Cadre.objects.all():
+            for kw in (cadre.designation_keywords or []):
+                if kw:
+                    keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
+        
+        keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        
+        import re
+        desig_words = re.findall(r'[a-z0-9]+', user_designation)
+        desig_words_set = set(desig_words)
+        
+        for kw_clean, cadre in keyword_cadre_pairs:
+            kw_words = re.findall(r'[a-z0-9]+', kw_clean)
+            if not kw_words:
+                continue
+            if all(word in desig_words_set for word in kw_words):
+                matched_cadre = cadre
+                break
+            if kw_clean in user_designation:
+                matched_cadre = cadre
+                break
+
+    if not matched_cadre:
+        if user_active_role in ['admin', 'cfo']:
+            matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
+        elif user_active_role in ['hr', 'finance']:
+            matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
+
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
+    if not matched_cadre:
+        matched_cadre = Cadre.objects.first()
+
+    rule = EligibilityRule.objects.filter(cadre=matched_cadre).order_by('-id').first() if matched_cadre else None
+    is_local = getattr(trip, 'consider_as_local', False)
+    if rule:
+        if is_local:
+            daily_allowance_limit = float(rule.monthly_tour_daily_allowance_amount)
+        else:
+            daily_allowance_limit = float(rule.daily_allowance_amount)
+    else:
+        daily_allowance_limit = 300.0
+
+    # Pre-fetch all fuel rate master objects
+    fuel_rates = list(FuelRateMaster.objects.all())
 
     for batch in batches:
         data = batch.data_json
@@ -2142,7 +2208,6 @@ def _generate_expenses_from_batches(trip):
             if len(date_str) > 10:
                 date_str = date_str[:10]
             final_date = None
-            from datetime import datetime
             for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"]:
                 try:
                     final_date = datetime.strptime(date_str, fmt).date().isoformat()
@@ -2174,7 +2239,6 @@ def _generate_expenses_from_batches(trip):
 
             for item in items:
                 try:
-                    from datetime import datetime, timedelta
                     st_str = item['start_time']
                     rt_str = item['reach_time']
 
@@ -2202,22 +2266,18 @@ def _generate_expenses_from_batches(trip):
             
         created_ids = []
         for idx, row in enumerate(data):
-            # Process only rows that are NOT rejected and NOT instruction rows
             row_status = row.get('_status')
             date_val = row.get('date', '')
             
-            # 2. Skip if explicitly rejected or looks like an instruction row
             is_rejected = (row_status == 'Rejected')
             is_instruction = ('instruc' in str(date_val).lower())
             
-            # If the row is not rejected, we only skip if it's in a state that explicitly says it's NOT ready.
-            # If row_status is None, we assume it's pending/approved by default if the batch itself is active.
             if is_rejected or is_instruction:
                 for e in existing_expenses:
                     try:
                         d = json.loads(e.description)
                         if int(d.get('batch_id', -1)) == batch.id and int(d.get('row_index', -1)) == idx:
-                            e.delete()
+                            expenses_to_delete.append(e)
                     except: continue
                 continue
                 
@@ -2227,9 +2287,7 @@ def _generate_expenses_from_batches(trip):
                 if not date_str: continue
                 if len(date_str) > 10: date_str = date_str[:10]
                 
-                # Robust date parsing for common bulk formats
                 final_date = None
-                from datetime import datetime
                 for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"]:
                     try:
                         final_date = datetime.strptime(date_str, fmt).date().isoformat()
@@ -2248,27 +2306,22 @@ def _generate_expenses_from_batches(trip):
                 odo_e = float(row.get('odo_end', 0) or 0)
                 distance = max(0.0, odo_e - odo_s)
 
-                # DEDUPLICATION CHECK 1: Same batch/row already exists
                 if (batch.id, idx) in processed_rows:
                     continue
 
-                # DEDUPLICATION CHECK 2: Semantic match (Identical activity already logged manually or in other batch)
                 semantic_key = (final_date, odo_s, odo_e, origin.upper(), destination.upper())
                 if semantic_key in semantic_map:
-                    # If it exists but is NOT marked as being from this specific batch/row, 
-                    # we only skip if it's identical enough. 
-                    # If it was from bulk upload, we might want to replace it.
                     existing_id = semantic_map[semantic_key]
-                    exp_obj = Expense.objects.filter(id=existing_id).first()
+                    exp_obj = next((e for e in existing_expenses if e.id == existing_id), None)
                     if exp_obj:
                         try:
                             exp_desc = json.loads(exp_obj.description)
                             if exp_desc.get('from_bulk_upload'):
-                                # It's a stale/duplicate bulk entry from another batch, delete/replace finding it
-                                exp_obj.delete()
-                                # Continue to create the new one from this batch
+                                expenses_to_delete.append(exp_obj)
+                                existing_expenses = [x for x in existing_expenses if x.id != exp_obj.id]
+                                if semantic_key in semantic_map:
+                                    del semantic_map[semantic_key]
                             else:
-                                # It's likely a manual entry for the same thing, skip creating duplicate
                                 continue
                         except:
                             continue
@@ -2276,10 +2329,17 @@ def _generate_expenses_from_batches(trip):
                 mapped_mode = str(row.get('mode', 'Bike')) or 'Bike'
                 mapped_subType = str(row.get('vehicle', 'Own Bike')) or 'Own Bike'
                 
-                state = trip.user.base_location or 'Other'
-                rate_obj = FuelRateMaster.objects.filter(state__icontains=state, vehicle_type=mapped_mode).first()
+                # In-memory lookup from fuel_rates
+                rate_obj = None
+                for r in fuel_rates:
+                    if r.vehicle_type == mapped_mode and r.state and user_base_location.lower() in r.state.lower():
+                        rate_obj = r
+                        break
                 if not rate_obj:
-                    rate_obj = FuelRateMaster.objects.filter(vehicle_type=mapped_mode).first()
+                    for r in fuel_rates:
+                        if r.vehicle_type == mapped_mode:
+                            rate_obj = r
+                            break
                 rate_per_km = float(rate_obj.rate_per_km) if rate_obj else 0.0
                 
                 amount = row.get('amount')
@@ -2289,60 +2349,7 @@ def _generate_expenses_from_batches(trip):
                     try: amount = float(amount)
                     except: amount = 0.0
 
-                # --- NEW: Daily Allowance (DA) Calculation based on Aggregated Hours ---
-                from travel_masters.models import Cadre, EligibilityRule
-                user = trip.user
-                desig = (user.designation or '').strip().lower()
-                matched_cadre = None
-
-                if desig:
-                    keyword_cadre_pairs = []
-                    for cadre in Cadre.objects.all():
-                        for kw in (cadre.designation_keywords or []):
-                            if kw:
-                                keyword_cadre_pairs.append((str(kw).strip().lower(), cadre))
-                    
-                    keyword_cadre_pairs.sort(key=lambda x: len(x[0]), reverse=True)
-                    
-                    import re
-                    desig_words = re.findall(r'[a-z0-9]+', desig)
-                    desig_words_set = set(desig_words)
-                    
-                    for kw_clean, cadre in keyword_cadre_pairs:
-                        kw_words = re.findall(r'[a-z0-9]+', kw_clean)
-                        if not kw_words:
-                            continue
-                        if all(word in desig_words_set for word in kw_words):
-                            matched_cadre = cadre
-                            break
-                        if kw_clean in desig:
-                            matched_cadre = cadre
-                            break
-
-                if not matched_cadre:
-                    role = getattr(user, 'active_role', '').lower()
-                    if role in ['admin', 'cfo']:
-                        matched_cadre = Cadre.objects.filter(name__icontains='ADMINISTRATIVE').first()
-                    elif role in ['hr', 'finance']:
-                        matched_cadre = Cadre.objects.filter(name__icontains='MANAGERS').first()
-
-                if not matched_cadre:
-                    matched_cadre = Cadre.objects.filter(name__icontains='BELOW EXECUTIVE').first()
-                if not matched_cadre:
-                    matched_cadre = Cadre.objects.first()
-
-                rule = EligibilityRule.objects.filter(cadre=matched_cadre).order_by('-id').first() if matched_cadre else None
-                is_local = getattr(trip, 'consider_as_local', False)
-                if rule:
-                    if is_local:
-                        daily_allowance_limit = float(rule.monthly_tour_daily_allowance_amount)
-                    else:
-                        daily_allowance_limit = float(rule.daily_allowance_amount)
-                else:
-                    daily_allowance_limit = 300.0
-
                 if final_date not in processed_da_dates:
-                    # Calculate aggregated DA for this date
                     agg_info = aggregated_da_results.get(final_date, {'hours': 0.0})
                     hours = agg_info['hours']
                     
@@ -2367,13 +2374,11 @@ def _generate_expenses_from_batches(trip):
                         
                     processed_da_dates.add(final_date)
                 else:
-                    # Already processed DA for this date, subsequent rows get 0 DA
                     hours = 0.0
                     eligible_da = 0.0
                     applied_da = 0.0
                     da_message = f"Aggregated with other entries for this date ({final_date})"
 
-                # Total amount claimed = fuel_or_fare (amount) + applied_da
                 total_claimed = amount + applied_da
                 total_allowed = amount + eligible_da
 
@@ -2407,7 +2412,6 @@ def _generate_expenses_from_batches(trip):
                     'fare_or_fuel': amount
                 }
                 
-                # Carry over all mobile-provided attachment lists and textual reports
                 if 'jobReportAttachments' in row:
                     desc_dict['jobReportAttachments'] = row['jobReportAttachments']
                 if 'jobReport' in row:
@@ -2436,7 +2440,6 @@ def _generate_expenses_from_batches(trip):
                 )
                 created_ids.append(exp.id)
 
-                # Process Incidentals as separate ledger entries
                 if 'incidentals' in row and isinstance(row['incidentals'], list):
                     for inc in row['incidentals']:
                         try:
@@ -2470,6 +2473,11 @@ def _generate_expenses_from_batches(trip):
         if created_ids:
             batch.created_expenses = (batch.created_expenses or []) + created_ids
             batch.save(update_fields=['created_expenses'])
+
+    # Perform any final batch deletions (for rejected/instruction rows matched during processing)
+    if expenses_to_delete:
+        delete_ids = [e.id for e in expenses_to_delete]
+        Expense.objects.filter(id__in=delete_ids).delete()
 
 def resolve_approver(user, members_data=None):
     """Helper to resolve the first approver in the management hierarchy."""

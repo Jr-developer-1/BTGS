@@ -176,7 +176,7 @@ export default function ClaimReport() {
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={handleExport} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, border: 'none', background: '#10b981', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
-                        <Download size={13} /> Export Excel
+                        <Download size={13} /> Download Excel
                     </button>
                     <button onClick={() => load()} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 6, border: '1px solid #e2e8f0', background: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, color: '#475569' }}>
                         <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
